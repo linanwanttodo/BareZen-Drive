@@ -6,8 +6,6 @@ build/
 **/build/
 data/
 docs/
-.superpowers/
-.freebuff/
 *.md
 !README.md
 *.apk

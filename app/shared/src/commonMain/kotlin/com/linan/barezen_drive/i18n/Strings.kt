@@ -175,6 +175,8 @@ interface Strings {
     fun updateAvailableVersion(tag: String): String
     val updateAvailable: String
     val openReleasePage: String
+    val actionReload: String
+    fun reloadToUpdate(version: String): String
     val networkTimeout: String
     val networkCannotConnect: String
     val settingsLanguage: String

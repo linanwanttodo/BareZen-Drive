@@ -16,6 +16,7 @@ import com.linan.barezen_drive.files.sharePublicRoutes
 import com.linan.barezen_drive.files.thumbnailRoutes
 import com.linan.barezen_drive.files.uploadRoutes
 import com.linan.barezen_drive.system.systemRoutes
+import com.linan.barezen_drive.system.versionRoutes
 import com.linan.barezen_drive.jobs.UploadCleanupJob
 import com.linan.barezen_drive.plugins.staticWeb
 import com.linan.barezen_drive.storage.LocalStorageProvider
@@ -90,6 +91,8 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     }
     routing {
         get("/health") { call.respondText("""{"status":"ok"}""", ContentType.Application.Json) }
+        // Public: clients and the web bundle compare versions before login.
+        versionRoutes(cfg)
         authRoutes()
         // Optional: content/thumbnail GET accept a valid signature as an alternative
         // to Bearer (browser tabs, players). Strict endpoints inside check call.userId

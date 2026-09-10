@@ -53,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.glass.GlassCard
 import com.linan.barezen_drive.ui.glass.GlassSectionHeader
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
-import com.linan.barezen_drive.platform.isAndroidPlatform
 import com.linan.barezen_drive.platform.openInBrowser
 import com.linan.barezen_drive.ui.theme.ThemeMode
 import com.linan.barezen_drive.ui.theme.avatarColor
@@ -139,6 +138,8 @@ fun SettingsScreen(
     onGlassAlphaChange: (Int) -> Unit,
     serverUrl: String,
     ping: suspend () -> Long,
+    currentVersion: String,
+    checkUpdate: suspend () -> com.linan.barezen_drive.data.update.UpdateStatus,
     wallpaperEnabled: Boolean,
     onWallpaperToggle: (Boolean) -> Unit,
     onPickWallpaper: () -> Unit,
@@ -345,10 +346,11 @@ fun SettingsScreen(
 
             GlassSectionHeader(LocalStrings.current.settingsAbout)
             GlassCard {
-            if (isAndroidPlatform) {
-                UpdateCheckRow()
-                HorizontalDivider(Modifier.padding(horizontal = 16.dp))
-            }
+            UpdateCheckRow(
+                currentVersion = currentVersion,
+                checkUpdate = checkUpdate,
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             SettingsRow(
                 title = LocalStrings.current.openSourceNotices,
                 subtitle = LocalStrings.current.openSourceComponentsTitle,
@@ -396,8 +398,9 @@ fun SettingsScreen(
 }
 
 /**
- * 账号信息弹窗：展示登录时使用的服务器地址与用户名。密码不在客户端保存
- * （服务器侧只存 BCrypt 哈希），因此无法回显；会话通过 token 维持。
+ * Account info dialog: shows the server address and username used at login.
+ * The password is never stored on the client (the server only keeps a BCrypt
+ * hash), so it cannot be shown again; the session is kept alive by the tokens.
  */
 @Composable
 private fun AccountInfoDialog(

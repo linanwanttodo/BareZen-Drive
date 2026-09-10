@@ -166,6 +166,9 @@ object StringsZh : Strings {
     override fun updateAvailableVersion(tag: String): String = "发现新版本 $tag"
     override val updateAvailable: String = "发现新版本"
     override val openReleasePage: String = "打开发布页"
+    override val actionReload: String = "重新加载"
+    override fun reloadToUpdate(version: String): String =
+        "服务器已更新到 $version，重新加载即可使用新版本"
     override val networkTimeout: String = "连接服务器超时，请检查服务器地址"
     override val networkCannotConnect: String = "无法连接服务器，请检查地址是否正确"
     override val settingsLanguage: String = "语言"

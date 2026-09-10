@@ -8,6 +8,10 @@ data class AppConfig(
     val jwtSecret: String,
     val storageDir: String,
     val maxFileSize: Long,
+    /** Repository polled by GET /api/version for the newest release. */
+    val updateRepoUrl: String = com.linan.barezen_drive.core.BuildInfo.REPOSITORY_URL,
+    /** Optional GitHub token, raising the release-check rate limit. */
+    val githubToken: String? = null,
 ) {
     companion object {
         private fun env(name: String, default: String? = null): String =
@@ -21,6 +25,8 @@ data class AppConfig(
             jwtSecret = env("JWT_SECRET").also { require(it.length >= 32) { "JWT_SECRET must be at least 32 bytes" } },
             storageDir = env("STORAGE_DIR", "./data/storage"),
             maxFileSize = env("MAX_FILE_SIZE", (10L * 1024 * 1024 * 1024).toString()).toLong(),
+            updateRepoUrl = env("UPDATE_REPO_URL", com.linan.barezen_drive.core.BuildInfo.REPOSITORY_URL),
+            githubToken = System.getenv("GITHUB_TOKEN")?.takeIf { it.isNotBlank() },
         )
     }
 }

@@ -5,13 +5,11 @@
 useDefault = true
 
 [allowlist]
-  description = "Test-only placeholder JWT secret used in H2 test configs and design docs; never valid in production (production JWT_SECRET comes from the environment)."
+  description = "Test-only placeholder JWT secret used in H2 test configs; never valid in production (production JWT_SECRET comes from the environment)."
   regexTarget = "secret"
   regexes = [
     '''test-secret-0123456789abcdef0123456789abcdef''',
   ]
   paths = [
     '''server/src/test/''',
-    '''docs/superpowers/''',
-    '''\.superpowers/''',
   ]

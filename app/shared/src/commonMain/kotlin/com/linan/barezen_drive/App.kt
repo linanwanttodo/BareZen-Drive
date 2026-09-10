@@ -32,6 +32,7 @@ import com.linan.barezen_drive.ui.screens.login.LoginScreen
 import com.linan.barezen_drive.ui.screens.preview.PreviewScreen
 import com.linan.barezen_drive.ui.screens.settings.OpenSourceScreen
 import com.linan.barezen_drive.ui.screens.settings.SettingsScreen
+import com.linan.barezen_drive.ui.screens.settings.WebUpdatePrompt
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.shell.MainShell
 import com.linan.barezen_drive.ui.shell.MainTab
@@ -209,6 +210,13 @@ fun App() {
         // One shared saver for the home tab; the files screen owns its own so
         // download failures surface through that screen's snackbar.
         val recentSaver = rememberFileSaver { ok -> }
+        // Browser clients loaded before a server upgrade keep running the old
+        // bundle; this offers the reload that pulls the new one from the server.
+        WebUpdatePrompt(
+            currentVersion = com.linan.barezen_drive.core.BuildInfo.VERSION,
+            enabled = isWebPlatform() && files.baseUrl.isNotBlank(),
+            checkUpdate = { com.linan.barezen_drive.data.update.UpdateChecker.check(files) },
+        )
 
         when (current) {
             is Screen.Login -> LoginScreen(
@@ -295,6 +303,8 @@ fun App() {
                             },
                             serverUrl = files.baseUrl,
                             ping = { files.ping() },
+                            currentVersion = com.linan.barezen_drive.core.BuildInfo.VERSION,
+                            checkUpdate = { com.linan.barezen_drive.data.update.UpdateChecker.check(files) },
                             wallpaperEnabled = wallpaperEnabled,
                             onWallpaperToggle = { on ->
                                 wallpaperEnabled = on

@@ -4,7 +4,8 @@ import com.linan.barezen_drive.core.dto.ContentsResponse
 import com.linan.barezen_drive.core.dto.FolderDto
 
 /**
- * The dedicated "相册" folder tree. Photos uploaded from the album tab land in
+ * The dedicated album folder tree (rooted at the localized album folder name,
+ * see ROOT_NAME). Photos uploaded from the album tab land in
  * a per-device subfolder (device name) so each client's photos stay grouped
  * while the album timeline still walks the whole subtree via the album API.
  *

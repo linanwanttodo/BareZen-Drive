@@ -1,0 +1,202 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8"
+
+jobs:
+  # Gate: server, core and shared logic tests plus the wasm compile check.
+  # Everything else (packaging) depends on this passing.
+  test:
+    name: Tests (server, core, shared)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Server tests
+        run: ./gradlew :server:test --console=plain
+
+      - name: Core tests
+        run: ./gradlew :core:allTests --console=plain
+
+      - name: Shared module tests (Android host)
+        run: ./gradlew :app:shared:testAndroidHostTest --console=plain
+
+      - name: Shared module wasm compile gate
+        run: ./gradlew :app:shared:compileKotlinWasmJs --console=plain
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            server/build/reports/tests/**
+            core/build/reports/tests/**
+            app/shared/build/reports/tests/**
+          if-no-files-found: ignore
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        run: ./gradlew :app:androidApp:assembleDebug --console=plain
+
+      - name: Build release APK
+        run: ./gradlew :app:androidApp:assembleRelease --console=plain
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: app/androidApp/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  web:
+    name: Web distribution (wasmJs)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build wasm distribution
+        run: ./gradlew :app:webApp:wasmJsBrowserDistribution --console=plain
+
+      - name: Upload web distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: app/webApp/build/dist/wasmJs/productionExecutable/**
+          if-no-files-found: error
+
+  # Desktop (JVM) target is intentionally not enabled yet: the source set and
+  # Gradle module are kept, but including the target requires the full jvm
+  # actual set. The job is wired so enabling the target turns it on with no
+  # further CI edits, and it stays green (a skip) until then.
+  desktop:
+    name: Desktop distribution (reserved)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build desktop distribution when the target is enabled
+        run: |
+          if ./gradlew :app:desktopApp:tasks --all --console=plain 2>/dev/null | grep -q "packageDistributionForCurrentOS"; then
+            ./gradlew :app:desktopApp:packageDistributionForCurrentOS --console=plain
+          else
+            echo "Desktop target is not enabled in settings.gradle.kts; skipping."
+          fi
+
+      - name: Upload desktop distribution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-dist
+          path: app/desktopApp/build/compose/**
+          if-no-files-found: ignore
+
+  # iOS must build on macOS (Xcode toolchain). The Kotlin/Native Apple targets
+  # are not enabled in the shared module yet, so this job detects them and
+  # skips until they are; enabling them makes the framework build run here.
+  ios:
+    name: iOS framework (macOS)
+    runs-on: macos-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Kotlin framework when Apple targets are enabled
+        run: |
+          if ./gradlew :app:shared:tasks --all --console=plain 2>/dev/null | grep -q "linkDebugFrameworkIosSimulatorArm64"; then
+            ./gradlew :app:shared:linkDebugFrameworkIosSimulatorArm64 --console=plain
+          else
+            echo "Apple targets are not enabled in app/shared/build.gradle.kts; skipping."
+          fi
+
+      - name: Build simulator app with xcodebuild when the framework exists
+        run: |
+          if [ -d "app/shared/build/bin/iosSimulatorArm64/debugFramework" ]; then
+            xcodebuild -project app/iosApp/iosApp.xcodeproj \
+              -scheme iosApp \
+              -configuration Debug \
+              -sdk iphonesimulator \
+              -destination 'generic/platform=iOS Simulator' \
+              CODE_SIGNING_ALLOWED=NO \
+              build
+          else
+            echo "No Kotlin iOS framework built; skipping xcodebuild."
+          fi
+
+      - name: Upload iOS simulator app
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-app-simulator
+          path: ~/Library/Developer/Xcode/DerivedData/**/Build/Products/Debug-iphonesimulator/*.app
+          if-no-files-found: ignore

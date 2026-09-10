@@ -29,6 +29,7 @@ server/src/main/kotlin/com/linan/barezen_drive/
   files/                # FileService/FolderRoutes/UploadService/UploadRoutes/FileContent
   storage/              # StorageProvider 接口 + LocalStorageProvider
   jobs/                 # UploadCleanupJob（6h 清理过期上传会话）
+  system/               # SystemStatsService（/api/server/stats）+ VersionService（/api/version 检查更新）
   plugins/              # Serialization/StatusPages/Authentication(JWT)/PartialContent/CallLogging/StaticWeb
 ```
 
@@ -81,9 +82,9 @@ server/src/main/kotlin/com/linan/barezen_drive/
 
 ## 客户端架构（app/shared，Android + Web 共享）
 
-- 数据层：`ApiClient`（ktor-client，Bearer 自动刷新：401 -> POST /api/auth/refresh -> 更新 TokenStore -> 重放一次；失败清空 token）+ `AuthRepository`/`FilesRepository`（标准 `Result<T>`，失败为 `ApiFailure`）+ `UploadManager`（进度 StateFlow）。
-- expect/actual 平台层：`TokenStorage`（Android EncryptedSharedPreferences / Web localStorage）、`Sha256er`（MessageDigest / 纯 Kotlin 增量 SHA-256）、`FilePicker`/`FileSaver`（SAF / 浏览器 input+Blob 下载）。
-- UI：自实现导航栈（sealed Screen + BackHandler），三个 tab（首页=相册板块+最近 / 文件 / 设置），push 页面（相册时间轴、多类型预览、开源致谢）。主题为平面色板，单主色，无渐变、无 hover 效果。
+- 数据层：`ApiClient`（ktor-client，Bearer 自动刷新：401 -> POST /api/auth/refresh -> 更新 TokenStore -> 重放一次；失败清空 token）+ `AuthRepository`/`FilesRepository`（标准 `Result<T>`，失败为 `ApiFailure`）+ `UploadManager`（进度 StateFlow）+ `UpdateChecker`（比较服务端 `/api/version` 与本机版本）。
+- expect/actual 平台层：`TokenStorage`（Android EncryptedSharedPreferences / Web localStorage）、`Sha256er`（MessageDigest / 纯 Kotlin 增量 SHA-256）、`FilePicker`/`FileSaver`（SAF / 浏览器 input+Blob 下载）、`AppUpdate`（`InstallChannel` / `openInBrowser` / `reloadApp`，Android 与 wasm 已实现，jvm 预留）。
+- UI：自实现导航栈（sealed Screen + BackHandler），三个 tab（首页=相册板块+最近 / 文件 / 设置），push 页面（相册时间轴、多类型预览、开源致谢）。主题为平面色板，单主色，无渐变、无 hover 效果。设置页含跨端「检查更新」入口。
 
 ## 客户端国际化（i18n）
 
@@ -100,6 +101,33 @@ server/src/main/kotlin/com/linan/barezen_drive/
 
 新增一门语言的步骤：在 `Language` 增加枚举值与 `tag`，新增一个 `Strings` 实现，在 `stringsFor` 注册，在 `fromMode` / `modeOf` 补上偏好编码，并在设置页语言选项中加入对应标签。
 
+## 客户端检查更新
+
+服务端是唯一的更新判定方，客户端不直连 GitHub。
+
+- `BuildInfo`（core）：`VERSION` 是产品版本的唯一来源，同时供服务端 `/api/version`、客户端设置页与
+  Android `versionName` 使用；`API_VERSION` 是 REST 契约版本；`isNewer` / `normalize` 是服务端与
+  客户端共用的版本比较逻辑。
+- 服务端 `VersionService` 查询上游最新发布（默认仓库取 `BuildInfo.REPOSITORY_URL`，可用
+  `UPDATE_REPO_URL` 覆盖，可选 `GITHUB_TOKEN` 提高速率上限），结果缓存 10 分钟，失败不缓存、
+  下次重试；`GET /api/version` 公开返回。
+- 客户端 `UpdateChecker` 调用 `GET /api/version` 并用 `BuildInfo.isNewer` 与自身版本比较，返回
+  `UpToDate` / `Available(version, releaseUrl, reloadOnly)` / `Failed`。设置页「检查更新」入口在
+  **每个客户端**都显示（不再仅 Android）。
+- 分发通道由 `InstallChannel`（ANDROID / IOS / DESKTOP / WEB）表达。Web 由同一服务端托管产物，
+  版本落后只意味着当前页面陈旧，因此 `reloadOnly = true`，提示「重新加载」；打包端提示打开发布页。
+  `App()` 根部的 `WebUpdatePrompt` 在 Web 启动时静默检查一次，这就是服务端升级触达已打开页面的
+  机制。
+
 ## 部署
 
 三段 Docker 构建（web dist 拷入 server resources/web），`docker-compose.yml` 按 1G1C 调优：JVM `-Xmx256m`，PG `shared_buffers=64MB / max_connections=20 / work_mem=4MB` + healthcheck。部署步骤见 `development.md`。
+
+## 持续集成与预留平台
+
+`.github/workflows/ci.yml`：`test` 门跑服务端、core 与共享模块测试及 wasm 编译门；`android` 出
+debug/release APK；`web` 出 wasm 发行产物；`desktop` 与 `ios` 为预留任务，分别在 Desktop target 与
+Apple target 启用后自动生效（启用前干净跳过）。`.github/workflows/docker-publish.yml` 在
+`master` 推送与 `v*` 标签时发布镜像到 GHCR。GitHub 的 macOS runner 自带 Xcode，可构建 iOS；当前
+`app/shared/build.gradle.kts` 仅声明 android + wasmJs，`jvmMain`/`iosMain`/`jsMain` 源码与
+`AppUpdate.jvm.kt` 作为预留 actual 存在，启用对应 target 即可接入。

@@ -19,6 +19,9 @@
 - [x] 分享访问/下载计数 + 分享管理页（设置入口，全部链接统计与关闭。2026-09-09）
 - [x] 相册固定文件夹：专用「相册」根 + 按设备分子文件夹（Web/Android...），时间轴只扫相册子树，上传直落设备文件夹（2026-09-09）
 - [x] 上传分块流式化：服务端分块边收边写盘，内存峰值从 分块大小x并发 降为固定 64KiB 缓冲（2026-09-09）
+- [x] 跨端检查更新：服务端 `GET /api/version` 统一查询上游发布，设置页在每个客户端提供入口，Web 检测到服务端升级后提示重新加载（2026-09-10）
+- [x] 持续集成：服务端/core/共享模块测试 + wasm 编译门 + Android APK + Web 产物；Desktop 与 iOS 任务预留，target 启用即生效（2026-09-10）
+- [x] 文档拆分：README 与 docs 索引各自独立中英文两份（2026-09-10）
 - [ ] 回收站（删除改为标记，定期清理）
 - [ ] EXIF 照片时间轴（拍摄时间替代文件时间）
 - [ ] 首页状态仪表盘（延迟/存储/CPU/内存/实时速率）
@@ -28,7 +31,7 @@
 - [ ] S3/MinIO StorageProvider（接口已就位：`StorageProvider`）
 - Flyway 迁移替代 createMissingTablesAndColumns
 - `install.sh` 一键部署脚本
-- iOS 客户端、Desktop 客户端
+- iOS 客户端、Desktop 客户端（平台接口与 CI 任务已预留，剩余为目标启用与 actual 实现）
 - Web 端 token 存储评估 HttpOnly cookie（v0.0.1 用 localStorage，存在 XSS 暴露面）
 - 上传合并边收边写（消除 tmp+merge 2x 磁盘峰值）
 - npm `ws` 8.20.1（High，GHSA-96hv-2xvq-fx4p）为 Kotlin/JS 构建工具链（webpack dev server）传递依赖，仅构建期存在、不进生产运行时；KGP 钉版无法通过 yarn 升级，待 Kotlin 插件更新后自然消除（Opsera 扫描 2026-09-09）

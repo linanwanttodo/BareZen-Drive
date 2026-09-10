@@ -17,8 +17,6 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 node_modules/
-.superpowers/
-.freebuff/
 .env
 # Root-level runtime storage only. Anchored so source packages named "data"
 # (for example app/shared/src/commonMain/kotlin/.../data) stay tracked.

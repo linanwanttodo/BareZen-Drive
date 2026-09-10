@@ -166,6 +166,9 @@ object StringsEn : Strings {
     override fun updateAvailableVersion(tag: String): String = "Update available: $tag"
     override val updateAvailable: String = "Update available"
     override val openReleasePage: String = "Open release page"
+    override val actionReload: String = "Reload"
+    override fun reloadToUpdate(version: String): String =
+        "The server has been updated to $version. Reload to load the new version"
     override val networkTimeout: String = "Timed out connecting to the server. Check the server address"
     override val networkCannotConnect: String = "Cannot reach the server. Check that the address is correct"
     override val settingsLanguage: String = "Language"

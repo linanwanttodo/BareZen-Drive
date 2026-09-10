@@ -84,7 +84,8 @@ private fun groupByMonth(files: List<FileDto>): List<AlbumGroup> {
 
 /**
  * Photo timeline: all images of the account, newest first, bucketed into
- * month sections ("2026年9月") in the device timezone. The waterfall grid
+ * month sections (for example "September 2026" in the active language) in the
+ * device timezone. The waterfall grid
  * keeps original aspect ratios; tapping opens the swipeable preview across
  * every loaded photo. Pages load on demand as the bottom becomes visible.
  */
@@ -106,8 +107,9 @@ fun AlbumScreen(
     var pendingUploads by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
     var uploadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val progress by uploader.progress.collectAsState()
-    // The dedicated 相册/<device> folder: the timeline scans only this subtree
-    // and uploads land inside it, keeping photos out of the general file tree.
+    // The dedicated album folder tree plus per-device subfolder: the timeline
+    // scans only this subtree and uploads land inside it, keeping photos out of
+    // the general file tree.
     var albumFolderId by remember { mutableStateOf<String?>(null) }
     val device = remember { deviceName() }
 
@@ -115,7 +117,8 @@ fun AlbumScreen(
         albumFolderId = AlbumFolder.resolve(repo, device)
     }
 
-    // 上传速率：按进度回调差分计算（>=500ms 采样一次）。
+    // Upload speed: derived from consecutive progress callbacks, sampled at
+    // most once per 500 ms.
     var speedText by remember { mutableStateOf("…") }
     LaunchedEffect(pendingUploads) {
         if (pendingUploads.isEmpty()) return@LaunchedEffect
@@ -160,7 +163,8 @@ fun AlbumScreen(
 
     LaunchedEffect(albumFolderId) { if (albumFolderId != null) loadMore() }
 
-    // 顺序上传所选照片到 相册/<设备> 文件夹；取消当前 = 中止会话并继续下一张。
+    // Upload the picked photos sequentially into the album/<device> folder;
+    // cancelling the current one aborts its session and moves to the next.
     LaunchedEffect(pendingUploads) {
         if (pendingUploads.isEmpty()) return@LaunchedEffect
         val target = albumFolderId ?: AlbumFolder.resolve(repo, device)
@@ -263,7 +267,7 @@ fun AlbumScreen(
             }
         }
 
-        // 上传进度弹窗：进度 + 速率 + 取消。
+        // Upload progress dialog: progress, speed and cancel.
         if (pendingUploads.isNotEmpty()) {
             val p = progress
             androidx.compose.material3.AlertDialog(

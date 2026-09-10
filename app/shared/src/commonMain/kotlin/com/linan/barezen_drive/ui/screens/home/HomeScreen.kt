@@ -60,7 +60,7 @@ private const val RECENT_LIMIT = 12
 private const val ALBUM_STRIP_SIZE = 12
 
 /**
- * 首页 tab: an album strip (latest photos, "查看全部" opens the full
+ * Home tab: an album strip (latest photos, "see all" opens the full
  * monthly timeline), then the most recently changed files. The status
  * dashboard planned for the next phase slots in above the album section.
  */
@@ -119,11 +119,11 @@ fun HomeScreen(
             Modifier.fillMaxSize().padding(pad),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 112.dp),
         ) {
-            // ---- 服务器状态板块 ----
+            // ---- Server status section ----
             item(key = "server_status") {
                 ServerStatusCard(stats, latency)
             }
-            // ---- 相册板块 ----
+            // ---- Album section ----
             if (albumList != null && albumList.isNotEmpty()) {
                 item(key = "album_header") {
                     SectionHeader(
@@ -150,7 +150,7 @@ fun HomeScreen(
                     Spacer(Modifier.height(12.dp))
                 }
             }
-            // ---- 最近板块 ----
+            // ---- Recent section ----
             item(key = "recent_header") {
                 SectionHeader(title = LocalStrings.current.homeRecent, action = null, onAction = null)
             }
@@ -261,7 +261,7 @@ private fun RecentRow(
 
 private fun formatBytesPerSec(v: Long): String = if (v < 0) "—" else formatFileSize(v) + "/s"
 
-/** 顶部服务器状态面板：CPU / 内存 / 硬盘 / 延迟 / 上下行网速。 */
+/** Top server status panel: CPU / memory / disk / latency / up-down throughput. */
 @Composable
 private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?) {
     val panelAlpha = com.linan.barezen_drive.ui.theme.LocalPanelAlpha.current

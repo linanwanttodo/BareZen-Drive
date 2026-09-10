@@ -29,11 +29,20 @@ docker run -d --name barezen-pg -p 5432:5432 \
 ### 测试
 
 ```bash
-./gradlew :server:test --rerun-tasks --console=plain            # 服务端测试（67 用例）
-./gradlew :core:allTests --rerun-tasks --console=plain          # DTO 序列化测试（3 用例）
-./gradlew :app:shared:testAndroidHostTest --console=plain       # 共享模块测试（29 用例）
+./gradlew :server:test --rerun-tasks --console=plain            # 服务端测试（含版本接口用例）
+./gradlew :core:allTests --rerun-tasks --console=plain          # DTO 序列化 + 版本比较测试
+./gradlew :app:shared:testAndroidHostTest --console=plain       # 共享模块测试（含 UpdateChecker 用例）
 ./gradlew :app:shared:compileKotlinWasmJs --console=plain       # wasm 编译门
 ```
+
+### 持续集成
+
+`.github/workflows/ci.yml` 在推送到 `master` 与向 `master` 发 PR 时运行：`test` 门（服务端 /
+core / 共享模块测试 + wasm 编译门）通过后并行执行 `android`（debug+release APK）、`web`（wasm
+发行产物）、`desktop` 与 `ios` 两个预留任务。`desktop` 在 `:app:desktopApp` 启用后构建 JVM 发行
+版，`ios` 在 `app/shared/build.gradle.kts` 启用 Apple target 后在 macOS runner 上构建 Kotlin
+framework 与模拟器应用；两者在启用前检测不到对应任务时干净跳过。镜像发布见
+`.github/workflows/docker-publish.yml`。
 
 ### 一键部署（生产）
 
@@ -73,11 +82,12 @@ App 内登录页填服务器地址（如 `http://192.168.1.10:8080`）+ 账号�
 ## 构建减重与镜像
 
 - Gradle 依赖走 Aliyun 镜像，wrapper 走腾讯镜像（`gradle/wrapper/gradle-wrapper.properties` 与 `settings.gradle.kts`）。
-- KMP target 精简：core = jvm + wasmJs + android；shared = android + wasmJs；webApp 仅 wasmJs；desktopApp/iOS 源码保留但未启用。
+- KMP target 精简：core = jvm + wasmJs + android；shared = android + wasmJs；webApp 仅 wasmJs；desktopApp/iOS 源码保留但未启用（`AppUpdate.jvm.kt`、`iosMain`、`jsMain` 为预留 actual）。
 - 依赖白名单见 `gradle/libs.versions.toml`，新增依赖需先登记。
 
 ## 代码约束
 
 - 代码文件零 emoji、零装饰性 unicode（注释纯 ASCII；中文只出现在 UI 文案与错误消息字符串）。
-- UI 无渐变、无 hover 效果，遵循腾讯 UI 设计规范；图标一律 Material Icons 矢量图标。
+- 代码注释统一英文；用户可见文案只经 `i18n` 包，不在 Composable 内硬编码。
+- UI 无渐变、无 hover 效果；图标一律 Material Icons 矢量图标。
 - 每个 Task 独立 commit；测试不绿不提交。

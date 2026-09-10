@@ -24,6 +24,7 @@ import com.linan.barezen_drive.core.dto.UploadCompleteResponse
 import com.linan.barezen_drive.core.dto.RecentFilesResponse
 import com.linan.barezen_drive.core.dto.UploadInitRequest
 import com.linan.barezen_drive.core.dto.UploadInitResponse
+import com.linan.barezen_drive.core.dto.VersionInfoResponse
 import com.linan.barezen_drive.core.dto.UserDto
 import com.linan.barezen_drive.data.local.TokenStorage
 import com.linan.barezen_drive.platform.monotonicNowMs
@@ -96,9 +97,9 @@ class ApiClient(
 
     private fun HttpClientConfig<*>.commonConfig() {
         expectSuccess = true
-        // Fail fast instead of spinning "请稍候" forever when the host is
-        // wrong or unreachable (e.g. the emulator-only 10.0.2.2 typed into
-        // a desktop browser).
+        // Fail fast instead of spinning the "please wait" state forever when the
+        // host is wrong or unreachable (e.g. the emulator-only 10.0.2.2 typed
+        // into a desktop browser).
         install(HttpTimeout) {
             connectTimeoutMillis = 10_000
             requestTimeoutMillis = 20_000
@@ -291,6 +292,15 @@ class ApiClient(
 
     suspend fun serverStats(): Result<ServerStatsDto> = runApi {
         http.get("$baseUrl/api/server/stats").body()
+    }
+
+    /**
+     * Build/update metadata of the connected server (GET /api/version, public).
+     * Driven by the server so every client - including ones on networks that
+     * cannot reach GitHub directly - gets the same answer.
+     */
+    suspend fun versionInfo(): Result<VersionInfoResponse> = runApi {
+        http.get("$baseUrl/api/version").body()
     }
 
     /** Round-trip latency to /health in ms (monotonic clock). */

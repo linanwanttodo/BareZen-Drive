@@ -9,7 +9,7 @@ import com.linan.barezen_drive.AndroidContext
  * MasterKey/AndroidKeyStore initialization on some images - notably right on
  * the login request path, where the bearer loadTokens callback reads the
  * store before the request is sent. The symptom was a login button stuck on
- * "请稍候" with the request never leaving the device. Tokens are per-device,
+ * "please wait" with the request never leaving the device. Tokens are per-device,
  * self-hosted session credentials; plain prefs is the pragmatic tradeoff.
  */
 actual object TokenStorage : TokenStore {

@@ -1,6 +1,6 @@
 # API 参考
 
-所有请求/响应体为 JSON（二进制端点除外）。除 auth 与 /health 外均需 `Authorization: Bearer <accessToken>`。
+所有请求/响应体为 JSON（二进制端点除外）。除 auth、`/health` 与 `/api/version` 外均需 `Authorization: Bearer <accessToken>`。
 
 错误统一为：
 
@@ -10,13 +10,34 @@
 
 错误码全集：`INVALID_CREDENTIALS`、`TOKEN_INVALID`、`TOKEN_EXPIRED`、`USERNAME_INVALID`、`USERNAME_TAKEN`、`PASSWORD_TOO_SHORT`、`VALIDATION_ERROR`、`NOT_FOUND`、`NAME_CONFLICT`、`SESSION_NOT_FOUND`、`SESSION_COMPLETED`、`SESSION_EXPIRED`、`CHUNK_INVALID`、`CHUNK_MISSING`、`FILE_TOO_LARGE`、`INTERNAL_ERROR`。
 
-注（与设计 spec 的差异，以实现为准）：v0.0.1 未提供文件夹移动 API（`PATCH /api/folders/{id}` 仅接受 `name`），因此 `FOLDER_INTO_DESCENDANT` 暂不触发；`SESSION_NOT_FOUND` 统一以 404 `NOT_FOUND` 表达；`FILE_TOO_LARGE` 为预留码（服务端单块大小已校验，整文件大小上限未强制）。
+注（以实现为准）：v0.0.1 未提供文件夹移动 API（`PATCH /api/folders/{id}` 仅接受 `name`），因此 `FOLDER_INTO_DESCENDANT` 暂不触发；`SESSION_NOT_FOUND` 统一以 404 `NOT_FOUND` 表达；`FILE_TOO_LARGE` 为预留码（服务端单块大小已校验，整文件大小上限未强制）。
 
 ## 健康检查
 
 ### GET /health
 
 无认证。响应：`{"status":"ok"}`
+
+## 版本查询
+
+### GET /api/version
+
+无认证。返回服务端构建信息，以及服务端能解析到的最新上游发布版本：
+
+```json
+{"name": "BareZen-Drive", "serverVersion": "0.0.1", "apiVersion": 1,
+ "latestVersion": "0.0.1", "releaseUrl": "https://github.com/.../releases/tag/v0.0.1",
+ "updateAvailable": false}
+```
+
+- 由服务端统一查询上游发布（默认仓库取 `BuildInfo.REPOSITORY_URL`，可用 `UPDATE_REPO_URL`
+  覆盖；可选 `GITHUB_TOKEN` 提高速率上限），结果缓存 10 分钟，失败不缓存下次重试。客户端不直连
+  GitHub，因此受限网络下仍可得到结果。
+- 查询失败（离线、限流、响应异常）时 `latestVersion` 与 `releaseUrl` 为 `null`，
+  `updateAvailable` 为 `false`：未知不会被当作「有新版本」。
+- `updateAvailable` 仅在 `latestVersion` 已知且严格新于 `serverVersion` 时为 `true`。
+- `apiVersion` 为客户端/服务端 REST 契约版本（`BuildInfo.API_VERSION`），与 `serverVersion`
+  的产品版本相互独立。
 
 ## 认证
 

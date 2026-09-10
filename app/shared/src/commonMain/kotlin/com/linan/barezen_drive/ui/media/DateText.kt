@@ -19,5 +19,5 @@ fun formatDateTime(iso: String): String {
         "${local.hour.pad2()}:${local.minute.pad2()}"
 }
 
-/** Album month bucket label, e.g. "2026年9月". */
+/** Album month bucket label, localized (for example "September 2026"). */
 fun formatMonthLabel(year: Int, month: Int): String = I18n.strings.monthLabel(year, month)

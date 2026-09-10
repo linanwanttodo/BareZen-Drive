@@ -128,7 +128,7 @@ class AlbumTest {
         val web = mkFolder(albumA, "Web")
         val other = mkFolder(null, "其他")
         upload("w".encodeToByteArray(), "web.jpg", "image/jpeg")
-        // Move web.jpg into 相册/Web via the update endpoint.
+        // Move web.jpg into the album root/Web folder via the update endpoint.
         val webFileId = json.decodeFromString<AlbumPage>(client.get("/api/album") { header(HttpHeaders.Authorization, auth) }.bodyAsText()).files.first().id
         val move = client.patch("/api/files/$webFileId") { header(HttpHeaders.Authorization, auth); contentType(ContentType.Application.Json); setBody("""{"folderId":"$web"}""") }
         assertEquals(HttpStatusCode.OK, move.status, move.bodyAsText())
@@ -138,12 +138,12 @@ class AlbumTest {
         // A root-layer image stays outside any folder subtree.
         upload("r".encodeToByteArray(), "root.jpg", "image/jpeg")
 
-        // Scoped to 相册: only web.jpg (subtree includes the Web device folder).
+        // Scoped to the album root: only web.jpg (the subtree includes the Web device folder).
         val scoped = client.get("/api/album?root=$albumA") { header(HttpHeaders.Authorization, auth) }
         assertEquals(HttpStatusCode.OK, scoped.status, scoped.bodyAsText())
         assertEquals(listOf("web.jpg"), json.decodeFromString<AlbumPage>(scoped.bodyAsText()).files.map { it.name })
 
-        // Scoped to 其他: only other.jpg.
+        // Scoped to the other folder: only other.jpg.
         val scopedOther = client.get("/api/album?root=$other") { header(HttpHeaders.Authorization, auth) }
         assertEquals(listOf("other.jpg"), json.decodeFromString<AlbumPage>(scopedOther.bodyAsText()).files.map { it.name })
 
