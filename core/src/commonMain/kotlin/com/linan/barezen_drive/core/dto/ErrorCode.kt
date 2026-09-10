@@ -1,0 +1,21 @@
+package com.linan.barezen_drive.core.dto
+
+object ErrorCodes {
+    const val INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
+    const val TOKEN_INVALID = "TOKEN_INVALID"
+    const val TOKEN_EXPIRED = "TOKEN_EXPIRED"
+    const val USERNAME_INVALID = "USERNAME_INVALID"
+    const val USERNAME_TAKEN = "USERNAME_TAKEN"
+    const val PASSWORD_TOO_SHORT = "PASSWORD_TOO_SHORT"
+    const val VALIDATION_ERROR = "VALIDATION_ERROR"
+    const val NOT_FOUND = "NOT_FOUND"
+    const val NAME_CONFLICT = "NAME_CONFLICT"
+    const val FOLDER_INTO_DESCENDANT = "FOLDER_INTO_DESCENDANT"
+    const val SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
+    const val SESSION_COMPLETED = "SESSION_COMPLETED"
+    const val SESSION_EXPIRED = "SESSION_EXPIRED"
+    const val CHUNK_INVALID = "CHUNK_INVALID"
+    const val CHUNK_MISSING = "CHUNK_MISSING"
+    const val FILE_TOO_LARGE = "FILE_TOO_LARGE"
+    const val INTERNAL_ERROR = "INTERNAL_ERROR"
+}

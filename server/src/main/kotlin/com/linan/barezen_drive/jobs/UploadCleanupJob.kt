@@ -1,0 +1,23 @@
+package com.linan.barezen_drive.jobs
+
+import com.linan.barezen_drive.files.UploadService
+import com.linan.barezen_drive.storage.StorageProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import org.slf4j.LoggerFactory
+import kotlin.time.Duration.Companion.hours
+
+object UploadCleanupJob {
+    private val log = LoggerFactory.getLogger(UploadCleanupJob::class.java)
+
+    fun start(scope: CoroutineScope, storage: StorageProvider): Job = scope.launch {
+        while (isActive) {
+            runCatching { UploadService.cleanupExpired(storage) }
+                .onFailure { log.error("upload session cleanup failed", it) }
+            delay(6.hours)
+        }
+    }
+}
