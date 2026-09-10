@@ -16,6 +16,9 @@ services:
     restart: unless-stopped
 
   server:
+    # Pulls the prebuilt image by default; `docker compose build` rebuilds from
+    # source when you want to run a local checkout.
+    image: ghcr.io/linanwanttodo/barezen-drive:latest
     build: .
     environment:
       SERVER_PORT: "8080"

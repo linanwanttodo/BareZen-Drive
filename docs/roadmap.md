@@ -31,7 +31,9 @@
 - [ ] S3/MinIO StorageProvider（接口已就位：`StorageProvider`）
 - Flyway 迁移替代 createMissingTablesAndColumns
 - `install.sh` 一键部署脚本
-- iOS 客户端、Desktop 客户端（平台接口与 CI 任务已预留，剩余为目标启用与 actual 实现）
+- iOS 客户端、Desktop 客户端（平台接口与 CI 任务已预留，剩余为目标启用与 actual 实现。iOS 另有一个
+  前置依赖：第三方 UI 库 `io.github.kyant0:backdrop` 未发布 Apple 目标产物（仅 android/js/jvm），
+  需其发布 `iosArm64`/`iosSimulatorArm64`/`iosX64` klib，或换用支持 iOS 的实现）
 - Web 端 token 存储评估 HttpOnly cookie（v0.0.1 用 localStorage，存在 XSS 暴露面）
 - 上传合并边收边写（消除 tmp+merge 2x 磁盘峰值）
 - npm `ws` 8.20.1（High，GHSA-96hv-2xvq-fx4p）为 Kotlin/JS 构建工具链（webpack dev server）传递依赖，仅构建期存在、不进生产运行时；KGP 钉版无法通过 yarn 升级，待 Kotlin 插件更新后自然消除（Opsera 扫描 2026-09-09）

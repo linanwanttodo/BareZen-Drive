@@ -11,6 +11,23 @@ to run comfortably on a small 1 vCPU / 1 GB RAM server.
 
 Status: v0.0.1 | License: MIT | Platforms: Android, Web, Server
 
+## Download
+
+Packages are attached to the GitHub Releases:
+
+| Package | File | For |
+|---|---|---|
+| Server distribution (with the Web client embedded) | `BareZen-Drive-server.tar.gz` | Deploy on your own machine with JDK 21 |
+| Web client bundle | `BareZen-Drive-web.zip` | Static hosting, or copy into the server |
+| Android debug build | `BareZen-Drive-android-debug.apk` | Install directly on a phone |
+| Android release build | `BareZen-Drive-android-release-unsigned.apk` | Release build (unsigned) |
+| Container image | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker / Docker Compose |
+
+The full deployment and usage walkthrough is in
+[docs/usage.md](docs/usage.md) (Chinese) and
+[docs/usage.en.md](docs/usage.en.md) (English). Desktop and iOS packages are not
+produced yet; see the end of that guide for why.
+
 ## Highlights
 
 Shipped in v0.0.1 (see [docs/roadmap.md](docs/roadmap.md)):
@@ -249,11 +266,21 @@ a reload, which is how a server upgrade reaches already-open tabs.
 `.github/workflows/docker-publish.yml` builds and publishes the server image to
 GHCR on pushes to `master` and on `v*` tags.
 
+`.github/workflows/release.yml` produces a GitHub Release with downloadable
+packages. Pushing a `v*` tag creates the release automatically; `workflow_dispatch`
+builds one from a branch. Attached files are the server distribution, the Web
+bundle and the Android APKs, plus desktop and iOS packages once those targets are
+enabled. Releases keep their files permanently and need no login to download,
+unlike workflow artifacts.
+
 GitHub can build iOS: its macOS runners ship the Xcode toolchain, and the `ios`
 job is wired to build the Kotlin framework and the simulator app. The Apple
 targets are not enabled in `app/shared/build.gradle.kts` yet, so the job detects
 that and skips cleanly; enabling the targets turns the build on with no CI
-changes.
+changes. Enabling them has two requirements: the iOS `actual` implementations
+(which need a Mac to compile) and Apple-published artifacts for the third-party
+UI libraries - `io.github.kyant0:backdrop` currently ships only android/js/jvm,
+so it must publish `iosArm64`/`iosSimulatorArm64`/`iosX64` or be replaced.
 
 ## Testing
 

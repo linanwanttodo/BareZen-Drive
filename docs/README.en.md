@@ -7,6 +7,10 @@ for BareZen-Drive. Current version: v0.0.1.
 
 ## Documents
 
+- [usage.md](usage.md) (Chinese) / [usage.en.md](usage.en.md) (English):
+  **installation and usage** - how to obtain each component, deploy and use the
+  server and the Android/Web clients, how the update check works, and the
+  current status of desktop and iOS.
 - [architecture.md](architecture.md): overall architecture, module layout, server
   and client structure, data model, upload protocol, client internationalization
   (i18n), update check and deployment.

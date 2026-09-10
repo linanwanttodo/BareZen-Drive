@@ -9,6 +9,21 @@ Docker Compose。设计目标是在 1 核 1 GB 内存的小型服务器上流畅
 
 状态：v0.0.1 | 许可证：MIT | 平台：Android、Web、服务端
 
+## 下载
+
+安装包挂在 GitHub Releases 页：
+
+| 安装包 | 文件 | 用途 |
+|---|---|---|
+| 服务端发行包（内嵌 Web 客户端） | `BareZen-Drive-server.tar.gz` | 在有 JDK 21 的机器上直接部署 |
+| Web 客户端产物 | `BareZen-Drive-web.zip` | 静态托管，或拷入服务端 |
+| Android 调试包 | `BareZen-Drive-android-debug.apk` | 可直接装到手机 |
+| Android 发布包 | `BareZen-Drive-android-release-unsigned.apk` | release 构建（未签名） |
+| 容器镜像 | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker / Docker Compose |
+
+完整的部署与使用步骤见 [docs/usage.md](docs/usage.md)（中文）与
+[docs/usage.en.md](docs/usage.en.md)（英文）。桌面端与 iOS 暂不产出安装包，原因见该文末说明。
+
 ## 功能特性
 
 v0.0.1 已发布（见 [docs/roadmap.md](docs/roadmap.md)）：
@@ -224,9 +239,16 @@ curl -s localhost:8080/health
 `.github/workflows/docker-publish.yml` 在推送到 `master` 以及 `v*` 标签时构建并发布服务端镜像到
 GHCR。
 
+`.github/workflows/release.yml` 产出带可下载安装包的 GitHub Release。推送 `v*` 标签会自动创建
+release，也可用 `workflow_dispatch` 从分支构建。附件包含服务端发行包、Web 产物、Android APK，以及
+桌面端与 iOS 目标启用后的对应安装包。Release 附件永久保留、下载无需登录，这与有会话时效的 Actions
+artifacts 不同。
+
 GitHub 可以构建 iOS：其 macOS runner 自带 Xcode 工具链，`ios` 任务已接好构建 Kotlin framework 与
 模拟器应用的步骤。当前 `app/shared/build.gradle.kts` 尚未启用 Apple target，任务会检测到这一点并
-干净跳过；启用 target 后无需改动 CI 即可开始构建。
+干净跳过；启用 target 后无需改动 CI 即可开始构建。启用需要两个前提：iOS 的 `actual` 实现（需要 Mac
+才能编译验证），以及第三方 UI 库发布 Apple 产物——`io.github.kyant0:backdrop` 目前只发布
+android/js/jvm，需其补充 `iosArm64`/`iosSimulatorArm64`/`iosX64` 或换用支持 iOS 的实现。
 
 ## 测试
 
