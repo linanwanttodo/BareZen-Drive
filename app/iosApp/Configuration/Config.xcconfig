@@ -3,5 +3,8 @@ TEAM_ID=
 PRODUCT_NAME=BareZen-Drive
 PRODUCT_BUNDLE_IDENTIFIER=com.linan.barezen_drive.BareZen-Drive$(TEAM_ID)
 
+# These mirror the single version in gradle.properties. The CI pipeline rewrites
+# this file from that value before building on macOS, so they cannot drift in a
+# release; the values here are the checked-in defaults for local Xcode builds.
 CURRENT_PROJECT_VERSION=1
-MARKETING_VERSION=1.0
+MARKETING_VERSION=0.0.1

@@ -11,17 +11,24 @@ Docker Compose。设计目标是在 1 核 1 GB 内存的小型服务器上流畅
 
 ## 下载
 
-安装包挂在 GitHub Releases 页：
+安装包挂在 GitHub Releases 页（文件名带版本号）：
 
 | 安装包 | 文件 | 用途 |
 |---|---|---|
-| 服务端发行包（内嵌 Web 客户端） | `BareZen-Drive-server.tar.gz` | 在有 JDK 21 的机器上直接部署 |
-| Web 客户端产物 | `BareZen-Drive-web.zip` | 静态托管，或拷入服务端 |
-| Android 调试包 | `BareZen-Drive-android-debug.apk` | 可直接装到手机 |
-| Android 发布包 | `BareZen-Drive-android-release-unsigned.apk` | release 构建（未签名） |
-| 容器镜像 | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker / Docker Compose |
+| 服务端发行包（内嵌 Web 客户端） | `BareZen-Drive-<版本>-server.tar.gz` | 在有 JDK 21 的机器上直接部署 |
+| Web 客户端产物 | `BareZen-Drive-<版本>-web.zip` | 静态托管，或拷入服务端 |
+| Android | `BareZen-Drive-<版本>-android.apk` | 可直接装到手机 |
+| 更新清单 | `update.json` + `checksums.txt` | 供服务端读取，驱动应用内检查更新 |
+| 容器镜像 | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker / Docker Compose，linux/amd64 与 linux/arm64 |
 
-完整的部署与使用步骤见 [docs/usage.md](docs/usage.md)（中文）与
+**一条命令部署服务器：**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/linanwanttodo/BareZen-Drive/master/install.sh | bash
+```
+
+安装脚本生成 `.env`（JWT 密钥与数据库密码留空自动生成）、拉取镜像并启动 PostgreSQL 与服务端。
+完整步骤——包括注册第一个账号后如何关闭开放注册——见 [docs/usage.md](docs/usage.md)（中文）与
 [docs/usage.en.md](docs/usage.en.md)（英文）。桌面端与 iOS 暂不产出安装包，原因见该文末说明。
 
 ## 功能特性

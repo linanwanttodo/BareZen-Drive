@@ -15,5 +15,7 @@ class ApiException(val code: String, val status: HttpStatusCode, override val me
             ApiException(code, HttpStatusCode.Conflict, message)
         fun unauthorized(message: String, code: String = ErrorCodes.INVALID_CREDENTIALS) =
             ApiException(code, HttpStatusCode.Unauthorized, message)
+        fun forbidden(message: String, code: String = ErrorCodes.VALIDATION_ERROR) =
+            ApiException(code, HttpStatusCode.Forbidden, message)
     }
 }

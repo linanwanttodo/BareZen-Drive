@@ -7,7 +7,7 @@ import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.transactions.transaction
 
 object DatabaseFactory {
-    val ALL_TABLES = arrayOf(UsersTable, RefreshTokensTable, FoldersTable, FilesTable, UploadSessionsTable, UploadChunksTable, ShareLinksTable)
+    val ALL_TABLES = arrayOf(UsersTable, RefreshTokensTable, FoldersTable, FilesTable, UploadSessionsTable, UploadChunksTable, ShareLinksTable, SettingsTable)
 
     // Exposed 0.61 registers the manager into the CALLING thread's ThreadLocal, so the
     // no-arg transaction {} form fails on other threads (Netty event loops). Every call

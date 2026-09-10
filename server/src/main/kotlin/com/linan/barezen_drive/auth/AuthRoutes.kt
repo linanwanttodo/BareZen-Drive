@@ -7,6 +7,7 @@ import com.linan.barezen_drive.core.dto.RefreshRequest
 import com.linan.barezen_drive.core.dto.RegisterRequest
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.UsersTable
+import com.linan.barezen_drive.system.ServerSettingsService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -27,6 +28,12 @@ val ApplicationCall.userId: UUID
 fun Route.authRoutes() {
     route("/api/auth") {
         post("/register") {
+            // A self-hosted drive usually wants exactly one account: after the
+            // owner signs up they close registration from the settings screen,
+            // and the endpoint answers 403 REGISTRATION_DISABLED until reopened.
+            if (!ServerSettingsService.registrationOpen()) {
+                throw ApiException.forbidden("注册已关闭", ErrorCodes.REGISTRATION_DISABLED)
+            }
             val req = call.receive<RegisterRequest>()
             call.respond(HttpStatusCode.Created, withContext(Dispatchers.IO) { AuthService.register(req.username, req.password) })
         }

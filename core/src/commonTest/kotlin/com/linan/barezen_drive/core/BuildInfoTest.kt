@@ -33,4 +33,16 @@ class BuildInfoTest {
         assertFalse(BuildInfo.isNewer("1.0.0-rc1", "1.0.0"))
         assertTrue(BuildInfo.isNewer("1.0.1-rc1", "1.0.0"))
     }
+
+    @Test
+    fun androidVersionCodeEncodesVersionAndIsMonotonic() {
+        assertEquals(1, BuildInfo.androidVersionCode("0.0.1"))
+        assertEquals(102, BuildInfo.androidVersionCode("0.1.2"))
+        assertEquals(10_203, BuildInfo.androidVersionCode("1.2.3"))
+        assertEquals(1_000_000, BuildInfo.androidVersionCode("100.0.0"))
+        // A higher version must always yield a higher code.
+        assertTrue(BuildInfo.androidVersionCode("0.0.2") > BuildInfo.androidVersionCode("0.0.1"))
+        assertTrue(BuildInfo.androidVersionCode("0.1.0") > BuildInfo.androidVersionCode("0.0.99"))
+        assertTrue(BuildInfo.androidVersionCode("v0.0.2") > BuildInfo.androidVersionCode("0.0.1"))
+    }
 }

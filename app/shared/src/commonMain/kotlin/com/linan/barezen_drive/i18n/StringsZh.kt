@@ -167,8 +167,11 @@ object StringsZh : Strings {
     override val updateAvailable: String = "发现新版本"
     override val openReleasePage: String = "打开发布页"
     override val actionReload: String = "重新加载"
+    override val actionDownloadUpdate: String = "下载更新"
     override fun reloadToUpdate(version: String): String =
         "服务器已更新到 $version，重新加载即可使用新版本"
+    override fun downloadUpdateHint(version: String): String =
+        "发现新版本 $version，下载并安装即可更新"
     override val networkTimeout: String = "连接服务器超时，请检查服务器地址"
     override val networkCannotConnect: String = "无法连接服务器，请检查地址是否正确"
     override val settingsLanguage: String = "语言"
@@ -176,4 +179,9 @@ object StringsZh : Strings {
     override val languageSystem: String = "跟随系统"
     override val languageChinese: String = "简体中文"
     override val languageEnglish: String = "English"
+    override val settingsServer: String = "服务器"
+    override val openRegistration: String = "开放注册"
+    override val openRegistrationOnHint: String = "新访客可自行注册账号，建好自己的账号后建议关闭"
+    override val openRegistrationOffHint: String = "仅已有账号可以登录"
+    override val switchingRegistration: String = "正在修改..."
 }

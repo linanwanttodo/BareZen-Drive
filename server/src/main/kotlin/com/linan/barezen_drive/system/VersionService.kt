@@ -1,6 +1,9 @@
 package com.linan.barezen_drive.system
 
 import com.linan.barezen_drive.core.BuildInfo
+import com.linan.barezen_drive.core.dto.UpdateAssetDto
+import com.linan.barezen_drive.core.dto.UpdateDockerDto
+import com.linan.barezen_drive.core.dto.UpdateManifestDto
 import com.linan.barezen_drive.core.dto.VersionInfoResponse
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -14,15 +17,18 @@ import java.time.Duration
 /**
  * Resolves the newest upstream release and answers GET /api/version.
  *
- * The lookup is done here, once per server, instead of in each client:
- * clients only need to reach their own server, the GitHub token (when set)
- * stays server-side, and a self-hosted instance behind a restrictive network
- * simply reports "unknown" rather than making every client try and fail.
+ * Source order:
+ *  1. The release manifest (update.json) when a manifest URL is configured - a
+ *     stable, unauthenticated file with no rate limit that also carries the
+ *     per-platform download links.
+ *  2. The GitHub REST "latest release" endpoint as a fallback, derived from the
+ *     repository URL, so deployments configured before the manifest keep working.
  *
- * The result is cached for [CACHE_TTL_MS] so a burst of client polls never
- * turns into a burst of GitHub calls. Any failure (offline, rate limit,
- * malformed response) degrades to latestVersion = null and is not cached, so
- * the next call retries.
+ * The lookup is done once per server instead of in each client, so a
+ * self-hosted instance behind a restrictive network reports "unknown" rather
+ * than making every client try and fail. The result is cached for
+ * [CACHE_TTL_MS]; any failure degrades to latestVersion = null and is not
+ * cached, so the next call retries.
  */
 object VersionService {
 
@@ -37,7 +43,13 @@ object VersionService {
             .build()
     }
 
-    private data class Release(val tag: String, val url: String?)
+    /** Resolved release, whichever source produced it. */
+    private data class Release(
+        val tag: String,
+        val url: String?,
+        val assets: List<UpdateAssetDto> = emptyList(),
+        val docker: UpdateDockerDto? = null,
+    )
 
     @Volatile private var cached: Release? = null
     @Volatile private var cachedAtMs: Long = 0
@@ -48,8 +60,8 @@ object VersionService {
         cachedAtMs = 0
     }
 
-    fun snapshot(repoUrl: String, githubToken: String?): VersionInfoResponse {
-        val release = cachedRelease(repoUrl, githubToken)
+    fun snapshot(repoUrl: String, manifestUrl: String?, githubToken: String?): VersionInfoResponse {
+        val release = cachedRelease(repoUrl, manifestUrl, githubToken)
         val serverVersion = BuildInfo.normalize(BuildInfo.VERSION)
         val latest = release?.tag?.let(BuildInfo::normalize)
         return VersionInfoResponse(
@@ -59,34 +71,57 @@ object VersionService {
             latestVersion = latest,
             releaseUrl = release?.url,
             updateAvailable = latest != null && BuildInfo.isNewer(latest, serverVersion),
+            assets = release?.assets ?: emptyList(),
         )
     }
 
-    private fun cachedRelease(repoUrl: String, githubToken: String?): Release? {
+    private fun cachedRelease(repoUrl: String, manifestUrl: String?, githubToken: String?): Release? {
         val now = System.currentTimeMillis()
         cached?.let { if (now - cachedAtMs < CACHE_TTL_MS) return it }
-        val fetched = fetchLatestRelease(repoUrl, githubToken) ?: return null
+        val fetched = (manifestUrl?.let { fetchManifest(it, githubToken) }
+            ?: fetchLatestRelease(repoUrl, githubToken)) ?: return null
         cached = fetched
         cachedAtMs = now
         return fetched
     }
 
+    /** Reads the release manifest (update.json). */
+    private fun fetchManifest(manifestUrl: String, githubToken: String?): Release? {
+        if (manifestUrl.isBlank()) return null
+        return runCatching {
+            val body = get(manifestUrl, "application/json", githubToken) ?: return@runCatching null
+            val manifest = json.decodeFromString<UpdateManifestDto>(body)
+            if (manifest.version.isBlank()) return@runCatching null
+            Release(
+                tag = manifest.version,
+                url = manifest.releaseNotesUrl,
+                assets = manifest.assets,
+                docker = manifest.docker,
+            )
+        }.getOrNull()
+    }
+
+    /** Fallback: the GitHub REST "latest release" endpoint for a repository URL. */
     private fun fetchLatestRelease(repoUrl: String, githubToken: String?): Release? {
         val apiUrl = apiLatestReleaseUrl(repoUrl) ?: return null
         return runCatching {
-            val builder = HttpRequest.newBuilder(URI.create(apiUrl))
-                .timeout(Duration.ofSeconds(6))
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", BuildInfo.NAME)
-                .GET()
-            if (!githubToken.isNullOrBlank()) builder.header("Authorization", "Bearer $githubToken")
-            val response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-            if (response.statusCode() != 200) return@runCatching null
-            val obj = json.parseToJsonElement(response.body()).jsonObject
+            val body = get(apiUrl, "application/vnd.github+json", githubToken) ?: return@runCatching null
+            val obj = json.parseToJsonElement(body).jsonObject
             val tag = obj["tag_name"]?.jsonPrimitive?.contentOrNullSafe() ?: return@runCatching null
             val url = obj["html_url"]?.jsonPrimitive?.contentOrNullSafe()
             Release(tag, url)
         }.getOrNull()
+    }
+
+    private fun get(url: String, accept: String, githubToken: String?): String? {
+        val builder = HttpRequest.newBuilder(URI.create(url))
+            .timeout(Duration.ofSeconds(6))
+            .header("Accept", accept)
+            .header("User-Agent", BuildInfo.NAME)
+            .GET()
+        if (!githubToken.isNullOrBlank()) builder.header("Authorization", "Bearer $githubToken")
+        val response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString())
+        return if (response.statusCode() == 200) response.body() else null
     }
 
     /** Maps a repository URL such as https://github.com/owner/repo to its API endpoint. */

@@ -14,6 +14,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.ImageBitmap
@@ -45,6 +46,7 @@ import com.linan.barezen_drive.ui.theme.wallpaperSeedColor
 import com.linan.barezen_drive.ui.wallpaper.WallpaperImage
 import com.linan.barezen_drive.ui.wallpaper.loadPersistedWallpaper
 import com.linan.barezen_drive.ui.wallpaper.rememberWallpaperPicker
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
@@ -155,6 +157,13 @@ fun App() {
         val files = remember { FilesRepository(api) }
         val uploader = remember { UploadManager(files) }
         val thumbs = remember { ThumbnailLoader(files) }
+        // Server-side registration switch: null until the first load answers,
+        // which hides the toggle offline and on servers without the endpoint.
+        var registrationOpen by remember { mutableStateOf<Boolean?>(null) }
+        val scope = rememberCoroutineScope()
+        LaunchedEffect(Unit) {
+            registrationOpen = files.registrationStatus().getOrNull()?.open
+        }
 
         var stack by remember {
             mutableStateOf(
@@ -305,6 +314,15 @@ fun App() {
                             ping = { files.ping() },
                             currentVersion = com.linan.barezen_drive.core.BuildInfo.VERSION,
                             checkUpdate = { com.linan.barezen_drive.data.update.UpdateChecker.check(files) },
+                            registrationOpen = registrationOpen,
+                            onRegistrationOpenChange = { open ->
+                                // Optimistic flip; the server answer is the truth.
+                                registrationOpen = open
+                                scope.launch {
+                                    registrationOpen = files.setRegistrationOpen(open)
+                                        .getOrNull()?.open ?: open
+                                }
+                            },
                             wallpaperEnabled = wallpaperEnabled,
                             onWallpaperToggle = { on ->
                                 wallpaperEnabled = on

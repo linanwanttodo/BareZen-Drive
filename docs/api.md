@@ -8,7 +8,7 @@
 {"error": {"code": "NAME_CONFLICT", "message": "同级已存在同名文件夹或文件"}}
 ```
 
-错误码全集：`INVALID_CREDENTIALS`、`TOKEN_INVALID`、`TOKEN_EXPIRED`、`USERNAME_INVALID`、`USERNAME_TAKEN`、`PASSWORD_TOO_SHORT`、`VALIDATION_ERROR`、`NOT_FOUND`、`NAME_CONFLICT`、`SESSION_NOT_FOUND`、`SESSION_COMPLETED`、`SESSION_EXPIRED`、`CHUNK_INVALID`、`CHUNK_MISSING`、`FILE_TOO_LARGE`、`INTERNAL_ERROR`。
+错误码全集：`INVALID_CREDENTIALS`、`TOKEN_INVALID`、`TOKEN_EXPIRED`、`USERNAME_INVALID`、`USERNAME_TAKEN`、`PASSWORD_TOO_SHORT`、`VALIDATION_ERROR`、`NOT_FOUND`、`NAME_CONFLICT`、`SESSION_NOT_FOUND`、`SESSION_COMPLETED`、`SESSION_EXPIRED`、`CHUNK_INVALID`、`CHUNK_MISSING`、`FILE_TOO_LARGE`、`REGISTRATION_DISABLED`、`INTERNAL_ERROR`。
 
 注（以实现为准）：v0.0.1 未提供文件夹移动 API（`PATCH /api/folders/{id}` 仅接受 `name`），因此 `FOLDER_INTO_DESCENDANT` 暂不触发；`SESSION_NOT_FOUND` 统一以 404 `NOT_FOUND` 表达；`FILE_TOO_LARGE` 为预留码（服务端单块大小已校验，整文件大小上限未强制）。
 
@@ -38,6 +38,27 @@
 - `updateAvailable` 仅在 `latestVersion` 已知且严格新于 `serverVersion` 时为 `true`。
 - `apiVersion` 为客户端/服务端 REST 契约版本（`BuildInfo.API_VERSION`），与 `serverVersion`
   的产品版本相互独立。
+- 数据源优先读取发布清单 `update.json`（`UPDATE_MANIFEST_URL` 可覆盖，默认指向本仓库最新
+  Release 的 `releases/latest/download/update.json`，无限流），读取失败回落 GitHub API。返回体
+  的 `assets` 字段携带清单中每个包的平台/架构/格式/直链/sha256/大小，客户端据此按平台直接下载：
+
+```json
+{"name":"BareZen-Drive","serverVersion":"0.0.1","apiVersion":1,
+ "latestVersion":"0.0.2","releaseUrl":"https://github.com/.../releases/tag/v0.0.2",
+ "updateAvailable":true,
+ "assets":[{"platform":"android","arch":"any","kind":"apk","url":"https://...","sha256":"...","size":0}]}
+```
+
+## 服务器设置（注册开关）
+
+### GET /api/settings/registration（公开）
+
+登录页据此隐藏注册入口。响应：`{"open": true}`
+
+### PATCH /api/settings/registration（需登录）
+
+请求 `{"open": false}`，响应同 GET。设置持久化在 `settings` 表；新库默认开放（先建第一个账号，
+再在设置里关闭）。
 
 ## 认证
 
@@ -51,6 +72,9 @@
 ```
 
 用户名 3–32 位 `[a-zA-Z0-9_]`；密码至少 8 位。错误：`USERNAME_INVALID`、`USERNAME_TAKEN`、`PASSWORD_TOO_SHORT`。
+
+注册受服务端「开放注册」开关控制（默认开放）。关闭后返回 403 `REGISTRATION_DISABLED`。开关在
+客户端「设置 → 服务器」里切换（`PATCH /api/settings/registration`），关闭后登录页自动隐藏注册入口。
 
 ### POST /api/auth/login
 

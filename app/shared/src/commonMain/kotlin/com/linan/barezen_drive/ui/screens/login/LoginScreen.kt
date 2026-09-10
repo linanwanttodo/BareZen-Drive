@@ -22,6 +22,7 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -83,11 +84,23 @@ fun LoginScreen(
         ) {
         Text("BareZen Drive", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(24.dp))
-        TabRow(selectedTabIndex = mode) {
-            Tab(mode == 0, { mode = 0 }) { Text(LocalStrings.current.actionSignIn, Modifier.padding(12.dp)) }
-            Tab(mode == 1, { mode = 1 }) { Text(LocalStrings.current.actionRegister, Modifier.padding(12.dp)) }
+        // The register tab disappears once the owner closed sign-ups, so a
+        // visitor never fills a form that the server would reject with 403.
+        // Before the first successful status load the tab shows (open default);
+        // an unreachable server still lets the user try.
+        var registrationOpen by remember { mutableStateOf(true) }
+        LaunchedEffect(host) {
+            registrationOpen = runCatching {
+                auth.registrationStatus(host).getOrDefault(true)
+            }.getOrDefault(true)
         }
-        Spacer(Modifier.height(16.dp))
+        if (registrationOpen) {
+            TabRow(selectedTabIndex = mode) {
+                Tab(mode == 0, { mode = 0 }) { Text(LocalStrings.current.actionSignIn, Modifier.padding(12.dp)) }
+                Tab(mode == 1, { mode = 1 }) { Text(LocalStrings.current.actionRegister, Modifier.padding(12.dp)) }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
         OutlinedTextField(
             value = host,
             onValueChange = { host = it },
@@ -144,7 +157,7 @@ fun LoginScreen(
                 busy = true
                 error = null
                 scope.launch {
-                    val r = if (mode == 0) {
+                    val r = if (mode == 0 || !registrationOpen) {
                         auth.login(host, username, password).map { }
                     } else {
                         // The register endpoint creates the account but returns no

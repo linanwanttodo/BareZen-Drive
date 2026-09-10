@@ -101,3 +101,13 @@ object ShareLinksTable : Table("share_links") {
         index(customIndexName = "share_target_idx", isUnique = false, file, folder)
     }
 }
+
+// Owner-managed server settings as key/value rows. New booleans are added here
+// instead of new tables; the row appears on first write, so a fresh server
+// starts on defaults without a migration step.
+object SettingsTable : Table("settings") {
+    val key = varchar("key", 64)
+    val value = varchar("value", 255)
+    val updatedAt = long("updated_at").clientDefault { System.currentTimeMillis() }
+    override val primaryKey = PrimaryKey(key)
+}

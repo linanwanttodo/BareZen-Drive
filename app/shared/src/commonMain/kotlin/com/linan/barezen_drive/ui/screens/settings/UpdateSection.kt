@@ -91,25 +91,30 @@ private fun UpdateResultDialog(outcome: UpdateStatus, onDismiss: () -> Unit) {
             title = { Text(LocalStrings.current.updateAvailable) },
             text = {
                 Text(
-                    if (outcome.reloadOnly) {
-                        LocalStrings.current.reloadToUpdate(outcome.version)
-                    } else {
-                        LocalStrings.current.updateAvailableVersion(outcome.version)
+                    when {
+                        outcome.reloadOnly -> LocalStrings.current.reloadToUpdate(outcome.version)
+                        outcome.downloadUrl != null -> LocalStrings.current.downloadUpdateHint(outcome.version)
+                        else -> LocalStrings.current.updateAvailableVersion(outcome.version)
                     },
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     onDismiss()
-                    if (outcome.reloadOnly) {
-                        reloadApp()
-                    } else {
-                        outcome.releaseUrl?.let(::openInBrowser)
+                    when {
+                        outcome.reloadOnly -> reloadApp()
+                        // A manifest package lets the client fetch the right
+                        // build directly; otherwise fall back to the release page.
+                        outcome.downloadUrl != null -> openInBrowser(outcome.downloadUrl)
+                        else -> outcome.releaseUrl?.let(::openInBrowser)
                     }
                 }) {
                     Text(
-                        if (outcome.reloadOnly) LocalStrings.current.actionReload
-                        else LocalStrings.current.openReleasePage,
+                        when {
+                            outcome.reloadOnly -> LocalStrings.current.actionReload
+                            outcome.downloadUrl != null -> LocalStrings.current.actionDownloadUpdate
+                            else -> LocalStrings.current.openReleasePage
+                        },
                     )
                 }
             },

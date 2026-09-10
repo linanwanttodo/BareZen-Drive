@@ -25,6 +25,8 @@ import com.linan.barezen_drive.core.dto.RecentFilesResponse
 import com.linan.barezen_drive.core.dto.UploadInitRequest
 import com.linan.barezen_drive.core.dto.UploadInitResponse
 import com.linan.barezen_drive.core.dto.VersionInfoResponse
+import com.linan.barezen_drive.core.dto.RegistrationSettingRequest
+import com.linan.barezen_drive.core.dto.RegistrationStatusDto
 import com.linan.barezen_drive.core.dto.UserDto
 import com.linan.barezen_drive.data.local.TokenStorage
 import com.linan.barezen_drive.platform.monotonicNowMs
@@ -301,6 +303,19 @@ class ApiClient(
      */
     suspend fun versionInfo(): Result<VersionInfoResponse> = runApi {
         http.get("$baseUrl/api/version").body()
+    }
+
+    /** Whether the server accepts new sign-ups right now (public endpoint). */
+    suspend fun registrationStatus(): Result<RegistrationStatusDto> = runApi {
+        http.get("$baseUrl/api/settings/registration").body()
+    }
+
+    /** Owner toggle for open registration (PATCH /api/settings/registration). */
+    suspend fun setRegistrationOpen(open: Boolean): Result<RegistrationStatusDto> = runApi {
+        http.patch("$baseUrl/api/settings/registration") {
+            contentType(ContentType.Application.Json)
+            setBody(RegistrationSettingRequest(open))
+        }.body()
     }
 
     /** Round-trip latency to /health in ms (monotonic clock). */

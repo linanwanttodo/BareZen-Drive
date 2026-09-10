@@ -6,229 +6,149 @@ This guide covers how to get, install and use each BareZen-Drive component. For
 what the project is, see [README.md](../README.md); for the HTTP API, see
 [api.md](api.md).
 
-## 1. Which form do you need
+## 1. One-command server deployment (recommended)
 
-| Form | Use case | Artifact | How to get it |
-|---|---|---|---|
-| Server + Web | You have your own server (VPS / NAS / Raspberry Pi) | Docker image or server distribution | Pull from GHCR, or `BareZen-Drive-server.tar.gz` from Releases |
-| Android client | Use it on a phone | `BareZen-Drive-android-*.apk` | Download from the Releases page |
-| Web client | Use it in a browser, nothing to install | Served by the server | Open `http://<server>:8080` after deploying the server |
-| Desktop client | Windows / macOS / Linux desktop | Reserved, see the last section | Not available yet |
-| iOS client | iPhone / iPad | Reserved, see the last section | Not available yet |
-
-Android and Web share one Compose Multiplatform UI and the same features. The
-server is the only mandatory piece: it serves the Web client and the Android
-client connects to its address.
-
-## 2. Deploy the server (required)
-
-The server provides the API, file storage and the Web client. Pick one of the
-two paths.
-
-### Option A: Docker Compose (recommended)
-
-Simplest, and the image is already built on the GitHub Container Registry.
-
-1. Prepare a machine with Docker and Docker Compose; 1 vCPU / 1 GB RAM is enough.
-2. Fetch the two files (or clone the whole repository):
+The server is the only mandatory piece: it provides the API, file storage, and
+serves the Web client itself. Deploy with one command:
 
 ```bash
-mkdir barezen && cd barezen
-curl -fsSLO https://raw.githubusercontent.com/linanwanttodo/BareZen-Drive/master/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/linanwanttodo/BareZen-Drive/master/.env.example
+curl -fsSL https://raw.githubusercontent.com/linanwanttodo/BareZen-Drive/master/install.sh | bash
 ```
 
-3. Generate the configuration and fill in the secrets:
+The script:
+
+1. Checks Docker and Docker Compose.
+2. Generates `.env` in `/opt/barezen` - asks for the port; the database password
+   and JWT secret are auto-generated when left blank (or skip the prompts with
+   `--dir`, `--port`, `--version`).
+3. Pulls the `ghcr.io/linanwanttodo/barezen-drive` image (multi-arch: both
+   amd64 and arm64).
+4. Starts the PostgreSQL 16 and server containers, waits for the health check,
+   and prints the access address.
+
+After installation:
+
+- Open `http://<server address>:8080` in a browser for the Web client.
+- **First thing to do: register your account, then close "Open registration"
+  in Settings -> Server.** A private drive should not let everyone sign up;
+  once closed, the register tab disappears from the login screen and the API
+  rejects new sign-ups (error code `REGISTRATION_DISABLED`). Reopen it any time.
+
+Common commands (run inside the install directory `/opt/barezen`):
 
 ```bash
-cp .env.example .env
-openssl rand -base64 48          # generate a JWT secret of at least 32 bytes
+docker compose pull && docker compose up -d   # upgrade to the latest image
+docker compose logs -f server                 # logs
+docker compose down                           # stop (data is kept)
 ```
 
-Put the output into `JWT_SECRET` in `.env` and set a strong
-`POSTGRES_PASSWORD`:
-
-```dotenv
-JWT_SECRET=<the long random string from the step above>
-POSTGRES_DB=barezen
-POSTGRES_USER=barezen
-POSTGRES_PASSWORD=<your strong password>
-SERVER_PORT=8080
-```
-
-4. Start it:
-
-```bash
-docker compose up -d --build
-```
-
-If the machine cannot reach the registry, replace `build: .` in
-`docker-compose.yml` with the prebuilt image:
-
-```yaml
-  server:
-    image: ghcr.io/linanwanttodo/barezen-drive:latest
-```
-
-5. Verify:
-
-```bash
-curl -s localhost:8080/health          # {"status":"ok"}
-curl -s localhost:8080/api/version     # version information
-```
-
-6. Open `http://<server address>:8080` in a browser: that is the Web client.
-   Switch to the "Register" tab on the login screen to create the first account.
-
-Upgrade the server:
-
-```bash
-docker compose pull          # or docker compose build --pull
-docker compose up -d
-```
-
-After an upgrade, browser tabs that are already open prompt a reload; one click
-loads the new version.
-
-### Option B: Server distribution (no Docker)
-
-For machines that have JDK 21 but no Docker. You provide your own PostgreSQL 16
-(or compatible).
-
-1. Download `BareZen-Drive-server.tar.gz` from the Releases page and unpack it:
-
-```bash
-mkdir -p /opt/barezen && tar -xzf BareZen-Drive-server.tar.gz -C /opt/barezen
-```
-
-2. Set the environment and start it (the distribution already embeds the
-   compiled Web client):
-
-```bash
-export SERVER_PORT=8080
-export JDBC_URL="jdbc:postgresql://localhost:5432/barezen"
-export DB_USER=barezen
-export DB_PASSWORD=<your database password>
-export JWT_SECRET="<at least 32 bytes of random>"
-export STORAGE_DIR=/opt/barezen/storage
-/opt/barezen/server/bin/server
-```
-
-3. Optional, run it under systemd. Create `/etc/systemd/system/barezen.service`:
-
-```ini
-[Unit]
-Description=BareZen-Drive server
-After=network.target postgresql.service
-
-[Service]
-User=barezen
-EnvironmentFile=/opt/barezen/barezen.env
-ExecStart=/opt/barezen/server/bin/server
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Put the environment variables in `/opt/barezen/barezen.env` (one `KEY=value`
-per line), then:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now barezen
-```
-
-### Server environment variables
+### What goes into .env
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `JWT_SECRET` | yes | JWT signing secret, at least 32 bytes |
-| `JDBC_URL` | yes | PostgreSQL connection string |
-| `DB_USER` / `DB_PASSWORD` | yes | Database credentials |
-| `SERVER_PORT` | no | Listen port, default 8080 |
-| `STORAGE_DIR` | no | Directory for files and thumbnails, default `./data/storage` |
+| `JWT_SECRET` | yes | JWT signing secret, at least 32 bytes. `openssl rand -base64 48`; the script can generate it |
+| `POSTGRES_PASSWORD` | yes | PostgreSQL password; the script can generate it |
+| `POSTGRES_DB` / `POSTGRES_USER` | no | Defaults `barezen` / `barezen` |
+| `SERVER_PORT` | no | Public port, default 8080 |
+| `STORAGE_DIR` | no | In-container file directory; fixed to `/data/storage` in compose, bind-mounted to `./data/storage` |
 | `MAX_FILE_SIZE` | no | Per-file limit, default 10 GiB |
-| `UPDATE_REPO_URL` | no | Repository polled by the update check, default this project |
-| `GITHUB_TOKEN` | no | Raises the GitHub release-check rate limit |
+| `UPDATE_MANIFEST_URL` | no | Update manifest URL; defaults to `update.json` on the repository's latest release |
+| `GITHUB_TOKEN` | no | Optional, raises the GitHub rate limit |
 
-Data lives in two places: metadata in PostgreSQL, file content in `STORAGE_DIR`.
-**Back up those two and you have everything.**
+Backups need exactly two things: the `./data/storage` directory (file content)
+and the PostgreSQL volume (metadata).
 
-## 3. Install and use the Android client
+### Without Docker
 
-1. From the Releases page download
-   `BareZen-Drive-android-release-unsigned.apk` (release) or
-   `BareZen-Drive-android-debug.apk` (debug).
-2. Open the APK on the phone to install. The system asks to allow installation
-   from an unknown source.
-   - Note: the release APK is currently unsigned (`-unsigned`), so some systems
-     may require signing it first; the debug APK installs directly. A signed
-     production release needs a signing key configured by the maintainer.
-3. Open the app and enter the server address and account on the login screen:
-   - Server address is `http://<server IP>:8080`, for example
-     `http://192.168.1.10:8080`.
-   - Use the "Register" tab for the first account, then sign in with it.
-   - The app allows cleartext HTTP for self-hosting on a LAN; for a public
-     deployment add HTTPS at the reverse proxy.
-4. Where things are:
-   - Home: server status panel, album strip, recent files.
-   - Files: browse folders, upload, download, rename, move, delete, create
-     folders.
-   - Album: a monthly photo timeline with in-app preview; photos uploaded here
-     go into the `Album/<device name>` folder.
-   - Settings: theme, language, wallpaper, **check for updates**, open-source
-     notices, sign out.
+Download `BareZen-Drive-<version>-server.tar.gz` from Releases (the Web client
+is embedded; architecture-independent; needs JDK 21), unpack it, set the
+environment variables from the table above, and run `./bin/server`. Provide
+your own PostgreSQL 16.
 
-## 4. Use the Web client
+## 2. Install the Android client
+
+1. From [Releases](https://github.com/linanwanttodo/BareZen-Drive/releases)
+   download `BareZen-Drive-<version>-android.apk` (the file name carries the
+   version).
+2. Open the APK on the phone and allow installation from an unknown source.
+3. Enter `http://<server address>:8080` plus the account on the login screen.
+
+All clients share one feature set: Home (server status + album + recent),
+Files (upload/download/rename/move/delete), Album (monthly timeline; photos go
+into `Album/<device name>`), Shares, Settings.
+
+## 3. Web client
 
 Nothing to install. Once the server is up, open
-`http://<server address>:8080`; sign-in works the same as Android. The Web
-client supports upload, download, preview of images/video/text/PDF (video and
-PDF open in a new tab) and share management.
+`http://<server address>:8080`; it is the same UI as Android.
 
-## 5. How the update check works
+## 4. How the update check works
 
-"Settings -> About -> Check for updates" on every client sends one request to
-**the server you are connected to**, instead of each client calling GitHub:
+"Settings -> About -> Check for updates" on every client asks **the server you
+are connected to** instead of calling GitHub directly:
 
-- The server polls the newest upstream release and caches it; the client
-  compares the server version with its own.
-- Server upgrade: `docker compose pull && docker compose up -d`; open browser
-  tabs are offered a reload.
-- Android: when a newer version is reported, tap "Open release page" and install
-  the new APK from Releases.
-- A client on a network that cannot reach GitHub still gets a valid answer.
+1. The server reads the release manifest `update.json` (a stable file attached
+   to the release, no rate limit) and caches it for 10 minutes.
+2. The client compares the server version with its own and, when newer, offers
+   the per-platform action:
+   - **Web**: "Reload" - the new bundle is served by the same server; a server
+     upgrade reaches already-open pages through this prompt.
+   - **Android**: "Download update" with a direct link to the APK from the
+     manifest.
+   - Desktop/iOS (reserved): will list the platform package the same way.
+3. Every asset in the manifest carries sha256 and size; the Release page also
+   provides `checksums.txt`.
 
-## 6. Artifact overview
+The `update.json` shape (desktop and iOS entries are appended when enabled; no
+schema change needed):
 
-| Component | File | Notes |
-|---|---|---|
-| Android | `BareZen-Drive-android-release-unsigned.apk` | Unsigned release build |
-| Android | `BareZen-Drive-android-debug.apk` | Debug build, installs directly |
-| Web | `BareZen-Drive-web.zip` | Static output; copy it into the server `resources/web`, or just use the version embedded in the server |
-| Server | `BareZen-Drive-server.tar.gz` | Runnable distribution with the Web client embedded (needs JDK 21) |
-| Container | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker image with server + Web |
+```json
+{
+  "name": "BareZen-Drive",
+  "version": "0.0.2",
+  "apiVersion": 1,
+  "releaseNotesUrl": "https://github.com/linanwanttodo/BareZen-Drive/releases/tag/v0.0.2",
+  "assets": [
+    {"platform": "android", "arch": "any", "kind": "apk", "url": "...", "sha256": "...", "size": 0},
+    {"platform": "web", "arch": "any", "kind": "zip", "url": "...", "sha256": "...", "size": 0},
+    {"platform": "server", "arch": "any", "kind": "tar.gz", "url": "...", "sha256": "...", "size": 0}
+  ],
+  "docker": {"image": "ghcr.io/linanwanttodo/barezen-drive", "tags": ["0.0.2", "latest"], "platforms": ["linux/amd64", "linux/arm64"]}
+}
+```
 
-## 7. Desktop and iOS status (stated plainly)
+## 5. How to release a new version
 
-Both have platform interfaces and CI jobs reserved, but **cannot produce an
-installable package yet**:
+The version is defined in exactly one place: `version=` in
+`gradle.properties` (Android `versionName`/`versionCode`, the server, and the
+update manifest all derive from it). Releasing takes three steps:
 
-- **Desktop**: the `:app:desktopApp` module and entry point exist, but the
-  target is not enabled in `settings.gradle.kts`. Enabling it needs the full set
-  of `jvm` platform implementations (file picker, clipboard, wallpaper, media
-  playback, PDF preview, preferences and so on; only `AppUpdate.jvm.kt` is
-  pre-seeded today). Once those exist, the CI desktop job starts producing
-  packages automatically.
-- **iOS**: the Xcode project and `iosMain` entry point exist. What remains is
-  the iOS `actual` implementations plus enabling the `iosArm64` /
-  `iosSimulatorArm64` targets in the shared module and adding the Darwin ktor
-  engine. There is no dependency blocker - the shared UI libraries (`backdrop`,
-  `shapes`) do publish iOS artifacts. Note that Apple targets cannot be compiled
-  on Linux; they must be built on macOS, so the GitHub macOS runner is the only
-  way to verify this target.
+```bash
+# 1. edit gradle.properties: version=0.0.2
+# 2. commit and tag
+git tag v0.0.2 && git push origin master v0.0.2
+# 3. wait for the GitHub Actions Pipeline: build, push image, publish release
+```
 
-In short: what is actually deployable today is **server, Web and Android**;
-desktop and iOS are scaffolded but do not produce installers yet.
+The Pipeline automatically runs the tests, builds the web bundle / APK / server
+distribution, pushes the amd64+arm64 image, generates `update.json` and
+`checksums.txt`, and publishes the GitHub Release. If a single job fails,
+"Re-run failed jobs" rebuilds only that part and reuses everything else.
+
+## 6. Desktop and iOS status (stated plainly)
+
+Both have platform interfaces and CI jobs reserved, but **no installable
+packages are produced yet**:
+
+- **Desktop**: the `:app:desktopApp` module exists; the target is not enabled
+  in `settings.gradle.kts` and needs the full set of `jvm` platform
+  implementations (only `AppUpdate.jvm.kt` exists today). The JVM target
+  compiles and runs on Linux locally, so this is the easiest next step; once
+  done, CI produces `.deb`/`.rpm` automatically.
+- **iOS**: the Xcode project and `iosMain` entry exist; what remains is the iOS
+  `actual` implementations, enabling the Apple targets, and a Darwin ktor
+  engine. No dependency blocker (`backdrop` and `shapes` publish iOS
+  artifacts), but Apple targets cannot be compiled on Linux - only the GitHub
+  macOS runner can verify this end.
+
+Deployable today: **server, Web, and Android**.

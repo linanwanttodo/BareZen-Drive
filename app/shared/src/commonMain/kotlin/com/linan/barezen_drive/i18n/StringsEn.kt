@@ -167,8 +167,11 @@ object StringsEn : Strings {
     override val updateAvailable: String = "Update available"
     override val openReleasePage: String = "Open release page"
     override val actionReload: String = "Reload"
+    override val actionDownloadUpdate: String = "Download update"
     override fun reloadToUpdate(version: String): String =
         "The server has been updated to $version. Reload to load the new version"
+    override fun downloadUpdateHint(version: String): String =
+        "Version $version is available. Download and install it to update"
     override val networkTimeout: String = "Timed out connecting to the server. Check the server address"
     override val networkCannotConnect: String = "Cannot reach the server. Check that the address is correct"
     override val settingsLanguage: String = "Language"
@@ -176,4 +179,9 @@ object StringsEn : Strings {
     override val languageSystem: String = "System default"
     override val languageChinese: String = "简体中文"
     override val languageEnglish: String = "English"
+    override val settingsServer: String = "Server"
+    override val openRegistration: String = "Open registration"
+    override val openRegistrationOnHint: String = "New visitors can create accounts. Close it after setting up your own"
+    override val openRegistrationOffHint: String = "Only existing accounts can sign in"
+    override val switchingRegistration: String = "Applying..."
 }

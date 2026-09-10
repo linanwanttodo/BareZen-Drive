@@ -20,9 +20,12 @@ compose.desktop {
         mainClass = "com.linan.barezen_drive.MainKt"
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            // Linux produces Deb and Rpm; Dmg/Msi only build on their own OS,
+            // which is why the release pipeline builds desktop per-runner.
+            targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.Dmg, TargetFormat.Msi)
             packageName = "com.linan.barezen_drive"
-            packageVersion = "1.0.0"
+            // Single source: gradle.properties version.
+            packageVersion = rootProject.version.toString()
         }
     }
 }

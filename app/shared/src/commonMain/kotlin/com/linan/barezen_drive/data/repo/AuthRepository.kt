@@ -29,6 +29,12 @@ class AuthRepository(
 
     fun defaultHost(): String = store.baseUrl
 
+    /** Whether the server accepts new sign-ups; true when it cannot be reached. */
+    suspend fun registrationStatus(host: String): Result<Boolean> {
+        if (host.isNotBlank()) store.baseUrl = normalizeHost(host)
+        return api.registrationStatus().map { it.open }
+    }
+
     fun logout() {
         store.accessToken = null
         store.refreshToken = null

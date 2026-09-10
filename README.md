@@ -13,18 +13,26 @@ Status: v0.0.1 | License: MIT | Platforms: Android, Web, Server
 
 ## Download
 
-Packages are attached to the GitHub Releases:
+Packages are attached to the GitHub Releases (names carry the version):
 
 | Package | File | For |
 |---|---|---|
-| Server distribution (with the Web client embedded) | `BareZen-Drive-server.tar.gz` | Deploy on your own machine with JDK 21 |
-| Web client bundle | `BareZen-Drive-web.zip` | Static hosting, or copy into the server |
-| Android debug build | `BareZen-Drive-android-debug.apk` | Install directly on a phone |
-| Android release build | `BareZen-Drive-android-release-unsigned.apk` | Release build (unsigned) |
-| Container image | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker / Docker Compose |
+| Server distribution (with the Web client embedded) | `BareZen-Drive-<version>-server.tar.gz` | Deploy on your own machine with JDK 21 |
+| Web client bundle | `BareZen-Drive-<version>-web.zip` | Static hosting, or copy into the server |
+| Android | `BareZen-Drive-<version>-android.apk` | Install directly on a phone |
+| Update manifest | `update.json` + `checksums.txt` | Read by the server for the in-app update check |
+| Container image | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker / Docker Compose, linux/amd64 + linux/arm64 |
 
-The full deployment and usage walkthrough is in
-[docs/usage.md](docs/usage.md) (Chinese) and
+**Deploy the server with one command:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/linanwanttodo/BareZen-Drive/master/install.sh | bash
+```
+
+The installer generates `.env` (auto-generating the JWT secret and database
+password when left blank), pulls the image and starts PostgreSQL plus the
+server. The full walkthrough - including closing open registration after your
+first account - is in [docs/usage.md](docs/usage.md) (Chinese) and
 [docs/usage.en.md](docs/usage.en.md) (English). Desktop and iOS packages are not
 produced yet; see the end of that guide for why.
 

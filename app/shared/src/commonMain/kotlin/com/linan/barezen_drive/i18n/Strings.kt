@@ -176,7 +176,9 @@ interface Strings {
     val updateAvailable: String
     val openReleasePage: String
     val actionReload: String
+    val actionDownloadUpdate: String
     fun reloadToUpdate(version: String): String
+    fun downloadUpdateHint(version: String): String
     val networkTimeout: String
     val networkCannotConnect: String
     val settingsLanguage: String
@@ -184,4 +186,9 @@ interface Strings {
     val languageSystem: String
     val languageChinese: String
     val languageEnglish: String
+    val settingsServer: String
+    val openRegistration: String
+    val openRegistrationOnHint: String
+    val openRegistrationOffHint: String
+    val switchingRegistration: String
 }

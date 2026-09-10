@@ -140,6 +140,8 @@ fun SettingsScreen(
     ping: suspend () -> Long,
     currentVersion: String,
     checkUpdate: suspend () -> com.linan.barezen_drive.data.update.UpdateStatus,
+    registrationOpen: Boolean?,
+    onRegistrationOpenChange: (Boolean) -> Unit,
     wallpaperEnabled: Boolean,
     onWallpaperToggle: (Boolean) -> Unit,
     onPickWallpaper: () -> Unit,
@@ -329,6 +331,20 @@ fun SettingsScreen(
                 ) {
                     TextButton(onClick = onClearWallpaper) { Text(LocalStrings.current.clearWallpaper) }
                 }
+            }
+            }
+
+            GlassSectionHeader(LocalStrings.current.settingsServer)
+            GlassCard {
+            if (registrationOpen != null) {
+                SettingsRow(
+                    title = LocalStrings.current.openRegistration,
+                    subtitle = if (registrationOpen) LocalStrings.current.openRegistrationOnHint
+                    else LocalStrings.current.openRegistrationOffHint,
+                    trailing = {
+                        Switch(checked = registrationOpen, onCheckedChange = onRegistrationOpenChange)
+                    },
+                )
             }
             }
 

@@ -19,8 +19,11 @@
 - [x] 分享访问/下载计数 + 分享管理页（设置入口，全部链接统计与关闭。2026-09-09）
 - [x] 相册固定文件夹：专用「相册」根 + 按设备分子文件夹（Web/Android...），时间轴只扫相册子树，上传直落设备文件夹（2026-09-09）
 - [x] 上传分块流式化：服务端分块边收边写盘，内存峰值从 分块大小x并发 降为固定 64KiB 缓冲（2026-09-09）
-- [x] 跨端检查更新：服务端 `GET /api/version` 统一查询上游发布，设置页在每个客户端提供入口，Web 检测到服务端升级后提示重新加载（2026-09-10）
-- [x] 持续集成：服务端/core/共享模块测试 + wasm 编译门 + Android APK + Web 产物；Desktop 与 iOS 任务预留，target 启用即生效（2026-09-10）
+- [x] 跨端检查更新：服务端 `GET /api/version` 统一查询发布清单 `update.json`，设置页在每个客户端提供入口，Web 检测到服务端升级后提示重新加载，Android 支持清单直链下载（2026-09-10）
+- [x] 注册开关：设置页可关闭开放注册，关闭后登录页隐藏注册入口、接口返回 `REGISTRATION_DISABLED`（2026-09-10）
+- [x] `install.sh` 一键部署脚本（Docker，env 向导，多架构镜像 amd64/arm64）（2026-09-10）
+- [x] 持续集成：单一 Pipeline 工作流（测试门 → web 一次编译供 server/docker 复用 → 多架构镜像 → manifest → Release），产物按 `BareZen-Drive-<版本>-<平台>` 命名（2026-09-10）
+- [x] 版本号单一来源：`gradle.properties` 的 `version`，Android versionName/versionCode、服务端、清单全部派生（2026-09-10）
 - [x] 文档拆分：README 与 docs 索引各自独立中英文两份（2026-09-10）
 - [ ] 回收站（删除改为标记，定期清理）
 - [ ] EXIF 照片时间轴（拍摄时间替代文件时间）
@@ -30,9 +33,9 @@
 - [ ] WorkManager 后台上传 / 自动上传（Android）
 - [ ] S3/MinIO StorageProvider（接口已就位：`StorageProvider`）
 - Flyway 迁移替代 createMissingTablesAndColumns
-- `install.sh` 一键部署脚本
 - iOS 客户端、Desktop 客户端（平台接口与 CI 任务已预留，剩余为目标启用与 actual 实现。依赖无障碍：
   共享 UI 用的 `backdrop`、`shapes` 均已发布 iOS 与 jvm 产物；Apple target 需在 macOS 上编译验证）
+- Android release 签名包（条件签名已就位，配置 `ANDROID_KEYSTORE_BASE64` 等 Secrets 即启用）
 - Web 端 token 存储评估 HttpOnly cookie（v0.0.1 用 localStorage，存在 XSS 暴露面）
 - 上传合并边收边写（消除 tmp+merge 2x 磁盘峰值）
 - npm `ws` 8.20.1（High，GHSA-96hv-2xvq-fx4p）为 Kotlin/JS 构建工具链（webpack dev server）传递依赖，仅构建期存在、不进生产运行时；KGP 钉版无法通过 yarn 升级，待 Kotlin 插件更新后自然消除（Opsera 扫描 2026-09-09）

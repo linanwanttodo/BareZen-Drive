@@ -81,3 +81,11 @@ import kotlinx.serialization.Serializable
     val netTxBytesPerSec: Long = -1,
     val uptimeSeconds: Long = -1,
 )
+
+// ---- Server settings (owner-managed) ----
+
+/** Public: whether new sign-ups are accepted right now. GET /api/settings/registration. */
+@Serializable data class RegistrationStatusDto(val open: Boolean)
+
+/** Owner request body for PATCH /api/settings/registration. */
+@Serializable data class RegistrationSettingRequest(val open: Boolean)

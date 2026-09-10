@@ -1,22 +1,19 @@
 package com.linan.barezen_drive.core
 
 /**
- * Build identity shared by every target.
+ * Build identity shared by every target, plus the version comparison both the
+ * server release check and the clients use.
  *
- * VERSION is the single source of truth for the product version: the server
- * reports it in GET /api/version, and every client shows it in Settings.
- * Bump it in the same change that updates the Android versionName and any
- * release notes so all targets stay in step.
+ * The constant values live in the generated [BuildConstants] (produced by
+ * :core:generateBuildConstants from the `version` property in
+ * gradle.properties), so NAME/VERSION/API_VERSION/REPOSITORY_URL have exactly
+ * one source. Bump that one property to release; nothing here needs editing.
  */
 object BuildInfo {
-    const val NAME = "BareZen-Drive"
-    const val VERSION = "0.0.1"
-
-    /** Version of the client/server REST contract, independent of VERSION. */
-    const val API_VERSION = 1
-
-    /** Upstream repository, used as the default release source. */
-    const val REPOSITORY_URL = "https://github.com/linanwanttodo/BareZen-Drive"
+    const val NAME = BuildConstants.NAME
+    const val VERSION = BuildConstants.VERSION
+    const val API_VERSION = BuildConstants.API_VERSION
+    const val REPOSITORY_URL = BuildConstants.REPOSITORY_URL
 
     /** Strips a leading "v" so "v1.2.3" and "1.2.3" compare as the same release. */
     fun normalize(tag: String): String = tag.trim().removePrefix("v").removePrefix("V")
@@ -36,5 +33,18 @@ object BuildInfo {
             if (x != y) return x > y
         }
         return false
+    }
+
+    /**
+     * Android versionCode derived from the product version, so the two cannot
+     * drift: major*10000 + minor*100 + patch. Monotonic for normal releases.
+     */
+    fun androidVersionCode(version: String = VERSION): Int {
+        val parts = normalize(version).split('.', '-', '+')
+            .map { it.takeWhile(Char::isDigit).toIntOrNull() ?: 0 }
+        val major = parts.getOrElse(0) { 0 }
+        val minor = parts.getOrElse(1) { 0 }
+        val patch = parts.getOrElse(2) { 0 }
+        return major * 10_000 + minor * 100 + patch
     }
 }

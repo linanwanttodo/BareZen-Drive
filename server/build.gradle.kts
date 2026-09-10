@@ -4,7 +4,8 @@ plugins {
 }
 
 group = "com.linan.barezen_drive"
-version = "0.0.1"
+// Inherits the single version from gradle.properties (rootProject.version).
+version = rootProject.version.toString()
 application {
     mainClass = "com.linan.barezen_drive.ApplicationKt"
 }

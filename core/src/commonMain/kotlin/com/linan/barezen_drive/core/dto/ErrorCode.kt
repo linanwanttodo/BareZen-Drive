@@ -17,5 +17,6 @@ object ErrorCodes {
     const val CHUNK_INVALID = "CHUNK_INVALID"
     const val CHUNK_MISSING = "CHUNK_MISSING"
     const val FILE_TOO_LARGE = "FILE_TOO_LARGE"
+    const val REGISTRATION_DISABLED = "REGISTRATION_DISABLED"
     const val INTERNAL_ERROR = "INTERNAL_ERROR"
 }
