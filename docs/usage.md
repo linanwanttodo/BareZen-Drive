@@ -195,9 +195,9 @@ GitHub：
 - **桌面端**：`:app:desktopApp` 模块和入口代码在，但 `settings.gradle.kts` 里未启用该 target；
   启用它需要补齐一整套 `jvm` 平台实现（文件选择、剪贴板、壁纸、媒体播放、PDF 预览、偏好存储等，
   目前只预置了 `AppUpdate.jvm.kt`）。补齐后 CI 的 desktop 任务会自动开始出包。
-- **iOS**：Xcode 工程和 `iosMain` 入口在，`AppUpdate` 的 iOS 实现待补；另有一个硬性前置条件——
-  共享 UI 用到的第三方库 `io.github.kyant0:backdrop` 只发布了 android/js/jvm 产物，**没有 Apple
-  产物**，所以在它发布 iOS klib（或换用支持 iOS 的实现）之前，iOS target 无法编译。GitHub 的
-  macOS runner 自带 Xcode，一旦这两点满足，CI 的 ios 任务即可构建 framework 与模拟器应用。
+- **iOS**：Xcode 工程与 `iosMain` 入口在，剩余工作是补齐 iOS 的 `actual` 实现，并在 shared 模块启用
+  `iosArm64` / `iosSimulatorArm64` target 与 Darwin 版 ktor 引擎。依赖上没有阻碍——共享 UI 用到的
+  `backdrop`、`shapes` 都已发布 iOS 产物。注意 Apple target 无法在 Linux 上编译，必须在 macOS 上
+  构建，因此 GitHub 的 macOS runner 是验证这一端的唯一途径。
 
 也就是说：现在能实际部署使用的是**服务端、Web、Android**；桌面端和 iOS 已铺好路但尚未产出安装包。

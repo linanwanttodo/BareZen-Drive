@@ -277,10 +277,12 @@ GitHub can build iOS: its macOS runners ship the Xcode toolchain, and the `ios`
 job is wired to build the Kotlin framework and the simulator app. The Apple
 targets are not enabled in `app/shared/build.gradle.kts` yet, so the job detects
 that and skips cleanly; enabling the targets turns the build on with no CI
-changes. Enabling them has two requirements: the iOS `actual` implementations
-(which need a Mac to compile) and Apple-published artifacts for the third-party
-UI libraries - `io.github.kyant0:backdrop` currently ships only android/js/jvm,
-so it must publish `iosArm64`/`iosSimulatorArm64`/`iosX64` or be replaced.
+changes. What remains for iOS is the iOS `actual` implementations (file picker,
+cover generation, wallpaper, media/PDF preview, preferences and token storage)
+plus the `iosArm64`/`iosSimulatorArm64` targets and a Darwin ktor engine. There
+is no dependency blocker: the shared UI libraries (`backdrop`, `shapes`) do
+publish iOS artifacts. Apple targets cannot be compiled on Linux, so this work
+is verified on the macOS CI runner rather than locally.
 
 ## Testing
 

@@ -246,9 +246,10 @@ artifacts 不同。
 
 GitHub 可以构建 iOS：其 macOS runner 自带 Xcode 工具链，`ios` 任务已接好构建 Kotlin framework 与
 模拟器应用的步骤。当前 `app/shared/build.gradle.kts` 尚未启用 Apple target，任务会检测到这一点并
-干净跳过；启用 target 后无需改动 CI 即可开始构建。启用需要两个前提：iOS 的 `actual` 实现（需要 Mac
-才能编译验证），以及第三方 UI 库发布 Apple 产物——`io.github.kyant0:backdrop` 目前只发布
-android/js/jvm，需其补充 `iosArm64`/`iosSimulatorArm64`/`iosX64` 或换用支持 iOS 的实现。
+干净跳过；启用 target 后无需改动 CI 即可开始构建。iOS 剩余的工作是补齐 iOS 的 `actual` 实现（文件
+选择、封面生成、壁纸、媒体/PDF 预览、偏好与 token 存储），加上 `iosArm64`/`iosSimulatorArm64`
+target 与 Darwin 版 ktor 引擎。依赖上没有阻碍：共享 UI 用到的 `backdrop`、`shapes` 都已发布 iOS
+产物。Apple target 无法在 Linux 上编译，因此这部分需要靠 macOS CI runner 验证，而非本地。
 
 ## 测试
 

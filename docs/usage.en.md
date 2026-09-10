@@ -222,13 +222,13 @@ installable package yet**:
   playback, PDF preview, preferences and so on; only `AppUpdate.jvm.kt` is
   pre-seeded today). Once those exist, the CI desktop job starts producing
   packages automatically.
-- **iOS**: the Xcode project and `iosMain` entry point exist and the iOS
-  `AppUpdate` actual is pending. There is also a hard prerequisite: the shared
-  UI uses `io.github.kyant0:backdrop`, which publishes only android/js/jvm
-  artifacts and **no Apple artifacts**, so the iOS target cannot compile until
-  that library ships iOS klibs (or is replaced with an iOS-capable
-  implementation). GitHub's macOS runners ship Xcode, so once both conditions
-  are met the CI ios job can build the framework and the simulator app.
+- **iOS**: the Xcode project and `iosMain` entry point exist. What remains is
+  the iOS `actual` implementations plus enabling the `iosArm64` /
+  `iosSimulatorArm64` targets in the shared module and adding the Darwin ktor
+  engine. There is no dependency blocker - the shared UI libraries (`backdrop`,
+  `shapes`) do publish iOS artifacts. Note that Apple targets cannot be compiled
+  on Linux; they must be built on macOS, so the GitHub macOS runner is the only
+  way to verify this target.
 
 In short: what is actually deployable today is **server, Web and Android**;
 desktop and iOS are scaffolded but do not produce installers yet.
