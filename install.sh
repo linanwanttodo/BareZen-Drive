@@ -78,6 +78,12 @@ curl -fsSL -o docker-compose.yml "${REPO_RAW}/docker-compose.yml"
 # Pin the image tag the user chose (default latest).
 sed -i.bak "s#ghcr.io/linanwanttodo/barezen-drive:latest#ghcr.io/linanwanttodo/barezen-drive:${IMAGE_TAG}#" docker-compose.yml && rm -f docker-compose.yml.bak
 
+# The container runs as uid 10001; a bind-mounted host directory owned by the
+# installing user would deny it write access (AccessDeniedException on startup).
+# World-writable on this one data directory is the no-sudo deployment path.
+mkdir -p data/storage
+chmod 777 data/storage
+
 log "Pulling images"
 $COMPOSE pull --quiet || true
 
