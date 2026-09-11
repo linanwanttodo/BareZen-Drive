@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -98,6 +99,7 @@ fun AlbumScreen(
     uploader: UploadManager,
     onBack: (() -> Unit)?,
     onPreview: (List<FileDto>, Int, Boolean) -> Unit,
+    onOpenTransfers: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var groups by remember { mutableStateOf<List<AlbumGroup>>(emptyList()) }
@@ -262,6 +264,11 @@ fun AlbumScreen(
                 actions = {
                     IconButton(onClick = { imagePicker() }) {
                         Icon(Icons.Default.AddPhotoAlternate, contentDescription = LocalStrings.current.pickFromGallery)
+                    }
+                    // Double arrow: manual upload sits beside the auto-sync /
+                    // transfer centre entry, mirroring a netdisk app.
+                    IconButton(onClick = onOpenTransfers) {
+                        Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
                     }
                 },
             )

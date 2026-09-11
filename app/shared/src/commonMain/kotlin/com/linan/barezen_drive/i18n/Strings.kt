@@ -194,6 +194,18 @@ interface Strings {
     val infoModified: String
     val allDevices: String
     val allMedia: String
+    val transfers: String
+    val tabUploading: String
+    val tabDownloading: String
+    val tabDone: String
+    val transferDone: String
+    val transferFailed: String
+    val noTransfers: String
+    val clearFinished: String
+    val albumAutoSync: String
+    val albumAutoSyncHint: String
+    val syncWifiOnly: String
+    val syncWifiOnlyHint: String
     val openRegistration: String
     val openRegistrationOnHint: String
     val openRegistrationOffHint: String

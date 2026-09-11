@@ -34,6 +34,12 @@ interface AppPrefs {
 
     /** UI language: 0 = follow the system (default), 1 = Chinese, 2 = English. */
     var languageMode: Int
+
+    /** Album auto-sync: upload new device photos automatically. */
+    var albumAutoSync: Boolean
+
+    /** Auto-sync over Wi-Fi only (false = also mobile data). */
+    var syncWifiOnly: Boolean
 }
 
 expect object AppPreferences {

@@ -56,5 +56,13 @@ actual object AppPreferences {
         override var languageMode: Int
             get() = readString("language_mode")?.toIntOrNull() ?: 0
             set(v) = writeString("language_mode", v.toString())
+
+        override var albumAutoSync: Boolean
+            get() = readString("album_auto_sync") == "true"
+            set(v) = writeString("album_auto_sync", v.toString())
+
+        override var syncWifiOnly: Boolean
+            get() = readString("sync_wifi_only") != "false"
+            set(v) = writeString("sync_wifi_only", v.toString())
     }
 }

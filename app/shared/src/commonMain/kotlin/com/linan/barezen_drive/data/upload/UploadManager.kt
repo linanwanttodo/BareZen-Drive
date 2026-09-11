@@ -67,9 +67,19 @@ class UploadManager(
     private var activeUploadId: String? = null
 
     suspend fun upload(file: PickedFile, folderId: String?): Result<FileDto> {
+        // Mirror every upload into the transfer centre so the UI can show
+        // progress and history instead of a modal.
+        val transferId = com.linan.barezen_drive.data.transfer.TransferCenter
+            .start(file.name, com.linan.barezen_drive.data.transfer.TransferKind.UPLOAD, file.size)
         try {
-            return doUpload(file, folderId)
+            val result = doUpload(file, folderId, transferId)
+            result.fold(
+                onSuccess = { com.linan.barezen_drive.data.transfer.TransferCenter.done(transferId) },
+                onFailure = { com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, it.message ?: "failed") },
+            )
+            return result
         } catch (e: CancellationException) {
+            com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, "cancelled")
             // Best-effort cleanup so the server does not keep an orphaned
             // session; must not swallow the cancellation itself.
             activeUploadId?.let { id ->
@@ -81,7 +91,7 @@ class UploadManager(
         }
     }
 
-    private suspend fun doUpload(file: PickedFile, folderId: String?): Result<FileDto> {
+    private suspend fun doUpload(file: PickedFile, folderId: String?, transferId: String): Result<FileDto> {
         // 1) Whole-file SHA-256, streamed in fixed-size reads.
         _progress.value = Progress(Phase.HASHING, file.name, 0L, file.size)
         val hasher = Sha256er.newInstance()
@@ -91,12 +101,14 @@ class UploadManager(
             hasher.update(bytes)
             hashed += bytes.size
             _progress.value = Progress(Phase.HASHING, file.name, hashed, file.size)
+            com.linan.barezen_drive.data.transfer.TransferCenter.progress(transferId, hashed / 2, file.size)
         }
         val wholeSha = hasher.digestHex()
 
         // 2) Init: server may match the hash (instant upload) or report
         //    already-received chunk indexes (resume of a previous session).
         _progress.value = Progress(Phase.UPLOADING, file.name, 0L, file.size)
+        com.linan.barezen_drive.data.transfer.TransferCenter.progress(transferId, file.size / 2, file.size)
         val init = api.init(
             UploadInitRequest(
                 folderId = folderId,

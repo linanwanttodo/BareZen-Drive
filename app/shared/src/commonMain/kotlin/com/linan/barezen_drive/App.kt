@@ -34,6 +34,7 @@ import com.linan.barezen_drive.ui.screens.preview.PreviewScreen
 import com.linan.barezen_drive.ui.screens.settings.OpenSourceScreen
 import com.linan.barezen_drive.ui.screens.settings.SettingsScreen
 import com.linan.barezen_drive.ui.screens.settings.WebUpdatePrompt
+import com.linan.barezen_drive.ui.screens.transfer.TransferCenterScreen
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.shell.MainShell
 import com.linan.barezen_drive.ui.shell.MainTab
@@ -79,6 +80,7 @@ private sealed interface Screen {
     data class Preview(val files: List<FileDto>, val index: Int, val showActions: Boolean = false) : Screen
     data object OpenSource : Screen
     data object ShareManager : Screen
+    data object Transfers : Screen
 }
 
 /** /s/<token> public share entry captured once at startup; null on non-web. */
@@ -130,6 +132,8 @@ fun App() {
     var accentColor by remember { mutableStateOf(if (prefs.accentColor != 0) Color(prefs.accentColor) else DefaultSeed) }
     var useDynamicColor by remember { mutableStateOf(prefs.useDynamicColor) }
     var glassBlur by remember { mutableStateOf(prefs.glassBlurEnabled) }
+    var albumAutoSync by remember { mutableStateOf(prefs.albumAutoSync) }
+    var syncWifiOnly by remember { mutableStateOf(prefs.syncWifiOnly) }
     var glassAlpha by remember { mutableStateOf(prefs.glassAlphaPercent) }
     val accentSeed = when {
         useDynamicColor && systemAccent != null -> systemAccent
@@ -265,6 +269,7 @@ fun App() {
                             uploader = uploader,
                             onBack = null,
                             onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
+                            onOpenTransfers = { push(Screen.Transfers) },
                         )
                         MainTab.FILES -> FilesScreen(                            path = filesPath,
                             repo = files,
@@ -367,6 +372,13 @@ fun App() {
             )
             is Screen.OpenSource -> OpenSourceScreen(onBack = pop)
             is Screen.ShareManager -> ShareManagerScreen(repo = files, onBack = pop)
+            is Screen.Transfers -> TransferCenterScreen(
+                onBack = pop,
+                autoSync = albumAutoSync,
+                onAutoSyncChange = { on -> albumAutoSync = on; prefs.albumAutoSync = on },
+                wifiOnly = syncWifiOnly,
+                onWifiOnlyChange = { on -> syncWifiOnly = on; prefs.syncWifiOnly = on },
+            )
         }
         }
     }
