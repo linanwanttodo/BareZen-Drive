@@ -187,9 +187,13 @@ jobs:
           path: web-dist
       - name: Embed the web bundle and build installDist
         run: |
+          # download-artifact preserves the uploaded paths (app/webApp/...),
+          # so locate the bundle instead of assuming a fixed prefix.
+          webdir=$(dirname "$(find web-dist -name index.html -path '*productionExecutable*' | head -1)")
+          echo "Web bundle at: $webdir"
           rm -rf server/src/main/resources/web
           mkdir -p server/src/main/resources/web
-          cp -r web-dist/productionExecutable/. server/src/main/resources/web/
+          cp -r "$webdir"/. server/src/main/resources/web/
           ./gradlew :server:installDist -Pversion=${{ needs.version.outputs.version }} --console=plain
       - name: Tar the distribution
         run: |
