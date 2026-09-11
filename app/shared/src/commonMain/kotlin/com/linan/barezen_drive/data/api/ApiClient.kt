@@ -26,6 +26,7 @@ import com.linan.barezen_drive.core.dto.UploadInitRequest
 import com.linan.barezen_drive.core.dto.UploadInitResponse
 import com.linan.barezen_drive.core.dto.VersionInfoResponse
 import com.linan.barezen_drive.core.dto.RegistrationSettingRequest
+import com.linan.barezen_drive.core.dto.AdminUsersResponse
 import com.linan.barezen_drive.core.dto.RegistrationStatusDto
 import com.linan.barezen_drive.core.dto.UserDto
 import com.linan.barezen_drive.data.local.TokenStorage
@@ -303,6 +304,16 @@ class ApiClient(
      */
     suspend fun versionInfo(): Result<VersionInfoResponse> = runApi {
         http.get("$baseUrl/api/version").body()
+    }
+
+    /** Owner: list registered accounts with their file counts. */
+    suspend fun adminUsers(): Result<AdminUsersResponse> = runApi {
+        http.get("$baseUrl/api/admin/users").body()
+    }
+
+    /** Owner: delete an account together with all of its data. */
+    suspend fun adminDeleteUser(id: String): Result<Unit> = runApi {
+        http.delete("$baseUrl/api/admin/users/$id")
     }
 
     /** Whether the server accepts new sign-ups right now (public endpoint). */

@@ -1,7 +1,9 @@
 package com.linan.barezen_drive.ui.screens.files
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,7 +39,10 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.ViewList
@@ -125,15 +130,15 @@ internal fun formatFileSize(bytes: Long): String = when {
 }
 
 /**
- * Shared open behavior for one file row or tile: previewable kinds open the
- * preview screen (images get the current listing as swipe context), anything
- * else is pushed through the platform saver.
+ * Shared open behavior for one file row or tile: EVERY kind opens the preview
+ * screen (images get the current listing as swipe context). Types without a
+ * built-in renderer (zip, epub...) show file info there with an explicit
+ * download button - tapping a file must never download silently.
  */
 internal fun openOrPreview(
     file: FileDto,
     listing: List<FileDto>,
     onPreview: (List<FileDto>, Int) -> Unit,
-    saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit,
     repo: FilesRepository,
 ) {
     when (PreviewKind.of(file)) {
@@ -142,9 +147,7 @@ internal fun openOrPreview(
             val index = images.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
             onPreview(images, index)
         }
-        PreviewKind.VIDEO, PreviewKind.AUDIO, PreviewKind.TEXT, PreviewKind.PDF ->
-            onPreview(listOf(file), 0)
-        PreviewKind.OTHER -> saver(file.name, file.mimeType) { repo.download(file.id) }
+        else -> onPreview(listOf(file), 0)
     }
 }
 
@@ -217,6 +220,10 @@ fun FilesScreen(
     // state read (null = the folder currently on screen).
     var showUploadLocation by remember { mutableStateOf(false) }
     var uploadTarget by remember { mutableStateOf<Pair<String?, String>?>(null) } // id to display name
+    // Long-press multi-select (Google Photos style): entering selection turns
+    // the row's 3-dot into a circle checkbox and swaps the top bar for an
+    // action bar with select-all.
+    val selectedFiles = remember { mutableStateOf(setOf<String>()) }
 
     // Drain pending picks sequentially; the target folder is read through
     // rememberUpdatedState so a stale picker closure cannot upload into a
@@ -241,7 +248,11 @@ fun FilesScreen(
         }
     }
 
-    LaunchedEffect(path) { reload() }
+    // A fresh folder clears the selection - it belongs to one listing.
+    LaunchedEffect(path) {
+        selectedFiles.value = emptySet()
+        reload()
+    }
 
     val progress by uploader.progress.collectAsState()
 
@@ -290,11 +301,55 @@ fun FilesScreen(
             }
         },
     ) { pad ->
+        val ui = state
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(pad),
         ) {
+            val sel = selectedFiles.value
+            if (sel.isNotEmpty() && ui != null) {
+                // Selection action bar: count, select all, then bulk actions.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = {
+                        selectedFiles.value = ui.files.map { it.id }.toSet()
+                    }) { Text(LocalStrings.current.selectAll) }
+                    Text(
+                        "${sel.size}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = {
+                        sel.forEach { id ->
+                            ui.files.firstOrNull { it.id == id }?.let {
+                                saver(it.name, it.mimeType) { repo.download(it.id) }
+                            }
+                        }
+                        selectedFiles.value = emptySet()
+                    }) { Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload) }
+                    IconButton(onClick = {
+                        shareTarget = ui.files.firstOrNull { it.id == sel.first() }
+                        selectedFiles.value = emptySet()
+                    }) { Icon(Icons.Default.Share, contentDescription = LocalStrings.current.actionShare) }
+                    IconButton(onClick = {
+                        deleting = ui.files.firstOrNull { it.id == sel.first() }
+                        selectedFiles.value = emptySet()
+                    }) {
+                        Icon(Icons.Default.Delete, contentDescription = LocalStrings.current.actionDelete,
+                            tint = MaterialTheme.colorScheme.error)
+                    }
+                    IconButton(onClick = { selectedFiles.value = emptySet() }) {
+                        Icon(Icons.Default.Close, contentDescription = LocalStrings.current.actionCancel)
+                    }
+                }
+                HorizontalDivider()
+            } else {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -308,6 +363,7 @@ fun FilesScreen(
                 IconButton(onClick = { showUploadLocation = true }, enabled = !uploading) {
                     Icon(Icons.Default.Upload, contentDescription = LocalStrings.current.actionUpload)
                 }
+            }
             }
             val p = progress
             if (p.phase != UploadManager.Phase.IDLE && p.phase != UploadManager.Phase.DONE) {
@@ -340,7 +396,6 @@ fun FilesScreen(
                     }
                 }
             }
-            val ui = state
             when {
                 ui == null && loadError != null -> {
                     // Load failed: show the error with a retry affordance instead of an
@@ -372,12 +427,18 @@ fun FilesScreen(
                     onRenameFolder = { renameTarget = Triple(true, it.id, it.name) },
                     onDeleteFolder = { deleting = it },
                     onShareFolder = { shareTarget = it },
-                    onOpenFile = { openOrPreview(it, ui.files, onPreview, saver, repo) },
+                    onOpenFile = { openOrPreview(it, ui.files, onPreview, repo) },
                     onDownloadFile = { saver(it.name, it.mimeType) { repo.download(it.id) } },
                     onRenameFile = { renameTarget = Triple(false, it.id, it.name) },
                     onMoveFile = { moveTarget = MoveTarget(it.id, it.folderId, it.name) },
                     onDeleteFile = { deleting = it },
                     onShareFile = { shareTarget = it },
+                    selection = selectedFiles.value.ifEmpty { null },
+                    onToggleSelect = { file ->
+                        selectedFiles.value = selectedFiles.value.toMutableSet().apply {
+                            if (!add(file.id)) remove(file.id)
+                        }
+                    },
                 )
                 else -> {
                 // Bottom clearance lets the last rows scroll clear of the
@@ -403,7 +464,7 @@ fun FilesScreen(
                             file = file,
                             thumbs = thumbs,
                             onOpen = {
-                                openOrPreview(file, ui.files, onPreview, saver, repo)
+                                openOrPreview(file, ui.files, onPreview, repo)
                             },
                             onDownload = { saver(file.name, file.mimeType) { repo.download(file.id) } },
                             onRename = { renameTarget = Triple(false, file.id, file.name) },
@@ -412,6 +473,12 @@ fun FilesScreen(
                             onShare = { shareTarget = file },
                             menuFor = menuFor,
                             setMenuFor = { menuFor = it },
+                            selection = selectedFiles.value.ifEmpty { null },
+                            onToggleSelect = {
+                                selectedFiles.value = selectedFiles.value.toMutableSet().apply {
+                                    if (!add(file.id)) remove(file.id)
+                                }
+                            },
                         )
                         HorizontalDivider()
                     }
@@ -558,6 +625,8 @@ private fun FilesGrid(
     onMoveFile: (FileDto) -> Unit,
     onDeleteFile: (FileDto) -> Unit,
     onShareFile: (FileDto) -> Unit,
+    selection: Set<String>? = null,
+    onToggleSelect: (FileDto) -> Unit = {},
 ) {
     // Grid tiles for files; folders keep a full-width leading section so the
     // hierarchy stays scannable before the file cards.
@@ -585,6 +654,8 @@ private fun FilesGrid(
                 file = file,
                 thumbs = thumbs,
                 onOpen = { onOpenFile(file) },
+                selection = selection,
+                onToggleSelect = { onToggleSelect(file) },
                 onDownload = { onDownloadFile(file) },
                 onRename = { onRenameFile(file) },
                 onMove = { onMoveFile(file) },
@@ -669,6 +740,7 @@ private fun FolderGridRow(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun FileTile(
     file: FileDto,
     thumbs: ThumbnailLoader,
@@ -680,11 +752,17 @@ private fun FileTile(
     onShare: () -> Unit,
     menuFor: Any?,
     setMenuFor: (Any?) -> Unit,
+    selection: Set<String>? = null,
+    onToggleSelect: () -> Unit = {},
 ) {
+    val isSelected = selection?.contains(file.id) == true
     Column(
         modifier = Modifier
             .background(MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.shapes.medium)
-            .clickable(onClick = onOpen)
+            .combinedClickable(
+                onClick = { if (selection != null) onToggleSelect() else onOpen() },
+                onLongClick = onToggleSelect,
+            )
             .padding(8.dp),
     ) {
         Box(
@@ -694,6 +772,14 @@ private fun FileTile(
             contentAlignment = Alignment.Center,
         ) {
             FileThumbnail(file, thumbs, edge = 84.dp)
+            if (selection != null) {
+                Icon(
+                    if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.TopEnd),
+                )
+            }
         }
         Spacer(Modifier.height(6.dp))
         Text(
@@ -815,6 +901,7 @@ private fun FolderRow(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun FileRow(
     file: FileDto,
     thumbs: ThumbnailLoader,
@@ -826,11 +913,17 @@ private fun FileRow(
     onShare: () -> Unit,
     menuFor: Any?,
     setMenuFor: (Any?) -> Unit,
+    selection: Set<String>? = null,
+    onToggleSelect: () -> Unit = {},
 ) {
+    val isSelected = selection?.contains(file.id) == true
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
+            .combinedClickable(
+                onClick = { if (selection != null) onToggleSelect() else onOpen() },
+                onLongClick = onToggleSelect,
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -844,6 +937,17 @@ private fun FileRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (selection != null) {
+            // The circle where the 3-dot used to be.
+            IconButton(onClick = onToggleSelect) {
+                Icon(
+                    if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (isSelected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
         Box {
             IconButton(onClick = { setMenuFor(if (menuFor === file) null else file) }) {
                 Icon(Icons.Default.MoreVert, contentDescription = LocalStrings.current.moreActions)
@@ -890,6 +994,7 @@ private fun FileRow(
                     },
                 )
             }
+        }
         }
     }
 }

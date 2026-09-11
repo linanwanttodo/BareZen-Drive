@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -147,6 +148,7 @@ fun SettingsScreen(
     onPickWallpaper: () -> Unit,
     onClearWallpaper: () -> Unit,
     onOpenSource: () -> Unit,
+    onOpenUsers: () -> Unit = {},
     onOpenShareManager: () -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -360,16 +362,23 @@ fun SettingsScreen(
 
             GlassSectionHeader(LocalStrings.current.settingsServer)
             GlassCard {
-            if (registrationOpen != null) {
                 SettingsRow(
-                    title = LocalStrings.current.openRegistration,
-                    subtitle = if (registrationOpen) LocalStrings.current.openRegistrationOnHint
-                    else LocalStrings.current.openRegistrationOffHint,
-                    trailing = {
-                        Switch(checked = registrationOpen, onCheckedChange = onRegistrationOpenChange)
-                    },
+                    title = LocalStrings.current.userManagement,
+                    subtitle = LocalStrings.current.userManagementHint,
+                    onClick = onOpenUsers,
+                    trailing = { Icon(Icons.Default.Person, contentDescription = null) },
                 )
-            }
+                HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                if (registrationOpen != null) {
+                    SettingsRow(
+                        title = LocalStrings.current.openRegistration,
+                        subtitle = if (registrationOpen) LocalStrings.current.openRegistrationOnHint
+                        else LocalStrings.current.openRegistrationOffHint,
+                        trailing = {
+                            Switch(checked = registrationOpen, onCheckedChange = onRegistrationOpenChange)
+                        },
+                    )
+                }
             }
 
             GlassSectionHeader(LocalStrings.current.actionShare)

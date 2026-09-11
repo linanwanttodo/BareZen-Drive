@@ -3,6 +3,8 @@ package com.linan.barezen_drive.ui.screens.preview
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -32,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
+import io.ktor.utils.io.ByteReadChannel
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.media.formatDateTime
@@ -131,7 +134,7 @@ fun PreviewScreen(
                 PreviewKind.AUDIO -> PlatformMediaPlayer(file, repo, isAudio = true)
                 PreviewKind.TEXT -> TextViewer(file, repo)
                 PreviewKind.PDF -> PlatformPdfViewer(file, repo)
-                PreviewKind.OTHER -> Unsupported(file)
+                PreviewKind.OTHER -> Unsupported(file, repo, saver)
             }
         }
     }
@@ -217,10 +220,24 @@ private fun InfoLine(label: String, value: String) {
 }
 
 @Composable
-private fun Unsupported(file: FileDto) {
+private fun Unsupported(file: FileDto, repo: FilesRepository, saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(LocalStrings.current.previewUnsupported, style = MaterialTheme.typography.bodyMedium)
+            Text(file.name, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                LocalStrings.current.previewUnsupported,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            // The explicit action replaces the old tap-to-download surprise.
+            androidx.compose.material3.Button(
+                onClick = { saver(file.name, file.mimeType) { repo.download(file.id) } },
+                colors = com.linan.barezen_drive.ui.theme.filledButtonColors(),
+            ) {
+                Text(LocalStrings.current.actionDownload)
+            }
         }
     }
 }

@@ -194,6 +194,14 @@ interface Strings {
     val infoModified: String
     val allDevices: String
     val allMedia: String
+    val selectAll: String
+    val userManagement: String
+    val userManagementHint: String
+    val you: String
+    fun fileCount(n: Long): String
+    val deleteUser: String
+    fun deleteUserWarning(name: String): String
+    val deleteUserSelfWarning: String
     val viewWaterfall: String
     val viewUniform: String
     val viewDated: String

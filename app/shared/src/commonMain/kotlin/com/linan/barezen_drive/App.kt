@@ -35,6 +35,7 @@ import com.linan.barezen_drive.ui.screens.settings.OpenSourceScreen
 import com.linan.barezen_drive.ui.screens.settings.SettingsScreen
 import com.linan.barezen_drive.ui.screens.settings.WebUpdatePrompt
 import com.linan.barezen_drive.ui.screens.transfer.TransferCenterScreen
+import com.linan.barezen_drive.ui.screens.settings.UsersScreen
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.shell.MainShell
 import com.linan.barezen_drive.ui.shell.MainTab
@@ -81,6 +82,7 @@ private sealed interface Screen {
     data object OpenSource : Screen
     data object ShareManager : Screen
     data object Transfers : Screen
+    data object Users : Screen
 }
 
 /** /s/<token> public share entry captured once at startup; null on non-web. */
@@ -133,6 +135,7 @@ fun App() {
     var useDynamicColor by remember { mutableStateOf(prefs.useDynamicColor) }
     var glassBlur by remember { mutableStateOf(prefs.glassBlurEnabled) }
     var albumAutoSync by remember { mutableStateOf(prefs.albumAutoSync) }
+    var currentUserId by remember { mutableStateOf<String?>(null) }
     var syncWifiOnly by remember { mutableStateOf(prefs.syncWifiOnly) }
     var glassAlpha by remember { mutableStateOf(prefs.glassAlphaPercent) }
     val accentSeed = when {
@@ -173,6 +176,7 @@ fun App() {
         val scope = rememberCoroutineScope()
         LaunchedEffect(Unit) {
             registrationOpen = files.registrationStatus().getOrNull()?.open
+            currentUserId = files.me().getOrNull()?.id
         }
         // Keep the background album-sync job in step with the stored settings.
         LaunchedEffect(albumAutoSync, syncWifiOnly) {
@@ -266,6 +270,11 @@ fun App() {
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
                             saver = recentSaver,
                             themeToggle = themeToggle,
+                            onDeleteFiles = { list ->
+                                scope.launch {
+                                    list.forEach { f -> files.deleteFile(f.id) }
+                                }
+                            },
                         )
                         MainTab.ALBUM -> AlbumScreen(
                             repo = files,
@@ -352,6 +361,7 @@ fun App() {
                                 prefs.wallpaperEnabled = false
                             },
                             onOpenSource = { push(Screen.OpenSource) },
+                            onOpenUsers = { push(Screen.Users) },
                             onOpenShareManager = { push(Screen.ShareManager) },
                             onLogout = {
                                 username = ""
@@ -376,6 +386,24 @@ fun App() {
             )
             is Screen.OpenSource -> OpenSourceScreen(onBack = pop)
             is Screen.ShareManager -> ShareManagerScreen(repo = files, onBack = pop)
+            is Screen.Users -> UsersScreen(
+                currentUserId = currentUserId,
+                users = { files.adminUsers().getOrThrow().users },
+                onDelete = { user ->
+                    files.adminDeleteUser(user.id).fold(
+                        onSuccess = {
+                            if (user.id == currentUserId) {
+                                username = ""
+                                prefs.username = ""
+                                auth.logout()
+                                stack = listOf(Screen.Login)
+                            }
+                        },
+                        onFailure = { },
+                    )
+                },
+                onBack = pop,
+            )
             is Screen.Transfers -> TransferCenterScreen(
                 onBack = pop,
                 autoSync = albumAutoSync,

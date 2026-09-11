@@ -14,6 +14,8 @@ import com.linan.barezen_drive.core.dto.SharedInfoResponse
 import com.linan.barezen_drive.core.dto.UploadInitRequest
 import com.linan.barezen_drive.core.dto.UploadInitResponse
 import com.linan.barezen_drive.core.dto.VersionInfoResponse
+import com.linan.barezen_drive.core.dto.AdminUsersResponse
+import com.linan.barezen_drive.core.dto.UserDto
 import com.linan.barezen_drive.core.dto.RegistrationStatusDto
 import com.linan.barezen_drive.data.api.ApiClient
 import io.ktor.utils.io.ByteReadChannel
@@ -53,6 +55,9 @@ class FilesRepository(private val api: ApiClient) : UploadApi {
     suspend fun versionInfo(): Result<VersionInfoResponse> = api.versionInfo()
     suspend fun registrationStatus(): Result<RegistrationStatusDto> = api.registrationStatus()
     suspend fun setRegistrationOpen(open: Boolean): Result<RegistrationStatusDto> = api.setRegistrationOpen(open)
+    suspend fun adminUsers(): Result<AdminUsersResponse> = api.adminUsers()
+    suspend fun adminDeleteUser(id: String): Result<Unit> = api.adminDeleteUser(id)
+    suspend fun me(): Result<UserDto> = api.me()
     suspend fun ping(): Long = api.ping()
     suspend fun thumbnailBytes(id: String): Result<ByteArray> = api.thumbnailBytes(id)
     suspend fun fileLink(id: String, ttl: Int? = null): Result<FileLinkResponse> = api.fileLink(id, ttl)

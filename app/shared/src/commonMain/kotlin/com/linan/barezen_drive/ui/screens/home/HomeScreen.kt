@@ -4,7 +4,9 @@ import androidx.compose.runtime.collectAsState
 import com.linan.barezen_drive.core.dto.ServerStatsDto
 import com.linan.barezen_drive.platform.monotonicNowMs
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +22,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,6 +36,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -73,6 +81,7 @@ fun HomeScreen(
     onPreview: (List<FileDto>, Int) -> Unit,
     saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit,
     themeToggle: (@Composable () -> Unit)? = null,
+    onDeleteFiles: (List<FileDto>) -> Unit = {},
 ) {
     var recent by remember { mutableStateOf<List<FileDto>?>(null) }
     var album by remember { mutableStateOf<List<FileDto>?>(null) }
@@ -111,7 +120,46 @@ fun HomeScreen(
             )
         },
     ) { pad ->
+        // Long-press multi-select over the recent list, same pattern as Files.
+        var selected by remember { mutableStateOf(setOf<String>()) }
         val recentList = recent
+        if (selected.isNotEmpty() && recentList != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = { selected = recentList.map { it.id }.toSet() }) {
+                    Text(LocalStrings.current.selectAll)
+                }
+                Text(
+                    "${selected.size}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = {
+                    selected.forEach { id ->
+                        recentList.firstOrNull { it.id == id }?.let {
+                            saver(it.name, it.mimeType) { repo.download(it.id) }
+                        }
+                    }
+                    selected = emptySet()
+                }) { Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload) }
+                IconButton(onClick = {
+                    onDeleteFiles(recentList.filter { it.id in selected })
+                    selected = emptySet()
+                }) {
+                    Icon(Icons.Default.Delete, contentDescription = LocalStrings.current.actionDelete,
+                        tint = MaterialTheme.colorScheme.error)
+                }
+                IconButton(onClick = { selected = emptySet() }) {
+                    Icon(Icons.Default.Close, contentDescription = LocalStrings.current.actionCancel)
+                }
+            }
+            HorizontalDivider()
+        }
         val albumList = album
         // Bottom clearance lets the last rows scroll clear of the floating
         // glass bar while content still flows behind it for the refraction.
@@ -183,6 +231,12 @@ fun HomeScreen(
                         file = file,
                         thumbs = thumbs,
                         onOpen = { openRecent(file, recentList, onPreview, saver, repo) },
+                        selection = selected.ifEmpty { null },
+                        onToggleSelect = {
+                            selected = selected.toMutableSet().apply {
+                                if (!add(file.id)) remove(file.id)
+                            }
+                        },
                     )
                     HorizontalDivider()
                 }
@@ -234,15 +288,22 @@ private fun SectionHeader(title: String, action: String?, onAction: (() -> Unit)
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 private fun RecentRow(
     file: FileDto,
     thumbs: ThumbnailLoader,
     onOpen: () -> Unit,
+    selection: Set<String>? = null,
+    onToggleSelect: () -> Unit = {},
 ) {
+    val isSelected = selection?.contains(file.id) == true
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
+            .combinedClickable(
+                onClick = { if (selection != null) onToggleSelect() else onOpen() },
+                onLongClick = onToggleSelect,
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -255,6 +316,16 @@ private fun RecentRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (selection != null) {
+            IconButton(onClick = onToggleSelect) {
+                Icon(
+                    if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (isSelected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
