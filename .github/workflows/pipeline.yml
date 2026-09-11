@@ -148,17 +148,27 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          # Debug only: it installs directly. The unsigned release build cannot
-          # be installed without a signing key, so it is not produced.
-          ./gradlew :app:androidApp:assembleDebug \
+          # Debug installs standalone; the release build is signed when the
+          # keystore secrets exist and becomes the update manifest's package.
+          ./gradlew :app:androidApp:assembleDebug :app:androidApp:assembleRelease \
             -Pversion=${{ needs.version.outputs.version }} --console=plain
       - name: Stage APKs with versioned names
         run: |
           mkdir -p dist
-          # Only the debug APK ships: it installs directly, while the unsigned
-          # release build cannot be installed without a signing key.
           cp app/androidApp/build/outputs/apk/debug/androidApp-debug.apk \
-            "dist/BareZen-Drive-${{ needs.version.outputs.version }}-android.apk"
+            "dist/BareZen-Drive-${{ needs.version.outputs.version }}-android-debug.apk"
+          # The signed release is the primary Android download (and the
+          # update.json entry). Without configured secrets it would be
+          # unsigned and uninstallable, so the debug build stands in instead.
+          signed="app/androidApp/build/outputs/apk/release/androidApp-release.apk"
+          if [ -f "$signed" ]; then
+            cp "$signed" "dist/BareZen-Drive-${{ needs.version.outputs.version }}-android.apk"
+            echo "Shipping the signed release APK as the primary package."
+          else
+            cp app/androidApp/build/outputs/apk/debug/androidApp-debug.apk \
+              "dist/BareZen-Drive-${{ needs.version.outputs.version }}-android.apk"
+            echo "No signing configured; shipping the debug APK as the primary package."
+          fi
           ls -la dist
       - uses: actions/upload-artifact@v4
         with:
