@@ -75,6 +75,9 @@ kotlin {
             implementation(libs.compose.uiTooling)
             implementation(libs.ktor.clientOkhttp)
             implementation(libs.kotlinx.coroutinesAndroid)
+            // NotificationCompat / NotificationManagerCompat for transfer
+            // progress notifications.
+            implementation(libs.androidx.core.ktx)
             implementation(libs.androidx.securityCrypto)
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.exifinterface)
