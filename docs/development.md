@@ -35,6 +35,13 @@ docker run -d --name barezen-pg -p 5432:5432 \
 ./gradlew :app:shared:compileKotlinWasmJs --console=plain       # wasm 编译门
 ```
 
+部署后的线上功能验证可用 `scripts/e2e.py`（覆盖健康检查、版本清单、注册开关、分块上传、秒传、
+Range 下载、签名链接、分享生命周期、统计与清理）：
+
+```bash
+BASE=http://<服务器>:8080 USER_NAME=e2etest PASS=e2epassword123 python3 scripts/e2e.py
+```
+
 ### 持续集成
 
 `.github/workflows/ci.yml` 在推送到 `master` 与向 `master` 发 PR 时运行：`test` 门（服务端 /
