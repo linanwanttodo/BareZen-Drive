@@ -2,32 +2,33 @@ rootProject.name = "BareZen-Drive"
 
 pluginManagement {
     repositories {
-        maven("https://maven.aliyun.com/repository/google") {
-            content { includeGroupAndSubgroups("androidx"); includeGroupAndSubgroups("com.android"); includeGroupAndSubgroups("com.google") }
-        }
-        maven("https://maven.aliyun.com/repository/public")
+        // Authoritative sources first: the aliyun mirrors below have shown lag
+        // and 502s on freshly published artifacts (Compose wasm klibs), which
+        // broke CI. They remain as latency fallbacks for local builds.
         google {
             mavenContent { includeGroupAndSubgroups("androidx"); includeGroupAndSubgroups("com.android"); includeGroupAndSubgroups("com.google") }
         }
         mavenCentral()
         gradlePluginPortal()
+        maven("https://maven.aliyun.com/repository/google") {
+            content { includeGroupAndSubgroups("androidx"); includeGroupAndSubgroups("com.android"); includeGroupAndSubgroups("com.google") }
+        }
+        maven("https://maven.aliyun.com/repository/public")
     }
 }
 
 dependencyResolutionManagement {
     repositories {
-        maven("https://maven.aliyun.com/repository/google") {
-            content { includeGroupAndSubgroups("androidx"); includeGroupAndSubgroups("com.android"); includeGroupAndSubgroups("com.google") }
-        }
-        maven("https://maven.aliyun.com/repository/public") {
-            // Aliyun lags on io.github.kyant0 wasm-js klibs; resolve those
-            // from Maven Central instead.
-            content { excludeGroup("io.github.kyant0") }
-        }
+        // Authoritative sources first (see pluginManagement above): CI must
+        // never depend on mirror freshness for new releases.
         google {
             mavenContent { includeGroupAndSubgroups("androidx"); includeGroupAndSubgroups("com.android"); includeGroupAndSubgroups("com.google") }
         }
         mavenCentral()
+        maven("https://maven.aliyun.com/repository/google") {
+            content { includeGroupAndSubgroups("androidx"); includeGroupAndSubgroups("com.android"); includeGroupAndSubgroups("com.google") }
+        }
+        maven("https://maven.aliyun.com/repository/public")
     }
 }
 
