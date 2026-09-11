@@ -171,7 +171,13 @@ fun AlbumScreen(
         albumFolderId = target
         val picks = pendingUploads
         picks.forEachIndexed { i, picked ->
-            uploadJob = launch { uploader.upload(picked, target) }
+            // Photos carry their phone-album name; the matching category
+            // folder is created on first upload (null = straight into the
+            // device folder, e.g. web/desktop uploads).
+            val perFile = picked.originAlbum?.takeIf { it.isNotBlank() }
+                ?.let { cat -> target?.let { t -> AlbumFolder.resolveCategory(repo, t, cat) } }
+                ?: target
+            uploadJob = launch { uploader.upload(picked, perFile) }
             uploadJob?.join()
         }
         pendingUploads = emptyList()

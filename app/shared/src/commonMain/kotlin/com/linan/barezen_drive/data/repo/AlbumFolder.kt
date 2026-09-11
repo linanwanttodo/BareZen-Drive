@@ -31,6 +31,13 @@ object AlbumFolder {
     /** The Album root folder - the "all devices" scope for the timeline. */
     suspend fun resolveAlbumRoot(repo: FilesRepository): String? = findOrCreateRoot(repo)
 
+    /**
+     * The phone-album category folder inside a device folder, created on
+     * demand - only uploads that carry a source album name ever create one.
+     */
+    suspend fun resolveCategory(repo: FilesRepository, deviceFolderId: String, category: String): String? =
+        findOrCreateChild(repo, deviceFolderId, category)
+
     /** The platform folder (Android / Web / iOS / Desktop) under the root. */
     suspend fun resolvePlatform(repo: FilesRepository): String? {
         val root = findOrCreateRoot(repo) ?: return null
