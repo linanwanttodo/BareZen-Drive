@@ -194,6 +194,11 @@ interface Strings {
     val infoModified: String
     val allDevices: String
     val allMedia: String
+    val viewWaterfall: String
+    val viewUniform: String
+    val viewDated: String
+    val allPhotos: String
+    val backToCollections: String
     val transfers: String
     val tabUploading: String
     val tabDownloading: String

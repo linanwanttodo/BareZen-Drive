@@ -57,6 +57,10 @@ actual object AppPreferences {
             get() = readString("language_mode")?.toIntOrNull() ?: 0
             set(v) = writeString("language_mode", v.toString())
 
+        override var albumViewMode: Int
+            get() = readString("album_view_mode")?.toIntOrNull() ?: 0
+            set(v) = writeString("album_view_mode", v.toString())
+
         override var albumAutoSync: Boolean
             get() = readString("album_auto_sync") == "true"
             set(v) = writeString("album_auto_sync", v.toString())

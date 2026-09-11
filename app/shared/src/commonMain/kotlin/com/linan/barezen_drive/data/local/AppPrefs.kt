@@ -35,6 +35,9 @@ interface AppPrefs {
     /** UI language: 0 = follow the system (default), 1 = Chinese, 2 = English. */
     var languageMode: Int
 
+    /** Album photo-grid layout: 0 waterfall (default), 1 uniform, 2 by date. */
+    var albumViewMode: Int
+
     /** Album auto-sync: upload new device photos automatically. */
     var albumAutoSync: Boolean
 

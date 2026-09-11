@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
@@ -23,6 +25,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.CalendarViewDay
+import androidx.compose.material.icons.filled.GridOn
+import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -45,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -60,6 +67,7 @@ import com.linan.barezen_drive.platform.deviceName
 import com.linan.barezen_drive.data.repo.AlbumFolder
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.media.fileIcon
+import com.linan.barezen_drive.ui.media.formatDateTime
 import com.linan.barezen_drive.ui.media.formatMonthLabel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -73,6 +81,8 @@ import com.linan.barezen_drive.i18n.LocalStrings
 private const val PAGE_SIZE = 200
 
 private data class AlbumGroup(val label: String, val files: List<FileDto>)
+
+private data class CollectionTile(val name: String, val folderId: String, val cover: FileDto?)
 
 private fun groupByMonth(files: List<FileDto>): List<AlbumGroup> {
     val tz = TimeZone.currentSystemDefault()
@@ -125,6 +135,14 @@ fun AlbumScreen(
     // categories, since scopes differ per device.
     var categories by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var activeCategory by remember { mutableStateOf<String?>(null) }
+    // False = collections landing (rounded first-photo covers per phone album);
+    // true = the photo grid of the whole device subtree or one category.
+    var timelineMode by remember { mutableStateOf(false) }
+    val prefs = com.linan.barezen_drive.data.local.AppPreferences.get()
+    var viewMode by remember { mutableStateOf(prefs.albumViewMode) }
+    var collections by remember { mutableStateOf<List<CollectionTile>>(emptyList()) }
+    var collectionsLoading by remember { mutableStateOf(false) }
+    val allPhotosLabel = LocalStrings.current.allPhotos
 
     LaunchedEffect(Unit) {
         albumFolderId = AlbumFolder.resolve(repo, device)
@@ -132,9 +150,25 @@ fun AlbumScreen(
         albumFolderId?.let { categories = repo.contents(it).getOrNull()?.folders?.map { f -> f.name to f.id } ?: emptyList() }
     }
 
+    // Covers for the collections landing: the newest photo of each folder.
+    LaunchedEffect(albumFolderId, categories) {
+        val scope = albumFolderId ?: return@LaunchedEffect
+        if (timelineMode) return@LaunchedEffect
+        collectionsLoading = true
+        suspend fun coverOf(folderId: String?): FileDto? =
+            repo.album(1, null, folderId).getOrNull()?.files?.firstOrNull()
+        val tiles = mutableListOf(CollectionTile(allPhotosLabel, scope, coverOf(scope)))
+        for ((name, id) in categories) {
+            tiles.add(CollectionTile(name, id, coverOf(id)))
+        }
+        collections = tiles
+        collectionsLoading = false
+    }
+
     fun switchScope(id: String?, name: String) {
         groups = emptyList(); cursor = null; exhausted = false; error = null
         activeCategory = null
+        timelineMode = false
         scope.launch {
             categories = id?.let { repo.contents(it).getOrNull()?.folders?.map { f -> f.name to f.id } } ?: emptyList()
         }
@@ -262,6 +296,26 @@ fun AlbumScreen(
                     }
                 },
                 actions = {
+                    if (timelineMode) {
+                        // Cycle waterfall -> uniform -> by date; persisted.
+                        IconButton(onClick = {
+                            viewMode = (viewMode + 1) % 3
+                            prefs.albumViewMode = viewMode
+                        }) {
+                            Icon(
+                                when (viewMode) {
+                                    1 -> Icons.Default.GridOn
+                                    2 -> Icons.Default.CalendarViewDay
+                                    else -> Icons.Default.ViewAgenda
+                                },
+                                contentDescription = when (viewMode) {
+                                    1 -> LocalStrings.current.viewUniform
+                                    2 -> LocalStrings.current.viewDated
+                                    else -> LocalStrings.current.viewWaterfall
+                                },
+                            )
+                        }
+                    }
                     IconButton(onClick = { imagePicker() }) {
                         Icon(Icons.Default.AddPhotoAlternate, contentDescription = LocalStrings.current.pickFromGallery)
                     }
@@ -274,45 +328,99 @@ fun AlbumScreen(
             )
         },
     ) { pad ->
-        // Category chips: only when a single device is selected. They mirror
-        // the real category folders; "all" scans the whole device subtree.
-        val allLabel = LocalStrings.current.allMedia
-        if (categories.isNotEmpty()) {
-            androidx.compose.foundation.lazy.LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
-            ) {
-                item {
-                    androidx.compose.material3.FilterChip(
-                        selected = activeCategory == null,
-                        onClick = {
-                            if (activeCategory != null) {
-                                activeCategory = null
-                                groups = emptyList(); cursor = null; exhausted = false
-                                loadMore()
-                            }
-                        },
-                        label = { Text(allLabel) },
-                    )
-                }
-                items(categories.size) { i ->
-                    val (name, id) = categories[i]
-                    androidx.compose.material3.FilterChip(
-                        selected = activeCategory == id,
-                        onClick = {
-                            if (activeCategory != id) {
-                                activeCategory = id
-                                groups = emptyList(); cursor = null; exhausted = false
-                                loadMore()
-                            }
-                        },
-                        label = { Text(name) },
-                    )
-                }
-            }
-        }
         val flat = groups.flatMap { it.files }
         when {
+            // Collections landing: one rounded cover per phone album (the
+            // first photo), plus an all-photos tile - Google Photos style.
+            !timelineMode && scopeName != LocalStrings.current.allDevices -> Centered(pad) {
+                if (collectionsLoading) {
+                    CircularProgressIndicator()
+                } else {
+                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(16.dp),
+                    ) {
+                        items(collections.size, key = { collections[it].folderId }) { i ->
+                            val tile = collections[i]
+                            CollectionCoverTile(tile = tile, thumbs = thumbs, onClick = {
+                                timelineMode = true
+                                if (tile.folderId != albumFolderId) {
+                                    activeCategory = tile.folderId
+                                    groups = emptyList(); cursor = null; exhausted = false
+                                    loadMore()
+                                }
+                            })
+                        }
+                    }
+                }
+            }
+            // Dated layout: day sections of uniform squares.
+            viewMode == 2 -> LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(pad),
+                contentPadding = PaddingValues(bottom = 16.dp),
+            ) {
+                item(key = "back") { BackToCollectionsChip { timelineMode = false } }
+                val dayGroups = flat.groupBy { formatDateTime(it.updatedAt).take(10) }
+                dayGroups.forEach { (day, files) ->
+                    item(key = "d_$day") {
+                        Text(
+                            day,
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
+                    }
+                    items(files.chunked(3).size) { row ->
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                            val rowFiles = files.chunked(3)[row]
+                            rowFiles.forEach { file ->
+                                Box(Modifier.weight(1f).padding(2.dp)) {
+                                    AlbumTile(
+                                        file = file,
+                                        thumbs = thumbs,
+                                        square = true,
+                                        onClick = {
+                                            val index = flat.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
+                                            onPreview(flat, index, true)
+                                        },
+                                    )
+                                }
+                            }
+                            repeat(3 - rowFiles.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+                item(key = "loading") {
+                    if (loading) Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                }
+            }
+            // Uniform grid: fixed square cells.
+            viewMode == 1 -> Column(Modifier.fillMaxSize().padding(pad)) {
+                BackToCollectionsChip { timelineMode = false }
+                if (loading) {
+                    androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                    columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(4),
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp),
+                ) {
+                    items(flat.size, key = { flat[it].id }) { i ->
+                        AlbumTile(
+                            file = flat[i],
+                            thumbs = thumbs,
+                            square = true,
+                            onClick = { onPreview(flat, i, true) },
+                        )
+                    }
+                }
+            }
             error != null && groups.isEmpty() -> Centered(pad) {
                 Text(error ?: LocalStrings.current.loadFailed, color = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.height(8.dp))
@@ -419,7 +527,12 @@ private fun Centered(pad: androidx.compose.foundation.layout.PaddingValues, cont
 
 /** Waterfall tile: loads the cover, then occupies its intrinsic aspect ratio. */
 @Composable
-private fun AlbumTile(file: FileDto, thumbs: ThumbnailLoader, onClick: () -> Unit) {
+private fun AlbumTile(
+    file: FileDto,
+    thumbs: ThumbnailLoader,
+    onClick: () -> Unit,
+    square: Boolean = false,
+) {
     var bitmap by remember(file.id) { mutableStateOf<ImageBitmap?>(null) }
     // Decoupled from bitmap: load() returning null means "no cover" (not still
     // loading), so the tile settles on the type-icon placeholder instead of
@@ -437,11 +550,14 @@ private fun AlbumTile(file: FileDto, thumbs: ThumbnailLoader, onClick: () -> Uni
                 contentDescription = file.name,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(bmp.width.toFloat() / bmp.height),
+                    .aspectRatio(if (square) 1f else bmp.width.toFloat() / bmp.height),
                 contentScale = ContentScale.Crop,
             )
             else -> Box(
-                Modifier.fillMaxWidth().height(110.dp).background(
+                Modifier
+                    .fillMaxWidth()
+                    .let { if (square) it.aspectRatio(1f) else it }
+                    .height(110.dp).background(
                     MaterialTheme.colorScheme.surfaceVariant,
                 ),
                 contentAlignment = Alignment.Center,
@@ -455,5 +571,60 @@ private fun AlbumTile(file: FileDto, thumbs: ThumbnailLoader, onClick: () -> Uni
                 }
             }
         }
+    }
+}
+
+
+/**
+ * Collections landing tile: the newest photo of a phone album as a rounded
+ * cover, with the album name underneath - like the collections tab of a
+ * phone gallery. Tapping opens that album's photo grid.
+ */
+@Composable
+private fun CollectionCoverTile(
+    tile: CollectionTile,
+    thumbs: ThumbnailLoader,
+    onClick: () -> Unit,
+) {
+    Column(Modifier.clickable(onClick = onClick)) {
+        var bitmap by remember(tile.folderId) { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(tile.folderId) {
+            tile.cover?.let { bitmap = thumbs.load(it.id) }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(MaterialTheme.shapes.medium)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            val bmp = bitmap
+            if (bmp != null && bmp.width > 0 && bmp.height > 0) {
+                Image(
+                    bitmap = bmp,
+                    contentDescription = tile.name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Icon(
+                    Icons.Default.PhotoLibrary,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(tile.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+    }
+}
+
+@Composable
+private fun BackToCollectionsChip(onClick: () -> Unit) {
+    TextButton(onClick = onClick) {
+        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+        Spacer(Modifier.width(4.dp))
+        Text(LocalStrings.current.backToCollections)
     }
 }
