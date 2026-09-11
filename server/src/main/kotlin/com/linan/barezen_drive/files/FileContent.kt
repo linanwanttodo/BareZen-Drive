@@ -59,6 +59,19 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
         call.respond(FileLinkResponse("/api/files/${meta.id}/content?exp=$exp&sig=$sig", Instant.ofEpochMilli(exp * 1000).toString()))
     }
 
+    // Album order: capture time when known, else upload time.
+    fun sortTs(): org.jetbrains.exposed.sql.ExpressionWithColumnType<Long> =
+        object : org.jetbrains.exposed.sql.ExpressionWithColumnType<Long>() {
+            override val columnType = org.jetbrains.exposed.sql.LongColumnType()
+            override fun toQueryBuilder(qb: org.jetbrains.exposed.sql.QueryBuilder) {
+                qb.append("COALESCE(")
+                FilesTable.takenAt.toQueryBuilder(qb)
+                qb.append(", ")
+                FilesTable.updatedAt.toQueryBuilder(qb)
+                qb.append(")")
+            }
+        }
+
     get("/api/album") {
         // Media timeline: images and videos, newest first, keyset pagination on
         // (updated_at, id). Grouping is a client-side concern (local timezone).
@@ -96,14 +109,14 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
                     // Format "<epochMillis>:<uuid>"; a malformed cursor just restarts from the top.
                     parseCursor(cursor)?.let { (ms, id) ->
                         q = q.andWhere {
-                            (FilesTable.updatedAt less ms) or
-                                ((FilesTable.updatedAt eq ms) and (FilesTable.id less id))
+                            (sortTs() less ms) or
+                                ((sortTs() eq ms) and (FilesTable.id less id))
                         }
                     }
                 }
-                q.orderBy(FilesTable.updatedAt, SortOrder.DESC)
+                q.orderBy(sortTs() to SortOrder.DESC, FilesTable.id to SortOrder.DESC)
                     .limit(limit + 1)
-                    .map { it[FilesTable.updatedAt] to it.toFileDto() }
+                    .map { (it[FilesTable.takenAt] ?: it[FilesTable.updatedAt]) to it.toFileDto() }
             }
         }
         val hasMore = rows.size > limit

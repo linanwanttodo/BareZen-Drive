@@ -15,11 +15,13 @@ internal class AndroidPickedFile(internal val ctx: Context, internal val uri: Ur
     override val size: Long
     override val mimeType: String? = ctx.contentResolver.getType(uri)
     override val originAlbum: String?
+    override val originDateMs: Long?
 
     init {
         var n = uri.lastPathSegment ?: uri.toString()
         var s = 0L
         var album: String? = null
+        var dateMs: Long? = null
         ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
             val iName = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
             val iSize = c.getColumnIndex(OpenableColumns.SIZE)
@@ -28,9 +30,19 @@ internal class AndroidPickedFile(internal val ctx: Context, internal val uri: Ur
             // to the bucket display name.
             val iPath = c.getColumnIndex(android.provider.MediaStore.MediaColumns.RELATIVE_PATH)
             val iBucket = c.getColumnIndex(android.provider.MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
+            val iTaken = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATE_TAKEN)
+            val iMod = c.getColumnIndex(android.provider.MediaStore.MediaColumns.DATE_MODIFIED)
             if (c.moveToFirst()) {
                 if (iName >= 0) c.getString(iName)?.let { n = it }
                 if (iSize >= 0) s = c.getLong(iSize)
+                if (iTaken >= 0) {
+                    val sec = c.getLong(iTaken)
+                    if (sec > 0) dateMs = sec * 1000
+                }
+                if (dateMs == null && iMod >= 0) {
+                    val sec = c.getLong(iMod)
+                    if (sec > 0) dateMs = sec * 1000
+                }
                 if (iPath >= 0) {
                     c.getString(iPath)?.let { p ->
                         album = p.trim('/').split('/').lastOrNull()?.takeIf { it.isNotBlank() }
@@ -42,6 +54,7 @@ internal class AndroidPickedFile(internal val ctx: Context, internal val uri: Ur
         name = n
         size = s
         originAlbum = album
+        originDateMs = dateMs
     }
 
     override suspend fun readRange(offset: Long, length: Int): ByteArray? = withContext(Dispatchers.IO) {

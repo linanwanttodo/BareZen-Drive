@@ -84,11 +84,14 @@ private data class AlbumGroup(val label: String, val files: List<FileDto>)
 
 private data class CollectionTile(val name: String, val folderId: String, val cover: FileDto?)
 
+/** Album display time: capture time when the device provided it, else upload time. */
+internal fun albumTime(file: FileDto): String = file.takenAt ?: file.updatedAt
+
 private fun groupByMonth(files: List<FileDto>): List<AlbumGroup> {
     val tz = TimeZone.currentSystemDefault()
     return files
         .groupBy { f ->
-            val local = runCatching { Instant.parse(f.updatedAt).toLocalDateTime(tz) }.getOrNull()
+            val local = runCatching { Instant.parse(albumTime(f)).toLocalDateTime(tz) }.getOrNull()
             local?.year to local?.monthNumber
         }
         .map { (key, fs) -> AlbumGroup(formatMonthLabel(key.first ?: 0, key.second ?: 0), fs) }
@@ -363,7 +366,7 @@ fun AlbumScreen(
                 contentPadding = PaddingValues(bottom = 16.dp),
             ) {
                 item(key = "back") { BackToCollectionsChip { timelineMode = false } }
-                val dayGroups = flat.groupBy { formatDateTime(it.updatedAt).take(10) }
+                val dayGroups = flat.groupBy { formatDateTime(albumTime(it)).take(10) }
                 dayGroups.forEach { (day, files) ->
                     item(key = "d_$day") {
                         Text(

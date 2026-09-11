@@ -47,6 +47,10 @@ object FilesTable : Table("files") {
     // existing databases, and a NOT NULL add without DEFAULT fails on any table
     // that already holds rows (PostgreSQL rejects it outright).
     val hasThumbnail = bool("has_thumbnail").default(false)
+    // Capture time from the source device (EXIF/DATE_TAKEN); null for
+    // uploads without that info. The album timeline sorts on this when set,
+    // so re-uploads never shuffle the gallery order.
+    val takenAt = long("taken_at").nullable()
     val createdAt = long("created_at").clientDefault { System.currentTimeMillis() }
     val updatedAt = long("updated_at").clientDefault { System.currentTimeMillis() }
     override val primaryKey = PrimaryKey(id)
@@ -66,6 +70,7 @@ object UploadSessionsTable : Table("upload_sessions") {
     val mimeType = varchar("mime_type", 255).nullable()
     val chunkSize = long("chunk_size")
     val clientSha256 = varchar("client_sha256", 64).nullable()
+    val takenAt = long("taken_at").nullable()
     val status = varchar("status", 16).clientDefault { "open" }
     val createdAt = long("created_at").clientDefault { System.currentTimeMillis() }
     val expiresAt = long("expires_at")

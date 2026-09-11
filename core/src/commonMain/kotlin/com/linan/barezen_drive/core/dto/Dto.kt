@@ -9,12 +9,18 @@ import kotlinx.serialization.Serializable
 @Serializable data class LoginResponse(val accessToken: String, val refreshToken: String, val user: UserDto)
 @Serializable data class RefreshResponse(val accessToken: String, val refreshToken: String)
 @Serializable data class FolderDto(val id: String, val name: String, val parentId: String?, val createdAt: String, val updatedAt: String)
-@Serializable data class FileDto(val id: String, val name: String, val folderId: String?, val size: Long, val mimeType: String?, val sha256: String, val createdAt: String, val updatedAt: String, val hasThumbnail: Boolean = false)
+@Serializable data class FileDto(
+    val id: String, val name: String, val folderId: String?, val size: Long,
+    val mimeType: String?, val sha256: String, val createdAt: String, val updatedAt: String,
+    val hasThumbnail: Boolean = false,
+    /** Capture time (ISO-8601) from the source device; null when unknown. */
+    val takenAt: String? = null,
+)
 @Serializable data class ContentsResponse(val folder: FolderDto?, val folders: List<FolderDto>, val files: List<FileDto>)
 @Serializable data class CreateFolderRequest(val parentId: String? = null, val name: String)
 @Serializable data class RenameFolderRequest(val name: String)
 @Serializable data class UpdateFileRequest(val name: String? = null, val folderId: String? = null)
-@Serializable data class UploadInitRequest(val folderId: String? = null, val name: String, val size: Long, val mimeType: String? = null, val sha256: String? = null, val chunkSize: Long? = null)
+@Serializable data class UploadInitRequest(val folderId: String? = null, val name: String, val size: Long, val mimeType: String? = null, val sha256: String? = null, val chunkSize: Long? = null, val takenAt: Long? = null)
 @Serializable data class UploadInitResponse(val uploadId: String, val chunkSize: Long, val receivedChunks: List<Int> = emptyList(), val instantUpload: Boolean = false, val file: FileDto? = null)
 @Serializable data class UploadCompleteResponse(val file: FileDto)
 @Serializable data class ApiError(val code: String, val message: String)

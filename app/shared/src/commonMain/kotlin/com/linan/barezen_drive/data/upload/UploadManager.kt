@@ -116,6 +116,7 @@ class UploadManager(
                 size = file.size,
                 mimeType = file.mimeType,
                 sha256 = wholeSha,
+                takenAt = file.originDateMs,
             ),
         ).getOrElse { e -> return failed(file, 0L, e) }
         if (init.instantUpload) {

@@ -94,6 +94,7 @@ object UploadService {
                             it[FilesTable.name] = req.name; it[FilesTable.size] = req.size
                             it[mimeType] = req.mimeType; it[FilesTable.sha256] = sha; it[storageKey] = key
                             it[hasThumbnail] = hasThumb
+                            it[takenAt] = req.takenAt
                         }
                         FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto()
                     }
@@ -117,7 +118,13 @@ object UploadService {
                     it[UploadSessionsTable.name] = req.name; it[UploadSessionsTable.size] = req.size
                     it[mimeType] = req.mimeType; it[UploadSessionsTable.chunkSize] = chunkSize
                     it[clientSha256] = sha; it[expiresAt] = System.currentTimeMillis() + SESSION_TTL_MILLIS
+                    it[takenAt] = req.takenAt
                 }
+            }
+        }
+        if (req.takenAt != null && existing != null && existing[UploadSessionsTable.takenAt] == null) {
+            transaction(DatabaseFactory.db) {
+                UploadSessionsTable.update({ UploadSessionsTable.id eq sessionId }) { it[takenAt] = req.takenAt }
             }
         }
         val received = transaction(DatabaseFactory.db) {
@@ -200,6 +207,7 @@ object UploadService {
         val name = row[UploadSessionsTable.name]
         val mime = row[UploadSessionsTable.mimeType]
         val clientSha = row[UploadSessionsTable.clientSha256]
+        val sessionTakenAt = row[UploadSessionsTable.takenAt]
         val expected = expectedChunks(total, chunkSize)
         val have = transaction(DatabaseFactory.db) { UploadChunksTable.selectAll().where { UploadChunksTable.session eq sessionId }.count() }
         if (have != expected.toLong()) throw ApiException.badRequest("缺少分块", ErrorCodes.CHUNK_MISSING)
@@ -238,6 +246,7 @@ object UploadService {
                     it[FilesTable.name] = name; it[FilesTable.size] = total
                     it[mimeType] = mime; it[FilesTable.sha256] = sha; it[storageKey] = key
                     it[hasThumbnail] = hasThumb
+                    it[takenAt] = sessionTakenAt
                 }
                 UploadSessionsTable.update({ UploadSessionsTable.id eq sessionId }) { it[status] = "completed" }
                 FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto()

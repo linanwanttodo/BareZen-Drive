@@ -196,4 +196,5 @@ internal fun ResultRow.toFileDto(): FileDto = FileDto(
     this[FilesTable.size], this[FilesTable.mimeType], this[FilesTable.sha256],
     Instant.ofEpochMilli(this[FilesTable.createdAt]).toString(), Instant.ofEpochMilli(this[FilesTable.updatedAt]).toString(),
     this[FilesTable.hasThumbnail],
+    this[FilesTable.takenAt]?.let { Instant.ofEpochMilli(it).toString() },
 )

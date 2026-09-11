@@ -15,6 +15,13 @@ interface PickedFile {
      */
     val originAlbum: String? get() = null
 
+    /**
+     * Capture time in epoch ms when the platform knows it (Android
+     * DATE_TAKEN); null = the platform has no capture metadata. Feeds the
+     * album timeline so photos keep their real date.
+     */
+    val originDateMs: Long? get() = null
+
     /** Reads bytes in [offset, offset + length); returns null when out of bounds. */
     suspend fun readRange(offset: Long, length: Int): ByteArray?
 }
