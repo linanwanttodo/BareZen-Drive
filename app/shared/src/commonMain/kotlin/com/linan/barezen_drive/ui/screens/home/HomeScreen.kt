@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -82,6 +83,7 @@ fun HomeScreen(
     saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit,
     themeToggle: (@Composable () -> Unit)? = null,
     onDeleteFiles: (List<FileDto>) -> Unit = {},
+    onOpenTransfers: () -> Unit = {},
 ) {
     var recent by remember { mutableStateOf<List<FileDto>?>(null) }
     var album by remember { mutableStateOf<List<FileDto>?>(null) }
@@ -116,7 +118,12 @@ fun HomeScreen(
             TopAppBar(
                 title = { Text(LocalStrings.current.tabHome) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                actions = { themeToggle?.invoke() },
+                actions = {
+                    IconButton(onClick = onOpenTransfers) {
+                        Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
+                    }
+                    themeToggle?.invoke()
+                },
             )
         },
     ) { pad ->

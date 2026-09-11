@@ -78,6 +78,9 @@ actual object MediaSync {
 class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appContext, params) {
 
     override fun doWork(): Result = runBlocking {
+        // WorkManager may start this worker in a fresh process where
+        // MainActivity never ran; AndroidContext must be initialized first.
+        runCatching { AndroidContext.init(applicationContext) }
         val store = com.linan.barezen_drive.data.local.TokenStorage
         // Nothing to sync against until the user has signed in somewhere.
         if (store.baseUrl.isBlank() || store.accessToken == null) return@runBlocking Result.success()

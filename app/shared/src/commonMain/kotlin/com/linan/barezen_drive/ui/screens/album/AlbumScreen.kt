@@ -270,15 +270,6 @@ fun AlbumScreen(
                             expanded = deviceMenuOpen,
                             onDismissRequest = { deviceMenuOpen = false },
                         ) {
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text(LocalStrings.current.allDevices) },
-                                onClick = {
-                                    deviceMenuOpen = false
-                                    scope.launch {
-                                        AlbumFolder.resolveAlbumRoot(repo)?.let { switchScope(it, allLabel) }
-                                    }
-                                },
-                            )
                             deviceOptions.forEach { (name, id) ->
                                 androidx.compose.material3.DropdownMenuItem(
                                     text = { Text(name) },

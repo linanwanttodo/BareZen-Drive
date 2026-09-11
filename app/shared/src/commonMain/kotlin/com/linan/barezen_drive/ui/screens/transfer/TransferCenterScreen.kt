@@ -115,7 +115,11 @@ fun TransferCenterScreen(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End,
                         ) {
-                            TextButton(onClick = onSyncNow) { Text(LocalStrings.current.syncNow) }
+                            val startedLabel = LocalStrings.current.syncStarted
+                            TextButton(onClick = {
+                                onSyncNow()
+                                com.linan.barezen_drive.platform.TransferNotifier.toast(startedLabel)
+                            }) { Text(LocalStrings.current.syncNow) }
                         }
                     }
                     HorizontalDivider(Modifier.padding(vertical = 6.dp))

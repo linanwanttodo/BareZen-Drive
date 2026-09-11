@@ -8,4 +8,6 @@ actual object TransferNotifier {
     actual fun showProgress(tag: String, title: String, text: String?, fraction: Float?) = Unit
     actual fun showFinished(tag: String, title: String, text: String, ok: Boolean) = Unit
     actual fun dismiss(tag: String) = Unit
+
+    actual fun toast(text: String) = Unit
 }

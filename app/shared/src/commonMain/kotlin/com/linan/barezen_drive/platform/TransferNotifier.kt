@@ -14,4 +14,7 @@ expect object TransferNotifier {
 
     /** Removes the entry (e.g. when the finished list is cleared). */
     fun dismiss(tag: String)
+
+    /** Short transient confirmation (Android toast; no-op elsewhere). */
+    fun toast(text: String)
 }

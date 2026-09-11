@@ -270,6 +270,7 @@ fun App() {
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
                             saver = recentSaver,
                             themeToggle = themeToggle,
+                            onOpenTransfers = { push(Screen.Transfers) },
                             onDeleteFiles = { list ->
                                 scope.launch {
                                     list.forEach { f -> files.deleteFile(f.id) }
@@ -290,6 +291,7 @@ fun App() {
                             auth = auth,
                             thumbs = thumbs,
                             wallpaperBehind = wallpaperBehind,
+                            onOpenTransfers = { push(Screen.Transfers) },
                             onOpenFolder = { filesPath = filesPath + it },
                             onJumpTo = { idx -> filesPath = filesPath.take(idx + 1) },
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },

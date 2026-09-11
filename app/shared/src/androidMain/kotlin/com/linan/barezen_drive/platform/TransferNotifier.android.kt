@@ -92,4 +92,10 @@ actual object TransferNotifier {
     actual fun dismiss(tag: String) {
         runCatching { manager()?.cancel(idFor(tag)) }
     }
+
+    actual fun toast(text: String) {
+        runCatching {
+            android.widget.Toast.makeText(AndroidContext.app, text, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
 }

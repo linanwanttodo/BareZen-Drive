@@ -220,6 +220,7 @@ interface Strings {
     val syncWifiOnly: String
     val syncWifiOnlyHint: String
     val syncNow: String
+    val syncStarted: String
     val openRegistration: String
     val openRegistrationOnHint: String
     val openRegistrationOffHint: String

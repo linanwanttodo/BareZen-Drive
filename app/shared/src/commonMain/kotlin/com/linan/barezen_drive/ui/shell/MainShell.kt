@@ -146,8 +146,10 @@ fun MainShell(
             ) {
                 MainTab.entries.forEach { tab ->
                     val tabSelected = tab == selected
+                    // Neutral ink instead of the theme accent: the glass bar
+                    // stays transparent and decoupled from the chosen color.
                     val tint = if (tabSelected) {
-                        MaterialTheme.colorScheme.primary
+                        MaterialTheme.colorScheme.onSurface
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     }

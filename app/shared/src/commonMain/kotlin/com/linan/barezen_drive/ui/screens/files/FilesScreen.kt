@@ -40,6 +40,8 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -161,6 +163,7 @@ fun FilesScreen(
     thumbs: ThumbnailLoader,
     wallpaperBehind: Boolean = false,
     onOpenFolder: (FolderDto) -> Unit,
+    onOpenTransfers: () -> Unit = {},
     onJumpTo: (Int) -> Unit,
     onPreview: (List<FileDto>, Int) -> Unit,
     onLoggedOut: () -> Unit,
@@ -267,23 +270,20 @@ fun FilesScreen(
                     } else {
                         TopAppBarDefaults.topAppBarColors()
                     },
-                    title = {
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TextButton(onClick = { onJumpTo(-1) }) { Text(LocalStrings.current.rootFolder) }
-                            path.forEachIndexed { i, f ->
-                                Text(" / ", style = MaterialTheme.typography.bodyMedium)
-                                TextButton(onClick = { onJumpTo(i) }) {
-                                    Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                            }
-                        }
-                    },
+                    title = { Text(LocalStrings.current.tabFiles) },
                     actions = {
+                        // Upload destination, new folder and transfers live in
+                        // the top bar; the breadcrumb moves below it.
+                        IconButton(onClick = { showUploadLocation = true }, enabled = !uploading) {
+                            Icon(Icons.Default.Upload, contentDescription = LocalStrings.current.actionUpload)
+                        }
+                        IconButton(onClick = { showNewFolder = true }) {
+                            Icon(Icons.Default.CreateNewFolder, contentDescription = LocalStrings.current.newFolder)
+                        }
+                        IconButton(onClick = onOpenTransfers) {
+                            Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
+                        }
                         themeToggle?.invoke()
-                        // Compact view-mode toggle: one icon that flips.
                         IconButton(onClick = { setGridView(!gridView) }) {
                             Icon(
                                 if (gridView) Icons.Default.ViewList else Icons.Default.GridView,
@@ -291,13 +291,32 @@ fun FilesScreen(
                                 else LocalStrings.current.viewGrid,
                             )
                         }
-                        IconButton(onClick = {
-                            auth.logout()
-                            onLoggedOut()
-                        }) { Icon(Icons.Default.Logout, contentDescription = LocalStrings.current.actionSignOut) }
                     },
                 )
                 HorizontalDivider()
+                // Breadcrumb: below the bar, same text size as the file rows.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = { onJumpTo(-1) }) {
+                        Text(LocalStrings.current.rootFolder, style = MaterialTheme.typography.bodyLarge)
+                    }
+                    path.forEachIndexed { i, f ->
+                        Text(" / ", style = MaterialTheme.typography.bodyLarge)
+                        TextButton(onClick = { onJumpTo(i) }) {
+                            Text(
+                                f.name,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                    }
+                }
             }
         },
     ) { pad ->
@@ -349,21 +368,6 @@ fun FilesScreen(
                     }
                 }
                 HorizontalDivider()
-            } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { showNewFolder = true }) {
-                    Icon(Icons.Default.Add, contentDescription = LocalStrings.current.newFolder)
-                }
-                IconButton(onClick = { showUploadLocation = true }, enabled = !uploading) {
-                    Icon(Icons.Default.Upload, contentDescription = LocalStrings.current.actionUpload)
-                }
-            }
             }
             val p = progress
             if (p.phase != UploadManager.Phase.IDLE && p.phase != UploadManager.Phase.DONE) {
