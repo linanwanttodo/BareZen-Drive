@@ -161,22 +161,22 @@ jobs:
           # keystore secrets exist and becomes the update manifest's package.
           ./gradlew :app:androidApp:assembleDebug :app:androidApp:assembleRelease \
             -Pversion=${{ needs.version.outputs.version }} --console=plain
-      - name: Stage APKs with versioned names
+      - name: Stage APKs with versioned ABI names
         run: |
           mkdir -p dist
-          cp app/androidApp/build/outputs/apk/debug/androidApp-debug.apk \
-            "dist/BareZen-Drive-${{ needs.version.outputs.version }}-android-debug.apk"
-          # The signed release is the primary Android download (and the
-          # update.json entry). Without configured secrets it would be
-          # unsigned and uninstallable, so the debug build stands in instead.
-          signed="app/androidApp/build/outputs/apk/release/androidApp-release.apk"
-          if [ -f "$signed" ]; then
-            cp "$signed" "dist/BareZen-Drive-${{ needs.version.outputs.version }}-android.apk"
-            echo "Shipping the signed release APK as the primary package."
-          else
-            cp app/androidApp/build/outputs/apk/debug/androidApp-debug.apk \
-              "dist/BareZen-Drive-${{ needs.version.outputs.version }}-android.apk"
-            echo "No signing configured; shipping the debug APK as the primary package."
+          V="${{ needs.version.outputs.version }}"
+          apkdir=app/androidApp/build/outputs/apk/release
+          shipped=0
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            f=$(ls "$apkdir"/*-"$abi"-release.apk 2>/dev/null | head -1)
+            if [ -n "$f" ] && [[ "$f" != *unsigned* ]]; then
+              cp "$f" "dist/BareZen-Drive-${V}-android-$abi.apk"
+              shipped=$((shipped+1))
+            fi
+          done
+          if [ "$shipped" -eq 0 ]; then
+            echo "No signed ABI APKs found; failing so the release stays clean." >&2
+            exit 1
           fi
           ls -la dist
       - uses: actions/upload-artifact@v4
