@@ -9,7 +9,7 @@ Kotlin: Kotlin Multiplatform with Compose Multiplatform for the clients, a Ktor
 server, PostgreSQL for metadata, and Docker Compose for deployment. It is tuned
 to run comfortably on a small 1 vCPU / 1 GB RAM server.
 
-Status: v0.0.2 | License: MIT | Platforms: Android, Web, Server
+Status: v0.0.3 | License: MIT | Platforms: Android, Web, Server
 
 ## Download
 

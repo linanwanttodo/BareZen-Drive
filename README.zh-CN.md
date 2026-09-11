@@ -7,7 +7,7 @@ BareZen-Drive 是一个自托管的个人私有云盘，运行在你自己的服
 Kotlin Multiplatform + Compose Multiplatform，服务端为 Ktor，元数据使用 PostgreSQL，部署使用
 Docker Compose。设计目标是在 1 核 1 GB 内存的小型服务器上流畅运行。
 
-状态：v0.0.2 | 许可证：MIT | 平台：Android、Web、服务端
+状态：v0.0.3 | 许可证：MIT | 平台：Android、Web、服务端
 
 ## 下载
 
