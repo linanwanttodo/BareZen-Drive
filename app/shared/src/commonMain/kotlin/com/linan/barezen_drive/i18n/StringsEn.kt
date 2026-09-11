@@ -186,6 +186,7 @@ object StringsEn : Strings {
     override val infoSize: String = "Size"
     override val infoModified: String = "Modified"
     override val allDevices: String = "All devices"
+    override val allMedia: String = "All"
     override val openRegistration: String = "Open registration"
     override val openRegistrationOnHint: String = "New visitors can create accounts. Close it after setting up your own"
     override val openRegistrationOffHint: String = "Only existing accounts can sign in"

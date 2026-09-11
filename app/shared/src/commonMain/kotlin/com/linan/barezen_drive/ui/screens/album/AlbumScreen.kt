@@ -117,14 +117,25 @@ fun AlbumScreen(
     var scopeName by remember { mutableStateOf(device) }
     var deviceOptions by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var deviceMenuOpen by remember { mutableStateOf(false) }
+    // Category tabs mirror the real subfolders of the selected device folder
+    // (they exist only because an upload created them). Null = all media of
+    // the whole device subtree; when browsing "all devices" there are no
+    // categories, since scopes differ per device.
+    var categories by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var activeCategory by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         albumFolderId = AlbumFolder.resolve(repo, device)
         deviceOptions = AlbumFolder.listDevices(repo)
+        albumFolderId?.let { categories = repo.contents(it).getOrNull()?.folders?.map { f -> f.name to f.id } ?: emptyList() }
     }
 
     fun switchScope(id: String?, name: String) {
         groups = emptyList(); cursor = null; exhausted = false; error = null
+        activeCategory = null
+        scope.launch {
+            categories = id?.let { repo.contents(it).getOrNull()?.folders?.map { f -> f.name to f.id } } ?: emptyList()
+        }
         scopeName = name
         // The LaunchedEffect(albumFolderId) reload picks this up.
         albumFolderId = id
@@ -157,7 +168,7 @@ fun AlbumScreen(
         if (loading || exhausted) return
         scope.launch {
             loading = true
-            repo.album(PAGE_SIZE, cursor, albumFolderId).fold(
+            repo.album(PAGE_SIZE, cursor, activeCategory ?: albumFolderId).fold(
                 onSuccess = { page ->
                     val all = groups.flatMap { it.files } + page.files
                     groups = groupByMonth(all)
@@ -256,6 +267,43 @@ fun AlbumScreen(
             )
         },
     ) { pad ->
+        // Category chips: only when a single device is selected. They mirror
+        // the real category folders; "all" scans the whole device subtree.
+        val allLabel = LocalStrings.current.allMedia
+        if (categories.isNotEmpty()) {
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            ) {
+                item {
+                    androidx.compose.material3.FilterChip(
+                        selected = activeCategory == null,
+                        onClick = {
+                            if (activeCategory != null) {
+                                activeCategory = null
+                                groups = emptyList(); cursor = null; exhausted = false
+                                loadMore()
+                            }
+                        },
+                        label = { Text(allLabel) },
+                    )
+                }
+                items(categories.size) { i ->
+                    val (name, id) = categories[i]
+                    androidx.compose.material3.FilterChip(
+                        selected = activeCategory == id,
+                        onClick = {
+                            if (activeCategory != id) {
+                                activeCategory = id
+                                groups = emptyList(); cursor = null; exhausted = false
+                                loadMore()
+                            }
+                        },
+                        label = { Text(name) },
+                    )
+                }
+            }
+        }
         val flat = groups.flatMap { it.files }
         when {
             error != null && groups.isEmpty() -> Centered(pad) {
