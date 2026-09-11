@@ -16,16 +16,16 @@ fun versionCodeOf(version: String): Int {
 // these environment variables (or the matching Gradle properties). When they
 // are absent the release build still runs and produces an unsigned APK, so
 // forks and local builds are unaffected.
-val keystorePath: String? = (System.getenv("ANDROID_KEYSTORE_PATH")
+val signingKeystorePath: String? = (System.getenv("ANDROID_KEYSTORE_PATH")
     ?: findProperty("android.keystore.path") as String?)?.takeIf { it.isNotBlank() }
-val keystorePassword: String? = (System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val signingStorePassword: String? = (System.getenv("ANDROID_KEYSTORE_PASSWORD")
     ?: findProperty("android.keystore.password") as String?)?.takeIf { it.isNotBlank() }
-val keystoreAlias: String? = (System.getenv("ANDROID_KEY_ALIAS")
+val signingKeyAlias: String? = (System.getenv("ANDROID_KEY_ALIAS")
     ?: findProperty("android.key.alias") as String?)?.takeIf { it.isNotBlank() }
-val keyPassword: String? = (System.getenv("ANDROID_KEY_PASSWORD")
+val signingKeyPassword: String? = (System.getenv("ANDROID_KEY_PASSWORD")
     ?: findProperty("android.key.password") as String?)?.takeIf { it.isNotBlank() }
-val hasReleaseSigning = keystorePath != null && keystorePassword != null &&
-    keystoreAlias != null && keyPassword != null
+val hasReleaseSigning = signingKeystorePath != null && signingStorePassword != null &&
+    signingKeyAlias != null && signingKeyPassword != null
 
 kotlin {
     compilerOptions {
@@ -62,10 +62,10 @@ android {
     if (hasReleaseSigning) {
         signingConfigs {
             create("release") {
-                storeFile = file(keystorePath!!)
-                storePassword = keystorePassword
-                keyAlias = keystoreAlias
-                keyPassword = keyPassword
+                storeFile = file(signingKeystorePath!!)
+                storePassword = signingStorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
             }
         }
     }
