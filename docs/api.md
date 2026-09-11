@@ -67,8 +67,8 @@
 ```json
 // 请求
 {"username": "alice", "password": "password123"}
-// 201 响应
-{"user": {"id": "...", "username": "alice", "createdAt": "..."}}
+// 201 响应（UserDto 本体，无包裹）
+{"id": "...", "username": "alice", "createdAt": "..."}
 ```
 
 用户名 3–32 位 `[a-zA-Z0-9_]`；密码至少 8 位。错误：`USERNAME_INVALID`、`USERNAME_TAKEN`、`PASSWORD_TOO_SHORT`。
@@ -100,7 +100,7 @@
 
 ### GET /api/me
 
-返回当前用户信息（同 register 的 `user` 结构）。
+返回当前用户信息（同 register 响应，UserDto 本体）。
 
 ## 文件夹
 
@@ -118,7 +118,8 @@ FolderDto/FileDto 内时间字段为 ISO-8601 字符串（库内 epoch-millis，
 
 ```json
 {"parentId": "<uuid 或省略=根层>", "name": "Photos"}
-// 201 响应 {folder: FolderDto}
+// 201 响应（FolderDto 本体，无包裹）
+{"id": "...", "name": "Photos", "parentId": null, "createdAt": "...", "updatedAt": "..."}
 ```
 
 同级重名（folder/file 同命名空间）-> 409 `NAME_CONFLICT`。错误：400 名称非法（空/超 255/含 `/`）、404 父目录不存在。
@@ -127,7 +128,7 @@ FolderDto/FileDto 内时间字段为 ISO-8601 字符串（库内 epoch-millis，
 
 ```json
 {"name": "2027"}
-// 200 响应 {folder: FolderDto}
+// 200 响应（FolderDto 本体，无包裹）
 ```
 
 自排除重名检查（自身不算冲突）。
@@ -142,7 +143,7 @@ FolderDto/FileDto 内时间字段为 ISO-8601 字符串（库内 epoch-millis，
 
 ```json
 {"name": "新名字", "folderId": "<uuid | \"root\" | 省略=不变>"}
-// 200 响应 {file: FileDto}
+// 200 响应（FileDto 本体，无包裹）
 ```
 
 `folderId: "root"` 移到根层；省略 = 不移动。目标位置重名 -> 409。
@@ -271,7 +272,7 @@ FolderDto/FileDto 内时间字段为 ISO-8601 字符串（库内 epoch-millis，
 
 ### POST /api/uploads/{id}/complete
 
-分块齐全校验 -> 流式合并并计算整体 SHA-256（与 init 提供的 sha256 不符 -> 400 `CHUNK_INVALID`）-> 存 blob -> 建 files 行。缺块 -> 400 `CHUNK_MISSING`。同级重名 -> 409 `NAME_CONFLICT`。响应 `{file: FileDto}`。
+分块齐全校验 -> 流式合并并计算整体 SHA-256（与 init 提供的 sha256 不符 -> 400 `CHUNK_INVALID`）-> 存 blob -> 建 files 行。缺块 -> 400 `CHUNK_MISSING`。同级重名 -> 409 `NAME_CONFLICT`。响应为 FileDto 本体（无包裹）。
 
 ### DELETE /api/uploads/{id}
 

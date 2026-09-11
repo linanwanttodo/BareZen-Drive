@@ -59,7 +59,10 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     // Connect + schema DDL inside module() so testApplication exercises it too.
     // Guarded so repeated testApplication entry reuses the Exposed connection.
     connectDatabaseOnce(cfg)
-    install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+    // encodeDefaults=true keeps the public API shape stable: fields with
+    // default values (updateAvailable, assets, hasThumbnail...) are always
+    // present in responses instead of silently omitted.
+    install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
     install(CallLogging)
     install(PartialContent)
     install(StatusPages) {
