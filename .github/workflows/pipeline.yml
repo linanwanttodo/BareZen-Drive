@@ -362,10 +362,6 @@ jobs:
               "$1" "$2" "$3" "$base" "$f" "$sha" "$size"
           }
 
-          asset android any apk "BareZen-Drive-${VERSION}-android.apk"; echo ","
-          asset web any zip "BareZen-Drive-${VERSION}-web.zip"; echo ","
-          asset server any tar.gz "BareZen-Drive-${VERSION}-server.tar.gz"
-
           {
             echo "{"
             echo "  \"name\": \"BareZen-Drive\","
@@ -374,9 +370,9 @@ jobs:
             echo "  \"releasedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
             echo "  \"releaseNotesUrl\": \"${notes}\","
             echo "  \"assets\": ["
-            asset android any apk "$android_file"; echo ","
-            asset web any zip BareZen-Drive-web.zip; echo ","
-            asset server any tar.gz BareZen-Drive-server.tar.gz
+            asset android any apk "BareZen-Drive-${VERSION}-android.apk"; echo ","
+            asset web any zip "BareZen-Drive-${VERSION}-web.zip"; echo ","
+            asset server any tar.gz "BareZen-Drive-${VERSION}-server.tar.gz"; echo ""
             echo "  ],"
             echo "  \"docker\": {"
             echo "    \"image\": \"ghcr.io/${repo}\","
