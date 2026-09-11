@@ -43,11 +43,14 @@ import com.linan.barezen_drive.i18n.LocalStrings
  * zoom + pan and double-tap to toggle 1x/2.5x.
  */
 @Composable
-fun ImageViewer(files: List<FileDto>, initialIndex: Int, repo: FilesRepository) {
+fun ImageViewer(files: List<FileDto>, initialIndex: Int, repo: FilesRepository, onPageChange: (Int) -> Unit = {}) {
     val pagerState = rememberPagerState(initialPage = initialIndex.coerceIn(0, files.size - 1)) { files.size }
     Box(Modifier.fillMaxSize()) {
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             ZoomableImage(files[page], repo)
+        }
+        androidx.compose.runtime.LaunchedEffect(pagerState.currentPage) {
+            onPageChange(pagerState.currentPage)
         }
         Text(
             "${pagerState.currentPage + 1} / ${files.size}",

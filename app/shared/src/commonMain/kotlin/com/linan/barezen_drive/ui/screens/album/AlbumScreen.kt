@@ -96,7 +96,7 @@ fun AlbumScreen(
     thumbs: ThumbnailLoader,
     uploader: UploadManager,
     onBack: (() -> Unit)?,
-    onPreview: (List<FileDto>, Int) -> Unit,
+    onPreview: (List<FileDto>, Int, Boolean) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var groups by remember { mutableStateOf<List<AlbumGroup>>(emptyList()) }
@@ -247,7 +247,7 @@ fun AlbumScreen(
                             thumbs = thumbs,
                             onClick = {
                                 val index = flat.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
-                                onPreview(flat, index)
+                                onPreview(flat, index, true)
                             },
                         )
                     }

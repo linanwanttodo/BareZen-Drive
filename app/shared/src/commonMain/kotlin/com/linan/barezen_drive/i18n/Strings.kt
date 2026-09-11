@@ -188,6 +188,10 @@ interface Strings {
     val languageEnglish: String
     val settingsServer: String
     val pickUploadLocation: String
+    val actionInfo: String
+    val infoName: String
+    val infoSize: String
+    val infoModified: String
     val openRegistration: String
     val openRegistrationOnHint: String
     val openRegistrationOffHint: String

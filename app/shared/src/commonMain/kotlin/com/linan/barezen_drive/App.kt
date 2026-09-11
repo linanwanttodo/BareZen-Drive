@@ -76,7 +76,7 @@ import com.linan.barezen_drive.platform.systemLanguageTag
 private sealed interface Screen {
     data object Login : Screen
     data object Main : Screen
-    data class Preview(val files: List<FileDto>, val index: Int) : Screen
+    data class Preview(val files: List<FileDto>, val index: Int, val showActions: Boolean = false) : Screen
     data object OpenSource : Screen
     data object ShareManager : Screen
 }
@@ -264,7 +264,7 @@ fun App() {
                             thumbs = thumbs,
                             uploader = uploader,
                             onBack = null,
-                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
+                            onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
                         )
                         MainTab.FILES -> FilesScreen(                            path = filesPath,
                             repo = files,
@@ -363,6 +363,7 @@ fun App() {
                 initialIndex = current.index,
                 repo = files,
                 onBack = pop,
+                showActions = current.showActions,
             )
             is Screen.OpenSource -> OpenSourceScreen(onBack = pop)
             is Screen.ShareManager -> ShareManagerScreen(repo = files, onBack = pop)
