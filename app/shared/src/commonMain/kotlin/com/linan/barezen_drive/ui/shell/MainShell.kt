@@ -15,6 +15,8 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
@@ -89,6 +91,7 @@ fun MainShell(
     selected: MainTab,
     onSelect: (MainTab) -> Unit,
     wallpaperBitmap: androidx.compose.ui.graphics.ImageBitmap?,
+    glassBarEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val layoutType = NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(
@@ -123,7 +126,7 @@ fun MainShell(
                 // safe insets) inside its scroll container.
                 Box(Modifier.fillMaxSize()) { content() }
             }
-            LiquidBottomTabs(
+            if (glassBarEnabled) LiquidBottomTabs(
                 // Stable provider lambda: LiquidBottomTabs keys its internal
                 // currentIndex state on this lambda instance. A fresh
                 // `{ selected.ordinal }` every recomposition would reset that
@@ -160,6 +163,24 @@ fun MainShell(
                             label,
                             color = tint,
                             style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+            } else {
+                // Plain Material bar: the settings toggle swaps the lens effect
+                // for this cheaper, fully opaque navigation.
+                NavigationBar(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.safeDrawing),
+                ) {
+                    MainTab.entries.forEach { tab ->
+                        NavigationBarItem(
+                            selected = tab == selected,
+                            onClick = { onSelect(tab) },
+                            icon = { Icon(tabIcon(tab), contentDescription = tabLabel(tab)) },
+                            label = { Text(tabLabel(tab)) },
                         )
                     }
                 }

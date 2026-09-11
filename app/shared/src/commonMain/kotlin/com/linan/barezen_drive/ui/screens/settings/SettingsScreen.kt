@@ -211,27 +211,51 @@ fun SettingsScreen(
             }
             HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             SettingsRow(title = LocalStrings.current.settingsLanguage, subtitle = LocalStrings.current.languageModeHint) {
-                SingleChoiceSegmentedButtonRow {
-                    val languageModes = listOf(
-                        Triple(LocalStrings.current.languageSystem, 0, 0),
-                        Triple(LocalStrings.current.languageChinese, 1, 1),
-                        Triple(LocalStrings.current.languageEnglish, 2, 2),
+                var languageOpen by remember { androidx.compose.runtime.mutableStateOf(false) }
+                val languageLabels = listOf(
+                    LocalStrings.current.languageSystem,
+                    LocalStrings.current.languageChinese,
+                    LocalStrings.current.languageEnglish,
+                )
+                androidx.compose.material3.ExposedDropdownMenuBox(
+                    expanded = languageOpen,
+                    onExpandedChange = { languageOpen = it },
+                    modifier = Modifier.width(140.dp),
+                ) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = languageLabels.getOrElse(languageMode) { languageLabels[0] },
+                        onValueChange = {},
+                        readOnly = true,
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        shape = MaterialTheme.shapes.medium,
+                        trailingIcon = {
+                            androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(languageOpen)
+                        },
+                        modifier = Modifier.menuAnchor().width(140.dp),
                     )
-                    languageModes.forEachIndexed { index, languageSpec ->
-                        val (label, _, mode) = languageSpec
-                        SegmentedButton(
-                            selected = languageMode == mode,
-                            onClick = { onLanguageModeChange(mode) },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = languageModes.size),
-                        ) { Text(label) }
+                    androidx.compose.material3.DropdownMenu(
+                        expanded = languageOpen,
+                        onDismissRequest = { languageOpen = false },
+                    ) {
+                        languageLabels.forEachIndexed { index, label ->
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    onLanguageModeChange(index)
+                                    languageOpen = false
+                                },
+                            )
+                        }
                     }
                 }
             }
             HorizontalDivider(Modifier.padding(horizontal = 16.dp))
-            if (systemAccent != null) {
+            if (systemAccent != null || wallpaperEnabled) {
                 SettingsRow(
                     title = LocalStrings.current.dynamicColor,
-                    subtitle = LocalStrings.current.monetHint,
+                    subtitle = if (wallpaperEnabled) LocalStrings.current.wallpaperHint
+                    else LocalStrings.current.monetHint,
                     trailing = {
                         Switch(checked = useDynamicColor, onCheckedChange = onDynamicColorChange)
                     },
@@ -491,5 +515,4 @@ private val AccentSwatches = listOf(
     Color(0xFFBC4C00), // orange
     Color(0xFF1B7C83), // teal
     Color(0xFFCF222E), // red
-    Color(0xFF6639BA), // indigo
 )

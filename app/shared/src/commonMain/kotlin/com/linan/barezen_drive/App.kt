@@ -135,7 +135,13 @@ fun App() {
         useDynamicColor && systemAccent != null -> systemAccent
         else -> accentColor
     }
-    val effectiveSeed = wallpaperSeedColor(wallpaper.takeIf { wallpaperEnabled }) ?: accentSeed
+    val effectiveSeed = if (useDynamicColor) {
+        wallpaperSeedColor(wallpaper.takeIf { wallpaperEnabled })
+            ?: systemAccent
+            ?: accentSeed
+    } else {
+        accentSeed
+    }
 
     AppTheme(themeMode = themeMode, seed = effectiveSeed) {
         CompositionLocalProvider(
@@ -241,6 +247,7 @@ fun App() {
                     selected = tab,
                     onSelect = { tab = it },
                     wallpaperBitmap = wallpaperBitmap.takeIf { wallpaperEnabled },
+                    glassBarEnabled = glassBlur,
                 ) {
                     val wallpaperBehind = wallpaperEnabled && wallpaperBitmap != null
                     when (tab) {

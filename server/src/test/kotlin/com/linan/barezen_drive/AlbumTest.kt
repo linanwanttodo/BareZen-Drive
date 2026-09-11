@@ -53,24 +53,45 @@ class AlbumTest {
     }
 
     @Test
-    fun imagesOnlySortedDesc() = testApplication {
+    fun mediaSortedDescWithCategoryFilter() = testApplication {
         setup()
         upload("a".encodeToByteArray(), "newest.jpg", "image/jpeg")
         upload("b".encodeToByteArray(), "oldest.jpg", "image/jpeg")
         upload("c".encodeToByteArray(), "note.txt", "text/plain")
         upload("d".encodeToByteArray(), "clip.mp4", "video/mp4")
+        upload("e".encodeToByteArray(), "Screenshot_1.png", "image/png")
         // Make the ordering deterministic even when uploads land in the same millisecond.
         transaction {
-            for (name in listOf("newest.jpg", "oldest.jpg")) {
+            for (name in listOf("newest.jpg", "oldest.jpg", "clip.mp4")) {
                 val id = FilesTable.selectAll().where { FilesTable.name eq name }.single()[FilesTable.id]
-                val bump = if (name == "newest.jpg") 20_000L else 10_000L
+                val bump = when (name) {
+                    "newest.jpg" -> 20_000L
+                    "clip.mp4" -> 15_000L
+                    else -> 10_000L
+                }
                 FilesTable.update({ FilesTable.id eq id }) { it[updatedAt] = System.currentTimeMillis() + bump }
             }
         }
+        // Default: all media (images AND videos), non-media excluded.
         val res = client.get("/api/album") { header(HttpHeaders.Authorization, auth) }
         assertEquals(HttpStatusCode.OK, res.status, res.bodyAsText())
         val page = json.decodeFromString<AlbumPage>(res.bodyAsText())
-        assertEquals(listOf("newest.jpg", "oldest.jpg"), page.files.map { it.name })
+        assertEquals(listOf("newest.jpg", "clip.mp4", "oldest.jpg", "Screenshot_1.png"), page.files.map { it.name })
+
+        // category=image excludes videos.
+        val images = client.get("/api/album?category=image") { header(HttpHeaders.Authorization, auth) }
+        assertEquals(listOf("newest.jpg", "oldest.jpg", "Screenshot_1.png"),
+            json.decodeFromString<AlbumPage>(images.bodyAsText()).files.map { it.name })
+
+        // category=video returns only the clip.
+        val videos = client.get("/api/album?category=video") { header(HttpHeaders.Authorization, auth) }
+        assertEquals(listOf("clip.mp4"),
+            json.decodeFromString<AlbumPage>(videos.bodyAsText()).files.map { it.name })
+
+        // category=screenshot matches the camera-app style name.
+        val shots = client.get("/api/album?category=screenshot") { header(HttpHeaders.Authorization, auth) }
+        assertEquals(listOf("Screenshot_1.png"),
+            json.decodeFromString<AlbumPage>(shots.bodyAsText()).files.map { it.name })
     }
 
     @Test

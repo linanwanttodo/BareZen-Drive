@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Image
@@ -210,6 +212,12 @@ fun FilesScreen(
         if (ok == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
     }
 
+    // Upload flow: pick the destination FIRST, then the files. The chosen
+    // folder id feeds the pending-upload drain via rememberUpdatedState-like
+    // state read (null = the folder currently on screen).
+    var showUploadLocation by remember { mutableStateOf(false) }
+    var uploadTarget by remember { mutableStateOf<Pair<String?, String>?>(null) } // id to display name
+
     // Drain pending picks sequentially; the target folder is read through
     // rememberUpdatedState so a stale picker closure cannot upload into a
     // folder the user has already navigated away from.
@@ -217,7 +225,7 @@ fun FilesScreen(
         val picks = pendingUploads
         if (picks.isEmpty() || uploading) return@LaunchedEffect
         uploading = true
-        val target = currentPath.lastOrNull()?.id
+        val target = uploadTarget?.first ?: currentPath.lastOrNull()?.id
         try {
             for (p in picks) {
                 uploader.upload(p, target).fold(
@@ -228,6 +236,7 @@ fun FilesScreen(
         } finally {
             pendingUploads = emptyList()
             uploading = false
+            uploadTarget = null
             reload()
         }
     }
@@ -263,24 +272,13 @@ fun FilesScreen(
                     },
                     actions = {
                         themeToggle?.invoke()
-                        // View mode switcher sits in the top-right corner.
-                        SingleChoiceSegmentedButtonRow(
-                            modifier = Modifier.padding(end = 4.dp),
-                        ) {
-                            SegmentedButton(
-                                selected = !gridView,
-                                onClick = { setGridView(false) },
-                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                            ) {
-                                Icon(Icons.Default.ViewList, contentDescription = LocalStrings.current.viewList)
-                            }
-                            SegmentedButton(
-                                selected = gridView,
-                                onClick = { setGridView(true) },
-                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                            ) {
-                                Icon(Icons.Default.GridView, contentDescription = LocalStrings.current.viewGrid)
-                            }
+                        // Compact view-mode toggle: one icon that flips.
+                        IconButton(onClick = { setGridView(!gridView) }) {
+                            Icon(
+                                if (gridView) Icons.Default.ViewList else Icons.Default.GridView,
+                                contentDescription = if (gridView) LocalStrings.current.viewList
+                                else LocalStrings.current.viewGrid,
+                            )
                         }
                         IconButton(onClick = {
                             auth.logout()
@@ -303,19 +301,12 @@ fun FilesScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedButton(onClick = { showNewFolder = true }) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text(LocalStrings.current.newFolder)
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { showNewFolder = true }) {
+                    Icon(Icons.Default.Add, contentDescription = LocalStrings.current.newFolder)
                 }
-                Button(
-                    onClick = { picker() },
-                    enabled = !uploading,
-                    colors = filledButtonColors(),
-                ) {
-                    Icon(Icons.Default.Upload, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text(LocalStrings.current.actionUpload)
+                IconButton(onClick = { showUploadLocation = true }, enabled = !uploading) {
+                    Icon(Icons.Default.Upload, contentDescription = LocalStrings.current.actionUpload)
                 }
             }
             val p = progress
@@ -447,6 +438,17 @@ fun FilesScreen(
                     onFailure = { snackbar.showSnackbar(msg(it, I18n.strings.createFailed)) },
                 )
             }
+        }
+    }
+
+    if (showUploadLocation) {
+        UploadLocationDialog(
+            repo = repo,
+            onDismiss = { showUploadLocation = false },
+        ) { id, name ->
+            showUploadLocation = false
+            uploadTarget = id to name
+            picker()
         }
     }
 
@@ -1184,5 +1186,75 @@ private fun ShareDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text(LocalStrings.current.actionDone) } },
+    )
+}
+
+/**
+ * Destination picker for new uploads: the user chooses the folder first, then
+ * picks files, so the upload lands where they intended regardless of the
+ * folder they started from. Navigation starts at the root; the confirm button
+ * passes the chosen folder (null = root) with a display name.
+ */
+@Composable
+private fun UploadLocationDialog(
+    repo: FilesRepository,
+    onDismiss: () -> Unit,
+    onPicked: (String?, String) -> Unit,
+) {
+    var stack by remember { mutableStateOf(listOf<FolderDto>()) }
+    var entries by remember { mutableStateOf(listOf<FolderDto>()) }
+    var loading by remember { mutableStateOf(true) }
+    val currentId = stack.lastOrNull()?.id
+
+    LaunchedEffect(stack) {
+        loading = true
+        repo.contents(currentId ?: "root").fold(
+            onSuccess = { entries = it.folders },
+            onFailure = { entries = emptyList() },
+        )
+        loading = false
+    }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(LocalStrings.current.pickUploadLocation) },
+        text = {
+            Column(Modifier.heightIn(max = 360.dp)) {
+                if (stack.isNotEmpty()) {
+                    TextButton(onClick = { stack = stack.dropLast(1) }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(stack.dropLast(1).lastOrNull()?.name ?: LocalStrings.current.rootFolder)
+                    }
+                }
+                if (loading) {
+                    Text(LocalStrings.current.loading, style = MaterialTheme.typography.bodySmall)
+                }
+                LazyColumn {
+                    items(entries, key = { it.id }) { folder ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { stack = stack + folder }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.Default.Folder, contentDescription = null)
+                            Spacer(Modifier.width(10.dp))
+                            Text(folder.name)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            val rootLabel = LocalStrings.current.rootFolder
+            TextButton(onClick = {
+                onPicked(currentId, stack.lastOrNull()?.name ?: rootLabel)
+            }) { Text(LocalStrings.current.actionConfirm) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(LocalStrings.current.actionCancel) }
+        },
     )
 }

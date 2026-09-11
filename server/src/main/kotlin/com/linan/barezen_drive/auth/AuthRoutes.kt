@@ -51,8 +51,11 @@ fun Route.authRoutes() {
             val uid = call.userId
             val user = withContext(Dispatchers.IO) {
                 transaction(DatabaseFactory.db) {
-                    val r = UsersTable.selectAll().where { UsersTable.id eq uid }.single()
-                    AuthService.toUserDto(r)
+                    // A deleted account keeps a valid-looking JWT until expiry;
+                    // treat the missing row as an invalid session, not a 500.
+                    val row = UsersTable.selectAll().where { UsersTable.id eq uid }.singleOrNull()
+                        ?: throw ApiException.unauthorized("未登录或 token 无效", ErrorCodes.TOKEN_INVALID)
+                    AuthService.toUserDto(row)
                 }
             }
             call.respond(user)

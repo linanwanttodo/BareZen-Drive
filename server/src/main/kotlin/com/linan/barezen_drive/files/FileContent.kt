@@ -60,24 +60,37 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
     }
 
     get("/api/album") {
-        // Photo timeline: images only, newest first, keyset pagination on
-        // (updated_at, id). Month grouping is a client-side concern (local timezone).
+        // Media timeline: images and videos, newest first, keyset pagination on
+        // (updated_at, id). Grouping is a client-side concern (local timezone).
         // Optional root=<folderId> scopes the scan to that folder's subtree - the
         // client uses it to show only the dedicated album folder tree.
+        // category filters like a phone gallery: all (default), image, video,
+        // screenshot (filename heuristic - screenshots keep their camera-app names).
         val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 200
         val cursor = call.request.queryParameters["before"]
         val rootParam = call.request.queryParameters["root"]
+        val category = (call.request.queryParameters["category"] ?: "all").lowercase()
         val rows = withContext(Dispatchers.IO) {
             transaction(DatabaseFactory.db) {
+                val media = when (category) {
+                    "image" -> Op.build { FilesTable.mimeType.like("image/%") }
+                    "video" -> Op.build { FilesTable.mimeType.like("video/%") }
+                    // Screenshot is matched by the common camera-app names; the
+                    // escaped literals are ?? (CJK filesystems keep them).
+                    "screenshot" -> Op.build {
+                        FilesTable.name.like("%creenshot%") or FilesTable.name.like("%\u622a\u56fe%")
+                    }
+                    else -> Op.build { FilesTable.mimeType.like("image/%") or FilesTable.mimeType.like("video/%") }
+                }
                 var q = if (rootParam != null) {
                     val rootId = rootParam.toUuidOrBadRequest()
                     val subtree = collectSubtreeIds(call.userId, rootId)
                     FilesTable.selectAll()
-                        .where { (FilesTable.user eq call.userId) and FilesTable.mimeType.like("image/%") }
+                        .where { (FilesTable.user eq call.userId) and media }
                         .andWhere { (FilesTable.folder inList subtree) or (FilesTable.folder eq rootId) }
                 } else {
                     FilesTable.selectAll()
-                        .where { (FilesTable.user eq call.userId) and FilesTable.mimeType.like("image/%") }
+                        .where { (FilesTable.user eq call.userId) and media }
                 }
                 if (cursor != null) {
                     // Format "<epochMillis>:<uuid>"; a malformed cursor just restarts from the top.

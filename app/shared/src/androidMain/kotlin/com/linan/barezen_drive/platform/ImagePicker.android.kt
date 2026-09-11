@@ -11,7 +11,7 @@ actual fun rememberImagePicker(onResult: (List<PickedFile>) -> Unit): () -> Unit
     // Photo Picker: browses the device's photo albums, no storage permission.
     val ctx = LocalContext.current
     val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 30),
+        ActivityResultContracts.PickMultipleVisualMedia(maxItems = 500),
     ) { uris ->
         onResult(uris.map { AndroidPickedFile(ctx, it) })
     }

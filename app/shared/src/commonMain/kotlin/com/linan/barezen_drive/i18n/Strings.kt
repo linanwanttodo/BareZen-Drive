@@ -187,6 +187,7 @@ interface Strings {
     val languageChinese: String
     val languageEnglish: String
     val settingsServer: String
+    val pickUploadLocation: String
     val openRegistration: String
     val openRegistrationOnHint: String
     val openRegistrationOffHint: String
