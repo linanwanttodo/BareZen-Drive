@@ -389,7 +389,19 @@ jobs:
             echo "  \"releasedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
             echo "  \"releaseNotesUrl\": \"${notes}\","
             echo "  \"assets\": ["
-            asset android any apk "BareZen-Drive-${VERSION}-android.apk"; echo ","
+            first=true
+            for f in BareZen-Drive-${VERSION}-android-*.apk; do
+              case "$f" in
+                *arm64-v8a*) arch=arm64-v8a ;;
+                *armeabi-v7a*) arch=armeabi-v7a ;;
+                *x86_64*) arch=x86_64 ;;
+                *) arch=any ;;
+              esac
+              $first || echo ","
+              first=false
+              asset android "$arch" apk "$f"
+            done
+            echo ","
             asset web any zip "BareZen-Drive-${VERSION}-web.zip"; echo ","
             asset server any tar.gz "BareZen-Drive-${VERSION}-server.tar.gz"; echo ""
             echo "  ],"

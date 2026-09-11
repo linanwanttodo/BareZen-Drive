@@ -17,7 +17,8 @@ Docker Compose。设计目标是在 1 核 1 GB 内存的小型服务器上流畅
 |---|---|---|
 | 服务端发行包（内嵌 Web 客户端） | `BareZen-Drive-<版本>-server.tar.gz` | 在有 JDK 21 的机器上直接部署 |
 | Web 客户端产物 | `BareZen-Drive-<版本>-web.zip` | 静态托管，或拷入服务端 |
-| Android | `BareZen-Drive-<版本>-android.apk` | 可直接装到手机 |
+| Android arm64-v8a | `BareZen-Drive-<版本>-android-arm64-v8a.apk` | 主流手机 |
+| Android armeabi-v7a / x86_64 | `BareZen-Drive-<版本>-android-<abi>.apk` | 老旧设备 / 模拟器 |
 | 更新清单 | `update.json` + `checksums.txt` | 供服务端读取，驱动应用内检查更新 |
 | 容器镜像 | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker / Docker Compose，linux/amd64 与 linux/arm64 |
 

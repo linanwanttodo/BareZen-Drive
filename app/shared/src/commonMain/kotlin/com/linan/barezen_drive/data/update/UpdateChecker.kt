@@ -44,7 +44,7 @@ object UpdateChecker {
 
     suspend fun check(repo: FilesRepository): UpdateStatus {
         val info = repo.versionInfo().getOrNull() ?: return UpdateStatus.Failed
-        return evaluate(info, BuildInfo.VERSION, installChannel)
+        return evaluate(info, BuildInfo.VERSION, installChannel, com.linan.barezen_drive.platform.cpuArch())
     }
 
     /** Pure decision logic, split out so it is testable without a network. */
