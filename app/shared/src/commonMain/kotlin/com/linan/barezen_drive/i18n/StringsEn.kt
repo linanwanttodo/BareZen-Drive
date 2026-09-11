@@ -199,6 +199,7 @@ object StringsEn : Strings {
     override val albumAutoSyncHint: String = "Upload new photos and videos automatically"
     override val syncWifiOnly: String = "Wi-Fi only"
     override val syncWifiOnlyHint: String = "Off: also sync over mobile data"
+    override val syncNow: String = "Sync now"
     override val openRegistration: String = "Open registration"
     override val openRegistrationOnHint: String = "New visitors can create accounts. Close it after setting up your own"
     override val openRegistrationOffHint: String = "Only existing accounts can sign in"

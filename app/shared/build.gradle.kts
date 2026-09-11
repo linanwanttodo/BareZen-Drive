@@ -78,6 +78,8 @@ kotlin {
             // NotificationCompat / NotificationManagerCompat for transfer
             // progress notifications.
             implementation(libs.androidx.core.ktx)
+            // Periodic background album sync.
+            implementation(libs.androidx.work.runtime)
             implementation(libs.androidx.securityCrypto)
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.exifinterface)

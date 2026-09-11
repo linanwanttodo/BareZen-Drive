@@ -55,6 +55,8 @@ fun TransferCenterScreen(
     onAutoSyncChange: (Boolean) -> Unit,
     wifiOnly: Boolean,
     onWifiOnlyChange: (Boolean) -> Unit,
+    syncSupported: Boolean = true,
+    onSyncNow: () -> Unit = {},
 ) {
     var tab by remember { mutableIntStateOf(0) }
     val all by TransferCenter.items.collectAsState()
@@ -83,7 +85,8 @@ fun TransferCenterScreen(
             }
 
             // Album auto-sync settings live here, next to the flows they drive.
-            if (tab == 0) {
+            // Hidden where the platform has no background scheduler (web).
+            if (tab == 0 && syncSupported) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -107,6 +110,12 @@ fun TransferCenterScreen(
                                 )
                             }
                             Switch(checked = wifiOnly, onCheckedChange = onWifiOnlyChange)
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = onSyncNow) { Text(LocalStrings.current.syncNow) }
                         }
                     }
                     HorizontalDivider(Modifier.padding(vertical = 6.dp))

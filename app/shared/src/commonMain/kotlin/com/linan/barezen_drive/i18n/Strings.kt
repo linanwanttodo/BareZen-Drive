@@ -206,6 +206,7 @@ interface Strings {
     val albumAutoSyncHint: String
     val syncWifiOnly: String
     val syncWifiOnlyHint: String
+    val syncNow: String
     val openRegistration: String
     val openRegistrationOnHint: String
     val openRegistrationOffHint: String

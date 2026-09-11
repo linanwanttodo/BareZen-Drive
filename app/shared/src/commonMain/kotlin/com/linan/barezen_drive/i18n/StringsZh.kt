@@ -199,6 +199,7 @@ object StringsZh : Strings {
     override val albumAutoSyncHint: String = "自动上传新的照片和视频"
     override val syncWifiOnly: String = "仅 WiFi"
     override val syncWifiOnlyHint: String = "关闭后移动网络也同步"
+    override val syncNow: String = "立即同步"
     override val openRegistration: String = "开放注册"
     override val openRegistrationOnHint: String = "新访客可自行注册账号，建好自己的账号后建议关闭"
     override val openRegistrationOffHint: String = "仅已有账号可以登录"

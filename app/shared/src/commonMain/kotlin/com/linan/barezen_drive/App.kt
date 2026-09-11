@@ -174,6 +174,10 @@ fun App() {
         LaunchedEffect(Unit) {
             registrationOpen = files.registrationStatus().getOrNull()?.open
         }
+        // Keep the background album-sync job in step with the stored settings.
+        LaunchedEffect(albumAutoSync, syncWifiOnly) {
+            com.linan.barezen_drive.platform.MediaSync.apply(albumAutoSync, syncWifiOnly)
+        }
 
         var stack by remember {
             mutableStateOf(
@@ -378,6 +382,8 @@ fun App() {
                 onAutoSyncChange = { on -> albumAutoSync = on; prefs.albumAutoSync = on },
                 wifiOnly = syncWifiOnly,
                 onWifiOnlyChange = { on -> syncWifiOnly = on; prefs.syncWifiOnly = on },
+                syncSupported = com.linan.barezen_drive.platform.MediaSync.supported,
+                onSyncNow = { com.linan.barezen_drive.platform.MediaSync.syncNow(syncWifiOnly) },
             )
         }
         }
