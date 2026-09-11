@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -113,8 +114,20 @@ fun AlbumScreen(
     var albumFolderId by remember { mutableStateOf<String?>(null) }
     val device = remember { deviceName() }
 
+    var scopeName by remember { mutableStateOf(device) }
+    var deviceOptions by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var deviceMenuOpen by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         albumFolderId = AlbumFolder.resolve(repo, device)
+        deviceOptions = AlbumFolder.listDevices(repo)
+    }
+
+    fun switchScope(id: String?, name: String) {
+        groups = emptyList(); cursor = null; exhausted = false; error = null
+        scopeName = name
+        // The LaunchedEffect(albumFolderId) reload picks this up.
+        albumFolderId = id
     }
 
     // Upload speed: derived from consecutive progress callbacks, sampled at
@@ -193,7 +206,41 @@ fun AlbumScreen(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         topBar = {
             TopAppBar(
-                title = { Text(LocalStrings.current.tabAlbum) },
+                title = {
+                    // Device switcher: defaults to this device; lists every
+                    // device that has actually uploaded, plus an all-devices
+                    // view over the whole album tree.
+                    Box {
+                        val allLabel = LocalStrings.current.allDevices
+                        TextButton(onClick = { deviceMenuOpen = true }) {
+                            Text(scopeName, style = MaterialTheme.typography.titleMedium)
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                        }
+                        androidx.compose.material3.DropdownMenu(
+                            expanded = deviceMenuOpen,
+                            onDismissRequest = { deviceMenuOpen = false },
+                        ) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(LocalStrings.current.allDevices) },
+                                onClick = {
+                                    deviceMenuOpen = false
+                                    scope.launch {
+                                        AlbumFolder.resolveAlbumRoot(repo)?.let { switchScope(it, allLabel) }
+                                    }
+                                },
+                            )
+                            deviceOptions.forEach { (name, id) ->
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(name) },
+                                    onClick = {
+                                        deviceMenuOpen = false
+                                        scope.launch { switchScope(id, name) }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                },
                 navigationIcon = {
                     if (onBack != null) {
                         IconButton(onClick = onBack) {

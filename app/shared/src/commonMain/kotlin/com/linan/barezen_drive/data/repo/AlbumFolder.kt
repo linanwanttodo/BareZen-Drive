@@ -38,6 +38,22 @@ object AlbumFolder {
     suspend fun resolveCategory(repo: FilesRepository, deviceFolderId: String, category: String): String? =
         findOrCreateChild(repo, deviceFolderId, category)
 
+    /**
+     * Every device folder that actually exists, across all platforms - the
+     * album page's device switcher lists exactly these (folders are created
+     * by an upload, so a device shows up once it has photos).
+     */
+    suspend fun listDevices(repo: FilesRepository): List<Pair<String, String>> {
+        val root = findOrCreateRoot(repo) ?: return emptyList()
+        val out = mutableListOf<Pair<String, String>>()
+        val platforms = repo.contents(root).getOrNull()?.folders ?: return emptyList()
+        for (platform in platforms) {
+            val devices = repo.contents(platform.id).getOrNull() ?: continue
+            devices.folders.forEach { out += it.name to it.id }
+        }
+        return out
+    }
+
     /** The platform folder (Android / Web / iOS / Desktop) under the root. */
     suspend fun resolvePlatform(repo: FilesRepository): String? {
         val root = findOrCreateRoot(repo) ?: return null

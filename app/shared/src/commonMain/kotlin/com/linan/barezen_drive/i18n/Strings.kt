@@ -192,6 +192,7 @@ interface Strings {
     val infoName: String
     val infoSize: String
     val infoModified: String
+    val allDevices: String
     val openRegistration: String
     val openRegistrationOnHint: String
     val openRegistrationOffHint: String

@@ -185,6 +185,7 @@ object StringsZh : Strings {
     override val infoName: String = "名称"
     override val infoSize: String = "大小"
     override val infoModified: String = "修改时间"
+    override val allDevices: String = "全部设备"
     override val openRegistration: String = "开放注册"
     override val openRegistrationOnHint: String = "新访客可自行注册账号，建好自己的账号后建议关闭"
     override val openRegistrationOffHint: String = "仅已有账号可以登录"
