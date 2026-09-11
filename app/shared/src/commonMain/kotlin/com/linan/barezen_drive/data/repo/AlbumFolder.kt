@@ -2,6 +2,8 @@ package com.linan.barezen_drive.data.repo
 
 import com.linan.barezen_drive.core.dto.ContentsResponse
 import com.linan.barezen_drive.core.dto.FolderDto
+import com.linan.barezen_drive.platform.InstallChannel
+import com.linan.barezen_drive.platform.installChannel
 
 /**
  * The dedicated album folder tree (rooted at the localized album folder name,
@@ -16,12 +18,30 @@ object AlbumFolder {
     const val ROOT_NAME = "相册"
 
     /**
-     * Resolves (or creates) the album root folder, returns null when the
-     * server is unreachable or listing fails (callers show an error state).
+     * Resolves (or creates) this device's album folder. The nesting mirrors a
+     * phone gallery across machines: Album / <platform> / <device> / <phone
+     * album>; photos land only at the device level, never on the platform
+     * level. Returns null when the server is unreachable.
      */
     suspend fun resolve(repo: FilesRepository, deviceName: String): String? {
+        val platform = resolvePlatform(repo) ?: return null
+        return findOrCreateChild(repo, platform, deviceName)
+    }
+
+    /** The Album root folder - the "all devices" scope for the timeline. */
+    suspend fun resolveAlbumRoot(repo: FilesRepository): String? = findOrCreateRoot(repo)
+
+    /** The platform folder (Android / Web / iOS / Desktop) under the root. */
+    suspend fun resolvePlatform(repo: FilesRepository): String? {
         val root = findOrCreateRoot(repo) ?: return null
-        return findOrCreateChild(repo, root, deviceName)
+        return findOrCreateChild(repo, root, platformName())
+    }
+
+    fun platformName(): String = when (installChannel) {
+        InstallChannel.ANDROID -> "Android"
+        InstallChannel.IOS -> "iOS"
+        InstallChannel.DESKTOP -> "Desktop"
+        InstallChannel.WEB -> "Web"
     }
 
     private suspend fun findOrCreateRoot(repo: FilesRepository): String? {
