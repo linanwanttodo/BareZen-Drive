@@ -1,10 +1,7 @@
 package com.linan.barezen_drive.ui.screens.home
 
-import androidx.compose.runtime.collectAsState
 import com.linan.barezen_drive.core.dto.ServerStatsDto
-import com.linan.barezen_drive.platform.monotonicNowMs
 import kotlinx.coroutines.delay
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +33,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import kotlin.time.Duration.Companion.seconds
 import androidx.compose.material3.Text
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.TextButton
@@ -53,7 +51,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
-import com.linan.barezen_drive.core.dto.AlbumPage
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.ui.media.FileThumbnail
@@ -64,6 +61,11 @@ import com.linan.barezen_drive.ui.screens.preview.PreviewKind
 import io.ktor.utils.io.ByteReadChannel
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 
 private const val RECENT_LIMIT = 12
 private const val ALBUM_STRIP_SIZE = 12
@@ -73,7 +75,6 @@ private const val ALBUM_STRIP_SIZE = 12
  * monthly timeline), then the most recently changed files. The status
  * dashboard planned for the next phase slots in above the album section.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     repo: FilesRepository,
@@ -97,7 +98,7 @@ fun HomeScreen(
         while (true) {
             stats = repo.serverStats().getOrNull()
             latency = runCatching { repo.ping() }.getOrNull()
-            delay(3_000)
+            delay(3.seconds)
         }
     }
 
@@ -172,14 +173,14 @@ fun HomeScreen(
         // glass bar while content still flows behind it for the refraction.
         LazyColumn(
             Modifier.fillMaxSize().padding(pad),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 112.dp),
+            contentPadding = PaddingValues(bottom = 112.dp),
         ) {
             // ---- Server status section ----
             item(key = "server_status") {
                 ServerStatusCard(stats, latency)
             }
             // ---- Album section ----
-            if (albumList != null && albumList.isNotEmpty()) {
+            if (!albumList.isNullOrEmpty()) {
                 item(key = "album_header") {
                     SectionHeader(
                         title = LocalStrings.current.tabAlbum,
@@ -188,15 +189,14 @@ fun HomeScreen(
                     )
                 }
                 item(key = "album_strip") {
-                    val images = albumList
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
                     ) {
-                        items(images, key = { it.id }) { file ->
+                        items(albumList, key = { it.id }) { file ->
                             Box(Modifier.clickable {
-                                val index = images.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
-                                onPreview(images, index)
+                                val index = albumList.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
+                                onPreview(albumList, index)
                             }) {
                                 FileThumbnail(file, thumbs, edge = 108.dp)
                             }
@@ -295,7 +295,6 @@ private fun SectionHeader(title: String, action: String?, onAction: (() -> Unit)
 }
 
 @Composable
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 private fun RecentRow(
     file: FileDto,
     thumbs: ThumbnailLoader,
@@ -343,7 +342,7 @@ private fun formatBytesPerSec(v: Long): String = if (v < 0) "—" else formatFil
 @Composable
 private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?) {
     val panelAlpha = com.linan.barezen_drive.ui.theme.LocalPanelAlpha.current
-    androidx.compose.material3.Surface(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -374,8 +373,7 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?) {
                 )
             }
             Spacer(Modifier.height(10.dp))
-            val st = stats
-            if (st == null) {
+                        if (stats == null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
@@ -386,16 +384,16 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?) {
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    val cpuFrac = if (st.cpuPercent < 0) 0f else (st.cpuPercent / 100.0).toFloat()
-                    val memFrac = if (st.memTotalBytes <= 0) 0f else st.memUsedBytes.toFloat() / st.memTotalBytes
-                    val diskUsedFrac = if (st.diskTotalBytes <= 0 || st.diskFreeBytes < 0) 0f
-                        else ((st.diskTotalBytes - st.diskFreeBytes).toFloat() / st.diskTotalBytes)
+                    val cpuFrac = if (stats.cpuPercent < 0) 0f else (stats.cpuPercent / 100.0).toFloat()
+                    val memFrac = if (stats.memTotalBytes <= 0) 0f else stats.memUsedBytes.toFloat() / stats.memTotalBytes
+                    val diskUsedFrac = if (stats.diskTotalBytes <= 0 || stats.diskFreeBytes < 0) 0f
+                        else ((stats.diskTotalBytes - stats.diskFreeBytes).toFloat() / stats.diskTotalBytes)
 
-                    MetricChip("CPU", if (st.cpuPercent < 0) "—" else "${st.cpuPercent.toInt()}%", cpuFrac)
-                    MetricChip(LocalStrings.current.metricMemory, if (st.memTotalBytes <= 0) "—" else formatFileSize(st.memUsedBytes), memFrac)
-                    MetricChip(LocalStrings.current.metricDiskFree, if (st.diskFreeBytes < 0) "—" else formatFileSize(st.diskFreeBytes), diskUsedFrac)
-                    MetricChip(LocalStrings.current.actionDownload, formatBytesPerSec(st.netRxBytesPerSec), null)
-                    MetricChip(LocalStrings.current.actionUpload, formatBytesPerSec(st.netTxBytesPerSec), null)
+                    MetricChip("CPU", if (stats.cpuPercent < 0) "—" else "${stats.cpuPercent.toInt()}%", cpuFrac)
+                    MetricChip(LocalStrings.current.metricMemory, if (stats.memTotalBytes <= 0) "—" else formatFileSize(stats.memUsedBytes), memFrac)
+                    MetricChip(LocalStrings.current.metricDiskFree, if (stats.diskFreeBytes < 0) "—" else formatFileSize(stats.diskFreeBytes), diskUsedFrac)
+                    MetricChip(LocalStrings.current.actionDownload, formatBytesPerSec(stats.netRxBytesPerSec), null)
+                    MetricChip(LocalStrings.current.actionUpload, formatBytesPerSec(stats.netTxBytesPerSec), null)
                 }
             }
         }
@@ -412,17 +410,17 @@ private fun MetricChip(label: String, value: String, usageFraction: Float? = nul
         if (usageFraction != null) {
             Spacer(Modifier.height(4.dp))
             Box(Modifier.size(20.dp)) {
-                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                Canvas(Modifier.fillMaxSize()) {
                     val stroke = 2.5.dp.toPx()
                     drawArc(
                         color = track,
                         startAngle = -90f, sweepAngle = 360f, useCenter = false,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                        style = Stroke(stroke, cap = StrokeCap.Round),
                     )
                     drawArc(
                         color = progress,
                         startAngle = -90f, sweepAngle = 360f * usageFraction.coerceIn(0f, 1f), useCenter = false,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round),
+                        style = Stroke(stroke, cap = StrokeCap.Round),
                     )
                 }
             }

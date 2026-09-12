@@ -42,6 +42,8 @@ import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.platform.copyToClipboard
 import com.linan.barezen_drive.platform.rememberFileSaver
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.Button
 
 /**
  * Full-screen preview. The pager swipes across the whole collection like a
@@ -49,7 +51,6 @@ import kotlinx.coroutines.launch
  * and delete for the item currently in view (the album screen passes true and
  * refreshes through [onChanged]).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PreviewScreen(
     files: List<FileDto>,
@@ -87,7 +88,7 @@ fun PreviewScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 6.dp),
-                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                 ) {
                     IconButton(onClick = {
                         saver(file.name, file.mimeType) { repo.download(file.id) }
@@ -232,7 +233,7 @@ private fun Unsupported(file: FileDto, repo: FilesRepository, saver: (name: Stri
             )
             Spacer(Modifier.height(12.dp))
             // The explicit action replaces the old tap-to-download surprise.
-            androidx.compose.material3.Button(
+            Button(
                 onClick = { saver(file.name, file.mimeType) { repo.download(file.id) } },
                 colors = com.linan.barezen_drive.ui.theme.filledButtonColors(),
             ) {

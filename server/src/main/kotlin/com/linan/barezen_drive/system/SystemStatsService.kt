@@ -53,7 +53,7 @@ object SystemStatsService {
     }
 
     private fun readProcCpu(): CpuSample? = runCatching {
-        val line = File("/proc/stat").bufferedReader().readLine() ?: return null
+        val line = File("/proc/stat").bufferedReader().use { it.readLine() } ?: return null
         if (!line.startsWith("cpu ")) return null
         val fields = line.split(Regex("\\s+")).drop(1).mapNotNull { it.toLongOrNull() }
         if (fields.isEmpty()) return null
@@ -104,7 +104,7 @@ object SystemStatsService {
     }
 
     private fun readUptime(): Long = runCatching {
-        File("/proc/uptime").bufferedReader().readLine()
+        File("/proc/uptime").bufferedReader().use { it.readLine() }
             ?.split(" ")?.firstOrNull()?.toDoubleOrNull()?.toLong() ?: -1L
     }.getOrDefault(-1L)
 

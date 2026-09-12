@@ -7,7 +7,6 @@ import com.linan.barezen_drive.core.dto.ErrorCodes
 import com.linan.barezen_drive.core.dto.UploadInitRequest
 import com.linan.barezen_drive.storage.StorageProvider
 import io.ktor.http.*
-import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*

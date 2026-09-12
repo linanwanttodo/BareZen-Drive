@@ -26,9 +26,13 @@ object RefreshTokensTable : Table("refresh_tokens") {
 object FoldersTable : Table("folders") {
     val id = uuid("id")
     val user = uuid("user_id").references(UsersTable.id)
-    val parent = uuid("parent_id").references(FoldersTable.id).nullable()
+    val parent = uuid("parent_id").references(id).nullable()
     val name = varchar("name", 255)
+    // Schema columns: written by inserts/defaults, read by SQL - the ORM only
+    // needs the definitions to exist, so the unused-symbol check is noise.
+    @Suppress("UnusedSymbol")
     val createdAt = long("created_at").clientDefault { System.currentTimeMillis() }
+    @Suppress("UnusedSymbol")
     val updatedAt = long("updated_at").clientDefault { System.currentTimeMillis() }
     override val primaryKey = PrimaryKey(id)
     init { uniqueIndex(user, parent, name) }

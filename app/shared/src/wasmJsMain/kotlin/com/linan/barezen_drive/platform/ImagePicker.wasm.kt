@@ -17,7 +17,6 @@ actual fun rememberImagePicker(onResult: (List<PickedFile>) -> Unit): () -> Unit
                 val list = (0 until files.length).mapNotNull { files.item(it)?.let(::WasmPickedFile) }
                 onResult(list)
             }
-            Unit
         }
         input.click()
     }

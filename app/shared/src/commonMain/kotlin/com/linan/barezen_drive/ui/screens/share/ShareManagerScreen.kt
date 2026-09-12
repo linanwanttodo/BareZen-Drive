@@ -49,7 +49,6 @@ import com.linan.barezen_drive.i18n.LocalStrings
  * with its access counters, one tap to revoke. The URL itself is only shown
  * once at creation (the token is stored hashed), hence no copy action here.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ShareManagerScreen(
     repo: FilesRepository,

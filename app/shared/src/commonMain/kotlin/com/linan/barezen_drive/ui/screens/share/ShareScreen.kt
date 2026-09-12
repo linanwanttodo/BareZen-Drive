@@ -117,7 +117,6 @@ private fun InvalidShare(onExit: () -> Unit) {
 
 // ---- File share ----
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SharedFileView(
     token: String,
@@ -225,7 +224,6 @@ private fun SharedImagePreview(token: String, fileId: String, repo: FilesReposit
 
 private data class SharedBreadcrumb(val id: String?, val name: String)
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SharedFolderView(
     token: String,

@@ -27,18 +27,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.SwapVert
@@ -59,7 +54,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -103,8 +97,6 @@ import com.linan.barezen_drive.ui.media.FileThumbnail
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.media.formatDateTime
 import com.linan.barezen_drive.ui.screens.preview.PreviewKind
-import com.linan.barezen_drive.ui.theme.filledButtonColors
-import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.launch
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
@@ -153,7 +145,6 @@ internal fun openOrPreview(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilesScreen(
     path: List<FolderDto>,
@@ -744,7 +735,6 @@ private fun FolderGridRow(
 }
 
 @Composable
-@OptIn(ExperimentalFoundationApi::class)
 private fun FileTile(
     file: FileDto,
     thumbs: ThumbnailLoader,
@@ -905,7 +895,6 @@ private fun FolderRow(
 }
 
 @Composable
-@OptIn(ExperimentalFoundationApi::class)
 private fun FileRow(
     file: FileDto,
     thumbs: ThumbnailLoader,
@@ -1324,7 +1313,7 @@ private fun UploadLocationDialog(
         loading = false
     }
 
-    androidx.compose.material3.AlertDialog(
+    AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(LocalStrings.current.pickUploadLocation) },
         text = {

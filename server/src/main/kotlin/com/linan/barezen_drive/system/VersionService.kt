@@ -53,11 +53,15 @@ object VersionService {
 
     @Volatile private var cached: Release? = null
     @Volatile private var cachedAtMs: Long = 0
+    private val cacheLock = Any()
 
-    /** Test seam: forget any cached release. */
+    /** Test seam: forget any cached release. Called from :server tests. */
+    @Suppress("UnusedSymbol")
     fun resetCache() {
-        cached = null
-        cachedAtMs = 0
+        synchronized(cacheLock) {
+            cached = null
+            cachedAtMs = 0
+        }
     }
 
     fun snapshot(repoUrl: String, manifestUrl: String?, githubToken: String?): VersionInfoResponse {
@@ -77,11 +81,15 @@ object VersionService {
 
     private fun cachedRelease(repoUrl: String, manifestUrl: String?, githubToken: String?): Release? {
         val now = System.currentTimeMillis()
-        cached?.let { if (now - cachedAtMs < CACHE_TTL_MS) return it }
+        synchronized(cacheLock) {
+            cached?.let { if (now - cachedAtMs < CACHE_TTL_MS) return it }
+        }
         val fetched = (manifestUrl?.let { fetchManifest(it, githubToken) }
             ?: fetchLatestRelease(repoUrl, githubToken)) ?: return null
-        cached = fetched
-        cachedAtMs = now
+        synchronized(cacheLock) {
+            cached = fetched
+            cachedAtMs = now
+        }
         return fetched
     }
 

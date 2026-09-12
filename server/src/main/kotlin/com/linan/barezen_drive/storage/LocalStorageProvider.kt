@@ -47,7 +47,8 @@ class LocalStorageProvider(private val root: Path) : StorageProvider {
     }
 
     override suspend fun delete(key: String): Unit = withContext(Dispatchers.IO) {
-        Files.deleteIfExists(root.resolve(key)); Unit
+        Files.deleteIfExists(root.resolve(key))
+        return@withContext
     }
 
     override suspend fun exists(key: String): Boolean = withContext(Dispatchers.IO) {

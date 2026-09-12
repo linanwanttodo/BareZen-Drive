@@ -65,6 +65,7 @@ import com.linan.barezen_drive.i18n.Language
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.i18n.stringsFor
 import com.linan.barezen_drive.platform.systemLanguageTag
+import androidx.compose.ui.ExperimentalComposeUiApi
 
 /**
  * Minimal navigation backstack (no navigation library): a list of sealed
@@ -94,7 +95,7 @@ private fun themeModeFromIndex(index: Int): ThemeMode = when (index) {
     else -> ThemeMode.SYSTEM
 }
 
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun App() {
     // Preferences are read once per composition root; writes go through the
@@ -159,7 +160,7 @@ fun App() {
         // Theme-colored root: every screen (login included) inherits the correct
         // background instead of the platform default white.
         val scheme = MaterialTheme.colorScheme
-        androidx.compose.foundation.layout.Box(
+        Box(
             Modifier
                 .fillMaxSize()
                 .background(scheme.background),
@@ -185,7 +186,7 @@ fun App() {
 
         var stack by remember {
             mutableStateOf(
-                listOf<Screen>(
+                listOf(
                     if (TokenStorage.accessToken != null) Screen.Main else Screen.Login,
                 ),
             )

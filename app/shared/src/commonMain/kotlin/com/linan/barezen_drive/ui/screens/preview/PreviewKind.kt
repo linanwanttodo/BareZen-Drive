@@ -37,12 +37,12 @@ enum class PreviewKind {
         private fun byExtension(name: String): PreviewKind? {
             val ext = name.substringAfterLast('.', "").lowercase()
             if (ext.isEmpty()) return null
-            return when {
-                ext == "pdf" -> PDF
-                ext in textExtensions -> TEXT
-                ext in imageExtensions -> IMAGE
-                ext in videoExtensions -> VIDEO
-                ext in audioExtensions -> AUDIO
+            return when (ext) {
+                "pdf" -> PDF
+                in textExtensions -> TEXT
+                in imageExtensions -> IMAGE
+                in videoExtensions -> VIDEO
+                in audioExtensions -> AUDIO
                 else -> null
             }
         }

@@ -1,6 +1,5 @@
 package com.linan.barezen_drive.ui.screens.login
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Column
@@ -37,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.data.repo.AuthRepository
 import com.linan.barezen_drive.platform.isWebPlatform
-import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.ui.theme.filledButtonColors
 import kotlinx.coroutines.launch
 import com.linan.barezen_drive.i18n.I18n

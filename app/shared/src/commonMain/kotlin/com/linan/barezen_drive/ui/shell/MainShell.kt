@@ -34,6 +34,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.linan.barezen_drive.ui.glass.LiquidBottomTab
 import com.linan.barezen_drive.ui.glass.LiquidBottomTabs
 import com.linan.barezen_drive.i18n.LocalStrings
+import androidx.compose.ui.graphics.ImageBitmap
 
 /**
  * App-wide tab destinations, in fixed order: home (album + recent), file
@@ -90,7 +91,7 @@ private fun rememberSelectedIndexProvider(ordinal: Int): () -> Int {
 fun MainShell(
     selected: MainTab,
     onSelect: (MainTab) -> Unit,
-    wallpaperBitmap: androidx.compose.ui.graphics.ImageBitmap?,
+    wallpaperBitmap: ImageBitmap?,
     glassBarEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {

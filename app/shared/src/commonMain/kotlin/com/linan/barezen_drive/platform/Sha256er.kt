@@ -82,12 +82,12 @@ internal class PureSha256 {
         var g = state[6]
         var h = state[7]
         for (t in 0 until 64) {
-            val S1 = ((e ushr 6) or (e shl 26)) xor ((e ushr 11) or (e shl 21)) xor ((e ushr 25) or (e shl 7))
+            val s1 = ((e ushr 6) or (e shl 26)) xor ((e ushr 11) or (e shl 21)) xor ((e ushr 25) or (e shl 7))
             val ch = (e and f) xor (e.inv() and g)
-            val t1 = h + S1 + ch + K[t] + w[t]
-            val S0 = ((a ushr 2) or (a shl 30)) xor ((a ushr 13) or (a shl 19)) xor ((a ushr 22) or (a shl 10))
+            val t1 = h + s1 + ch + K[t] + w[t]
+            val s0 = ((a ushr 2) or (a shl 30)) xor ((a ushr 13) or (a shl 19)) xor ((a ushr 22) or (a shl 10))
             val maj = (a and b) xor (a and c) xor (b and c)
-            val t2 = S0 + maj
+            val t2 = s0 + maj
             h = g
             g = f
             f = e

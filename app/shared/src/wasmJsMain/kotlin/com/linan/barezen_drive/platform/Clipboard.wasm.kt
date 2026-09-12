@@ -11,6 +11,8 @@ private external interface ClipboardApi {
 }
 
 /** navigator.clipboard only exists in secure contexts (https / localhost). */
+// The js() probe really does yield null at runtime; the IDE cannot see that.
+@Suppress("RedundantNullableReturnType")
 private val clipboardApi: ClipboardApi? =
     js("typeof navigator !== 'undefined' && navigator.clipboard !== undefined ? navigator.clipboard : null")
 

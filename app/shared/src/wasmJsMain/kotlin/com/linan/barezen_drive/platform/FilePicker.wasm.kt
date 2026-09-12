@@ -31,7 +31,7 @@ internal class WasmPickedFile(internal val file: File) : PickedFile {
 private suspend fun Blob.readAsArrayBufferSuspending(): ArrayBuffer =
     suspendCancellableCoroutine { cont ->
         val reader = FileReader()
-        reader.onload = { cont.resume(reader.result!!.unsafeCast<ArrayBuffer>()) }
+        reader.onload = { cont.resume(reader.result!!.unsafeCast()) }
         reader.onerror = { cont.resumeWithException(IllegalStateException("file read failed")) }
         reader.readAsArrayBuffer(this)
     }
@@ -48,7 +48,6 @@ actual fun rememberFilePicker(onResult: (List<PickedFile>) -> Unit): () -> Unit 
                 val list = (0 until files.length).mapNotNull { files.item(it)?.let(::WasmPickedFile) }
                 onResult(list)
             }
-            Unit
         }
         input.click()
     }

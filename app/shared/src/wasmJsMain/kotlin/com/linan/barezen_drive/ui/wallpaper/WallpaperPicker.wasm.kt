@@ -46,7 +46,6 @@ internal class WasmWallpaperImage(
     override suspend fun bitmap(): ImageBitmap? = dataUrlToBitmap(source)
 }
 
-@OptIn(ExperimentalEncodingApi::class)
 internal fun dataUrlToBitmap(dataUrl: String): ImageBitmap? = runCatching {
     val b64 = dataUrl.substringAfter("base64,", "")
     if (b64.isEmpty()) return null
@@ -55,7 +54,7 @@ internal fun dataUrlToBitmap(dataUrl: String): ImageBitmap? = runCatching {
 
 private suspend fun FileReader.readArrayBufferSuspending(blob: org.w3c.files.Blob): ArrayBuffer =
     suspendCancellableCoroutine { cont ->
-        onload = { cont.resume(result!!.unsafeCast<ArrayBuffer>()) }
+        onload = { cont.resume(result!!.unsafeCast()) }
         onerror = { cont.resume(ArrayBuffer(0)) }
         readAsArrayBuffer(blob)
     }

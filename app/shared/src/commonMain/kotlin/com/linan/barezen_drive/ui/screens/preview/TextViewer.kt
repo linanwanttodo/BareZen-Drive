@@ -3,7 +3,6 @@ package com.linan.barezen_drive.ui.screens.preview
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -28,6 +27,8 @@ import io.ktor.utils.io.toByteArray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.linan.barezen_drive.i18n.LocalStrings
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 
 private const val TEXT_PREVIEW_LIMIT = 256 * 1024
 
@@ -82,8 +83,8 @@ fun TextViewer(file: FileDto, repo: FilesRepository) {
 }
 
 @Composable
-private fun SelectionText(body: String, vertical: androidx.compose.foundation.ScrollState, horizontal: androidx.compose.foundation.ScrollState) {
-    androidx.compose.foundation.text.selection.SelectionContainer {
+private fun SelectionText(body: String, vertical: ScrollState, horizontal: ScrollState) {
+    SelectionContainer {
         Text(
             body,
             style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp),

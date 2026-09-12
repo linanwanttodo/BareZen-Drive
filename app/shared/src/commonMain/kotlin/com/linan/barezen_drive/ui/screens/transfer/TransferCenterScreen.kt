@@ -47,7 +47,6 @@ import com.linan.barezen_drive.ui.screens.files.formatFileSize
  * Uploading / downloading / finished tabs, plus the album auto-sync switch and
  * its network policy. Replaces the old modal progress popups.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TransferCenterScreen(
     onBack: () -> Unit,

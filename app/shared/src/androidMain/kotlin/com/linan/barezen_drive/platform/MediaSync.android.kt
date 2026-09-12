@@ -61,7 +61,7 @@ actual object MediaSync {
             .build()
         val request = OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(constraints).build()
         WorkManager.getInstance(AndroidContext.app)
-            .enqueueUniqueWork(WORK_NAME + "-now", ExistingWorkPolicy.REPLACE, request)
+            .enqueueUniqueWork("${WORK_NAME}-now", ExistingWorkPolicy.REPLACE, request)
     }
 
     internal fun syncedSet(): MutableSet<String> =
@@ -91,13 +91,13 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
         val synced = MediaSync.syncedSet()
         val ctx = applicationContext
 
-        for (item in queryMedia(ctx)) {
-            val fingerprint = "${item.uri}|${item.dateModified}"
+        for ((uri, album, dateModified) in queryMedia(ctx)) {
+            val fingerprint = "$uri|$dateModified"
             if (fingerprint in synced) continue
 
-            val picked = AndroidPickedFile(ctx, item.uri)
+            val picked = AndroidPickedFile(ctx, uri)
             // Category folder created on demand from the phone-album name.
-            val target = item.album?.takeIf { it.isNotBlank() }
+            val target = album?.takeIf { it.isNotBlank() }
                 ?.let { AlbumFolder.resolveCategory(repo, deviceFolder, it) }
                 ?: deviceFolder
 

@@ -4,8 +4,6 @@ import com.linan.barezen_drive.auth.userId
 import com.linan.barezen_drive.config.AppConfig
 import com.linan.barezen_drive.core.dto.RegistrationSettingRequest
 import com.linan.barezen_drive.core.dto.RegistrationStatusDto
-import com.linan.barezen_drive.core.dto.ServerStatsDto
-import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*

@@ -148,10 +148,6 @@ class ApiClient(
         ?.let { engine -> HttpClient(engine) { commonConfig() } }
         ?: HttpClient { commonConfig() }
 
-    fun close() {
-        http.close()
-    }
-
     private suspend fun <T> runApi(block: suspend () -> T): Result<T> =
         try {
             Result.success(block())
@@ -188,7 +184,7 @@ class ApiClient(
             contentType(ContentType.Application.Json)
             setBody(RegisterRequest(username, password))
         }
-        Unit
+        return@runApi Unit
     }
 
     suspend fun login(username: String, password: String): Result<LoginResponse> = runApi {
@@ -228,7 +224,7 @@ class ApiClient(
 
     suspend fun deleteFolder(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/folders/$id")
-        Unit
+        return@runApi Unit
     }
 
     suspend fun updateFile(id: String, name: String?, folderId: String?): Result<FileDto> = runApi {
@@ -240,7 +236,7 @@ class ApiClient(
 
     suspend fun deleteFile(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/files/$id")
-        Unit
+        return@runApi Unit
     }
 
     suspend fun uploadInit(req: UploadInitRequest): Result<UploadInitResponse> = runApi {
@@ -255,7 +251,7 @@ class ApiClient(
             setBody(bytes)
             sha?.let { header("X-Chunk-Sha256", it) }
         }
-        Unit
+        return@runApi Unit
     }
 
     suspend fun uploadComplete(id: String): Result<FileDto> = runApi {
@@ -264,7 +260,7 @@ class ApiClient(
 
     suspend fun uploadAbort(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/uploads/$id")
-        Unit
+        return@runApi Unit
     }
 
     suspend fun putThumbnail(id: String, bytes: ByteArray): Result<Unit> = runApi {
@@ -272,7 +268,7 @@ class ApiClient(
             contentType(ContentType.Image.JPEG)
             setBody(bytes)
         }
-        Unit
+        return@runApi Unit
     }
 
     suspend fun thumbnailBytes(id: String): Result<ByteArray> = runApi {
@@ -362,7 +358,7 @@ class ApiClient(
 
     suspend fun revokeShare(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/shares/$id")
-        Unit
+        return@runApi Unit
     }
 
     // ---- Public share endpoints (no auth; Bearer stays absent when no token) ----
@@ -387,10 +383,4 @@ class ApiClient(
     suspend fun sharedPreviewBytes(token: String, fileId: String): ByteArray =
         http.get("$baseUrl/api/public/shares/$token/files/$fileId/content").bodyAsBytes()
 
-    suspend fun sharedThumbnailBytes(token: String, fileId: String): Result<ByteArray> = runApi {
-        http.get("$baseUrl/api/public/shares/$token/files/$fileId/thumbnail").bodyAsBytes()
-    }
-
-    /** Absolute URL for browser/media-player consumption of a shared file. */
-    fun sharedContentUrl(token: String, fileId: String): String = "$baseUrl/api/public/shares/$token/files/$fileId/content"
 }

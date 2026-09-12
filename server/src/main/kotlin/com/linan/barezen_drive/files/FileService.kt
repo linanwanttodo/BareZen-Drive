@@ -8,7 +8,6 @@ import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
 import com.linan.barezen_drive.db.UploadChunksTable
 import com.linan.barezen_drive.db.UploadSessionsTable
-import io.ktor.http.*
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -155,9 +154,9 @@ object FileService {
         if (newName != null) {
             if (!nameOk(newName)) throw ApiException.badRequest("名称非法")
         }
-        val target: UUID? = when {
-            newFolderId == null -> cur.folderId
-            newFolderId == "root" -> null
+        val target: UUID? = when (newFolderId) {
+            null -> cur.folderId
+            "root" -> null
             else -> {
                 val tid = newFolderId.toUuidOrBadRequest()
                 FoldersTable.selectAll().where { (FoldersTable.id eq tid) and (FoldersTable.user eq userId) }.singleOrNull()

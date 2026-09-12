@@ -34,7 +34,6 @@ media3 = "1.11.0"
 [libraries]
 material3-adaptiveNavigationSuite = { module = "org.jetbrains.compose.material3:material3-adaptive-navigation-suite", version.ref = "material3" }
 backdrop = { module = "io.github.kyant0:backdrop", version.ref = "backdrop" }
-kyantShapes = { module = "io.github.kyant0:shapes", version = "1.1.2" }
 shapes = { module = "io.github.kyant0:shapes", version.ref = "shapes" }
 kotlinx-coroutinesAndroid = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinx-coroutines" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }

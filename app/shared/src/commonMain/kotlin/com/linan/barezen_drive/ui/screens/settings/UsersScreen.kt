@@ -39,13 +39,13 @@ import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.media.formatDateTime
 import kotlinx.coroutines.launch
+import androidx.compose.material3.CircularProgressIndicator
 
 /**
  * Owner-facing account list: who registered, how much they store, and a
  * destructive delete that removes the account with all of its data. The
  * signed-in owner is marked so they do not delete themselves by accident.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UsersScreen(
     currentUserId: String?,
@@ -92,7 +92,7 @@ fun UsersScreen(
                     TextButton(onClick = { error = null; reload() }) { Text(LocalStrings.current.actionRetry) }
                 }
                 list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    androidx.compose.material3.CircularProgressIndicator()
+                    CircularProgressIndicator()
                 }
                 else -> LazyColumn {
                     items(list!!, key = { it.id }) { user ->
@@ -159,10 +159,9 @@ fun UsersScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val target = user
                     deleting = null
                     scope.launch {
-                        onDelete(target)
+                        onDelete(user)
                         reload()
                     }
                 }) { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) }

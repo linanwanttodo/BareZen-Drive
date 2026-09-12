@@ -54,7 +54,6 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.material3.adaptiveNavigationSuite)
             implementation(libs.backdrop)
-            implementation(libs.kyantShapes)
             implementation(libs.shapes)
             implementation(libs.androidx.lifecycle.viewmodelCompose)
             implementation(libs.androidx.lifecycle.runtimeCompose)

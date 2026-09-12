@@ -54,7 +54,6 @@ private val OPEN_SOURCE_ENTRIES = listOf(
 )
 
 /** Full-screen credits page listing the open-source stack and the app license. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OpenSourceScreen(onBack: () -> Unit) {
     Scaffold(

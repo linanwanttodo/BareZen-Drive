@@ -9,7 +9,6 @@ import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
@@ -92,7 +91,7 @@ object ThumbnailService {
         // await the winner's result instead of duplicating the decode work.
         val current = CompletableFuture.completedFuture(false)
         val future = inFlight.putIfAbsent(key, current) ?: run {
-            val f = current.thenApplyAsync({ generateAndStore(storage, meta, key) })
+            val f = current.thenApplyAsync { generateAndStore(storage, meta, key) }
             f.whenComplete { _, _ -> inFlight.remove(key) }
             f
         }
@@ -117,7 +116,7 @@ object ThumbnailService {
         val kind = mediaKind(meta.mimeType, meta.name)
         if (kind == MediaKind.NONE) return null
         val limit = if (kind == MediaKind.VIDEO) VIDEO_SOURCE_MAX_BYTES else IMAGE_SOURCE_MAX_BYTES
-        if (meta.size <= 0 || meta.size > limit) return null
+        if (meta.size !in 1..limit) return null
 
         // Prefer the stored blob in place; when storage is not local, stream it
         // once to a temp file so the decoder gets a real seekable file.
@@ -137,7 +136,8 @@ object ThumbnailService {
         storage.resolvePath(meta.storageKey)?.let { return it to null }
         val tmp = Files.createTempFile("thumb-src-", ".bin")
         runCatching {
-            runBlockingIo { storage.get(meta.storageKey) }.toInputStream().use { ins ->
+            val ch = runBlockingIo { storage.get(meta.storageKey) }
+            ch.toInputStream().use { ins ->
                 Files.copy(ins, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             }
         }.onFailure {
@@ -170,7 +170,10 @@ object ThumbnailService {
                 proc.waitFor(5, TimeUnit.SECONDS)
             }
             if (finished && proc.exitValue() == 0 && Files.size(out) > 0) Files.readAllBytes(out) else null
-        } catch (_: Exception) {
+        } catch (_: java.io.IOException) {
+            null
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
             null
         } finally {
             out.deleteIfExists()
@@ -208,7 +211,9 @@ object ThumbnailService {
             val bytes = ByteArrayOutputStream()
             if (!ImageIO.write(canvas, "jpg", bytes)) null else bytes.toByteArray()
         }
-    } catch (_: Exception) {
+    } catch (_: java.io.IOException) {
+        null
+    } catch (_: javax.imageio.IIOException) {
         null
     }
 

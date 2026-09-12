@@ -3,7 +3,6 @@ package com.linan.barezen_drive.files
 import com.linan.barezen_drive.api.ApiException
 import com.linan.barezen_drive.api.toUuidOrBadRequest
 import com.linan.barezen_drive.core.dto.ErrorCodes
-import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.core.dto.UploadCompleteResponse
 import com.linan.barezen_drive.core.dto.UploadInitRequest
 import com.linan.barezen_drive.core.dto.UploadInitResponse
@@ -21,7 +20,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.io.File
 import java.io.FileInputStream
@@ -30,10 +28,10 @@ import java.security.MessageDigest
 import java.util.UUID
 
 object UploadService {
-    private val MIB = 1024L * 1024
-    val DEFAULT_CHUNK = 5L * MIB
-    val MIN_CHUNK = MIB
-    val MAX_CHUNK = 20L * MIB
+    private const val MIB = 1024L * 1024
+    const val DEFAULT_CHUNK = 5L * MIB
+    const val MIN_CHUNK = MIB
+    const val MAX_CHUNK = 20L * MIB
     private const val SESSION_TTL_MILLIS = 24L * 3600 * 1000
 
     private fun expectedChunks(size: Long, chunkSize: Long) = ((size + chunkSize - 1) / chunkSize).toInt()
@@ -236,7 +234,9 @@ object UploadService {
                 throw ApiException.badRequest("整体哈希与 init 不符", ErrorCodes.CHUNK_INVALID)
             }
             val key = storage.blobKey(sha)
-            if (!storage.exists(key)) storage.put(key, FileInputStream(mergeFile).toByteReadChannel())
+            if (!storage.exists(key)) {
+                FileInputStream(mergeFile).use { fis -> storage.put(key, fis.toByteReadChannel()) }
+            }
             val hasThumb = storage.exists(thumbKey(sha))
             val fileDto = transaction(DatabaseFactory.db) {
                 if (siblingNameTaken(userId, parent, name)) throw ApiException.conflict(ErrorCodes.NAME_CONFLICT, "同级已存在同名文件夹或文件")

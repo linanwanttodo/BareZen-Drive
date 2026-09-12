@@ -1,7 +1,5 @@
 package com.linan.barezen_drive.data.repo
 
-import com.linan.barezen_drive.core.dto.ContentsResponse
-import com.linan.barezen_drive.core.dto.FolderDto
 import com.linan.barezen_drive.platform.InstallChannel
 import com.linan.barezen_drive.platform.installChannel
 
@@ -29,8 +27,6 @@ object AlbumFolder {
     }
 
     /** The Album root folder - the "all devices" scope for the timeline. */
-    suspend fun resolveAlbumRoot(repo: FilesRepository): String? = findOrCreateRoot(repo)
-
     /**
      * The phone-album category folder inside a device folder, created on
      * demand - only uploads that carry a source album name ever create one.
@@ -49,7 +45,7 @@ object AlbumFolder {
         val platforms = repo.contents(root).getOrNull()?.folders ?: return emptyList()
         for (platform in platforms) {
             val devices = repo.contents(platform.id).getOrNull() ?: continue
-            devices.folders.forEach { out += it.name to it.id }
+            devices.folders.forEach { (name, id) -> out += name to id }
         }
         return out
     }

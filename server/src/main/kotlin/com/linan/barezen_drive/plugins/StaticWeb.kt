@@ -1,8 +1,8 @@
 package com.linan.barezen_drive.plugins
 
 import io.ktor.http.*
-import io.ktor.server.application.*
 import io.ktor.server.request.*
+import io.ktor.server.application.Application
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
@@ -49,11 +49,14 @@ fun Route.staticWeb() {
         }
 
         // Path traversal defense: only plain segments composed of safe characters may
-        // reach the classpath lookup.
+        // reach the classpath lookup. Decode URL-encoded segments first so %2e%2e is
+        // treated the same as "..".
+        val decoded = try { java.net.URLDecoder.decode(segments.joinToString("/"), Charsets.UTF_8) } catch (_: Exception) { "" }
         val unsafe = segments.any { it == ".." || it == "." || it.contains('\\') || it.contains(':') }
+            || decoded.contains("..") || decoded.contains(':')
         val assetPath = if (unsafe || segments.isEmpty()) null else "web/" + segments.joinToString("/")
         val asset = assetPath?.let { path ->
-            io.ktor.server.application.Application::class.java.classLoader.getResource(path)?.let { url -> path to url.readBytes() }
+            Application::class.java.classLoader.getResource(path)?.let { url -> path to url.readBytes() }
         }
 
         when {
@@ -81,4 +84,4 @@ fun Route.staticWeb() {
 }
 
 private fun staticWebIndexBytes(): ByteArray? =
-    io.ktor.server.application.Application::class.java.classLoader.getResource("web/index.html")?.readBytes()
+    Application::class.java.classLoader.getResource("web/index.html")?.readBytes()

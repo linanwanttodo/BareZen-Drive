@@ -17,14 +17,10 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -32,12 +28,10 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -50,9 +44,16 @@ import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.data.repo.FilesRepository
 import io.ktor.utils.io.jvm.javaio.toInputStream
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import com.linan.barezen_drive.i18n.LocalStrings
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.text.style.TextAlign
 
 /**
  * Media3/ExoPlayer streaming playback. The player fetches from a short-lived
@@ -301,9 +302,9 @@ private fun PdfPager(
     pageCount: Int,
     cache: PdfPageCache,
 ) {
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState { pageCount }
+    val pagerState = rememberPagerState { pageCount }
     Column(Modifier.fillMaxSize()) {
-        androidx.compose.foundation.pager.HorizontalPager(
+        HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize().weight(1f),
         ) { index ->
@@ -321,7 +322,7 @@ private fun PdfPager(
                 .fillMaxWidth()
                 .padding(8.dp)
                 .wrapContentHeight(),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -339,13 +340,13 @@ private fun PdfContinuous(
     cache: PdfPageCache,
 ) {
     var zoom by remember { mutableStateOf(1f) }
-    val density = androidx.compose.ui.platform.LocalDensity.current
-    val screenWidth = with(density) { androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.toDp() }
-    val hScroll = remember { androidx.compose.foundation.ScrollState(0) }
+    val density = LocalDensity.current
+    val screenWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val hScroll = remember { ScrollState(0) }
 
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val listState = rememberLazyListState()
     Box(Modifier.fillMaxSize()) {
-            androidx.compose.foundation.lazy.LazyColumn(
+            LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
@@ -427,10 +428,9 @@ private fun PdfContinuous(
 @Composable
 private fun PdfPageImage(bitmap: android.graphics.Bitmap?, index: Int, modifier: Modifier) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        val bmp = bitmap
         when {
-            bmp != null -> Image(
-                bitmap = bmp.asImageBitmap(),
+            bitmap != null -> Image(
+                bitmap = bitmap.asImageBitmap(),
                 contentDescription = LocalStrings.current.pageNumber(index + 1),
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,

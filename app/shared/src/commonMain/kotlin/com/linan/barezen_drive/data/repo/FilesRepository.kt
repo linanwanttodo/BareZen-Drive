@@ -87,11 +87,8 @@ class FilesRepository(private val api: ApiClient) : UploadApi {
     suspend fun sharedInfo(token: String): Result<SharedInfoResponse> = api.sharedInfo(token)
     suspend fun sharedContents(token: String, folderId: String? = null): Result<SharedContentsResponse> =
         api.sharedContents(token, folderId)
-    suspend fun sharedThumbnailBytes(token: String, fileId: String): Result<ByteArray> =
-        api.sharedThumbnailBytes(token, fileId)
-    suspend fun sharedDownload(token: String, fileId: String, range: LongRange? = null): io.ktor.utils.io.ByteReadChannel =
+    suspend fun sharedDownload(token: String, fileId: String, range: LongRange? = null): ByteReadChannel =
         api.sharedDownload(token, fileId, range)
     suspend fun sharedPreviewBytes(token: String, fileId: String): ByteArray =
         api.sharedPreviewBytes(token, fileId)
-    fun sharedContentUrl(token: String, fileId: String): String = api.sharedContentUrl(token, fileId)
 }

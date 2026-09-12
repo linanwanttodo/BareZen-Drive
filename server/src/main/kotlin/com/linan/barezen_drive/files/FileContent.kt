@@ -1,6 +1,5 @@
 package com.linan.barezen_drive.files
 
-import com.linan.barezen_drive.api.ApiException
 import com.linan.barezen_drive.api.toUuidOrBadRequest
 import com.linan.barezen_drive.auth.LinkService
 import com.linan.barezen_drive.auth.userId
@@ -17,16 +16,16 @@ import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import io.ktor.utils.io.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SortOrder
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
-import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.Instant
 import java.util.UUID
+import org.jetbrains.exposed.sql.ExpressionWithColumnType
+import org.jetbrains.exposed.sql.LongColumnType
+import org.jetbrains.exposed.sql.QueryBuilder
 
 fun Route.fileContentRoutes(storage: StorageProvider) {
     get("/api/files/recent") {
@@ -60,10 +59,10 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
     }
 
     // Album order: capture time when known, else upload time.
-    fun sortTs(): org.jetbrains.exposed.sql.ExpressionWithColumnType<Long> =
-        object : org.jetbrains.exposed.sql.ExpressionWithColumnType<Long>() {
-            override val columnType = org.jetbrains.exposed.sql.LongColumnType()
-            override fun toQueryBuilder(qb: org.jetbrains.exposed.sql.QueryBuilder) {
+    fun sortTs(): ExpressionWithColumnType<Long> =
+        object : ExpressionWithColumnType<Long>() {
+            override val columnType = LongColumnType()
+            override fun toQueryBuilder(qb: QueryBuilder) {
                 qb.append("COALESCE(")
                 FilesTable.takenAt.toQueryBuilder(qb)
                 qb.append(", ")

@@ -104,19 +104,19 @@ private fun linearSrgbToOklab(r: Double, g: Double, b: Double): Triple<Double, D
     val m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
     val s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
     fun cube(v: Double) = v.pow(1.0 / 3.0)
-    val l_ = cube(l); val m_ = cube(m); val s_ = cube(s)
+    val lp = cube(l); val mp = cube(m); val sp = cube(s)
     return Triple(
-        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
-        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
-        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+        0.2104542553 * lp + 0.7936177850 * mp - 0.0040720468 * sp,
+        1.9779984951 * lp - 2.4285922050 * mp + 0.4505937099 * sp,
+        0.0259040371 * lp + 0.7827717662 * mp - 0.8086757660 * sp,
     )
 }
 
-private fun oklabToLinearSrgb(L: Double, a: Double, b: Double): Triple<Double, Double, Double> {
-    val l_ = L + 0.3963377774 * a + 0.2158037573 * b
-    val m_ = L - 0.1055613458 * a - 0.0638541728 * b
-    val s_ = L - 0.0894841775 * a - 1.2914855480 * b
-    val l = l_.pow(3); val m = m_.pow(3); val s = s_.pow(3)
+private fun oklabToLinearSrgb(l: Double, a: Double, b: Double): Triple<Double, Double, Double> {
+    val lp = l + 0.3963377774 * a + 0.2158037573 * b
+    val mp = l - 0.1055613458 * a - 0.0638541728 * b
+    val sp = l - 0.0894841775 * a - 1.2914855480 * b
+    val l = lp.pow(3); val m = mp.pow(3); val s = sp.pow(3)
     return Triple(
         +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
         -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
@@ -136,14 +136,14 @@ private fun inGamut(r: Double, g: Double, b: Double): Boolean =
 /** OKLCH (L 0..1, C, hue degrees) -> sRGB Color; chroma is reduced until in gamut. */
 internal fun oklchTone(hueDeg: Double, chroma: Double, tone: Double): Color = oklchColor(tone / 100.0, chroma, hueDeg)
 
-private fun oklchColor(L: Double, chroma: Double, hueDeg: Double): Color {
+private fun oklchColor(l: Double, chroma: Double, hueDeg: Double): Color {
     val hue = hueDeg * PI / 180.0
     var c = chroma
     var color = Color.Gray
     for (i in 0 until 12) {
         val a = c * cos(hue)
         val b = c * sin(hue)
-        val (lr, lg, lb) = oklabToLinearSrgb(L, a, b)
+        val (lr, lg, lb) = oklabToLinearSrgb(l, a, b)
         if (inGamut(lr, lg, lb)) {
             color = Color(
                 gamma(lr).coerceIn(0.0, 1.0).toFloat(),
@@ -158,7 +158,7 @@ private fun oklchColor(L: Double, chroma: Double, hueDeg: Double): Color {
 }
 
 internal fun Color.oklchHue(): Double {
-    val (L, a, b) = linearSrgbToOklab(
+    val (_, a, b) = linearSrgbToOklab(
         delinearize(red.toDouble()),
         delinearize(green.toDouble()),
         delinearize(blue.toDouble()),
@@ -168,7 +168,7 @@ internal fun Color.oklchHue(): Double {
 }
 
 internal fun Color.oklchChroma(): Double {
-    val (L, a, b) = linearSrgbToOklab(
+    val (_, a, b) = linearSrgbToOklab(
         delinearize(red.toDouble()),
         delinearize(green.toDouble()),
         delinearize(blue.toDouble()),
@@ -178,7 +178,7 @@ internal fun Color.oklchChroma(): Double {
 
 private fun maxChromaFor(tone: Double, hueDeg: Double): Double {
     // Binary-search the largest in-gamut chroma for this lightness/hue.
-    val L = tone / 100.0
+    val l = tone / 100.0
     val hue = hueDeg * PI / 180.0
     var lo = 0.0
     var hi = 0.4
@@ -186,7 +186,7 @@ private fun maxChromaFor(tone: Double, hueDeg: Double): Double {
         val mid = (lo + hi) / 2
         val a = mid * cos(hue)
         val b = mid * sin(hue)
-        val (lr, lg, lb) = oklabToLinearSrgb(L, a, b)
+        val (lr, lg, lb) = oklabToLinearSrgb(l, a, b)
         if (inGamut(lr, lg, lb)) lo = mid else hi = mid
     }
     return lo

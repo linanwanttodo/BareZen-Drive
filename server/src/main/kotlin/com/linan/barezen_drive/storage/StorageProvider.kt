@@ -11,7 +11,7 @@ interface StorageProvider {
     suspend fun exists(key: String): Boolean
 
     /** Local filesystem path of a key when storage is on disk; null otherwise. */
-    fun resolvePath(key: String): java.nio.file.Path? = null
+    fun resolvePath(key: String): Path? = null
 
     // Session-local staging directory for chunk parts and merge files.
     val tmpDir: Path

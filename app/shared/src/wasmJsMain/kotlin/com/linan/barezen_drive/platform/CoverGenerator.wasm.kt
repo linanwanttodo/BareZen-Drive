@@ -137,7 +137,6 @@ private suspend fun HTMLVideoElement.awaitFirstFrame(src: String) =
         load()
     }
 
-@OptIn(ExperimentalEncodingApi::class)
 private fun HTMLCanvasElement.jpegBytes(): ByteArray? {
     val dataUrl = toDataURL("image/jpeg", 0.8.toJsNumber())
     val b64 = dataUrl.substringAfter("base64,", "")

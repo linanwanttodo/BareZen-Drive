@@ -50,8 +50,10 @@ fun main() {
     val storage: StorageProvider = LocalStorageProvider(java.nio.file.Path.of(cfg.storageDir))
     // Cleanup loop must start BEFORE start(wait = true) blocks the main thread; it runs in
     // production only, never in tests (module() does not spawn it).
-    CoroutineScope(Dispatchers.Default + SupervisorJob()).let { UploadCleanupJob.start(it, storage) }
-    embeddedServer(Netty, port = cfg.port) { module(cfg, storage) }.start(wait = true)
+    val cleanupJob = CoroutineScope(Dispatchers.Default + SupervisorJob()).let { UploadCleanupJob.start(it, storage) }
+    val server = embeddedServer(Netty, port = cfg.port) { module(cfg, storage) }
+    Runtime.getRuntime().addShutdownHook(Thread { cleanupJob.cancel(); server.stop(1000, 5000) })
+    server.start(wait = true)
 }
 
 fun Application.module(cfg: AppConfig, storage: StorageProvider) {

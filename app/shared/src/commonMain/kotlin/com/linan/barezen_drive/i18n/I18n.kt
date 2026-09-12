@@ -24,10 +24,6 @@ enum class Language(val tag: String) {
             else -> null
         }
 
-        fun modeOf(language: Language): Int = when (language) {
-            ZH -> 1
-            EN -> 2
-        }
     }
 }
 

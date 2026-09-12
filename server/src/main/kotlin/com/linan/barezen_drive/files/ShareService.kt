@@ -119,10 +119,22 @@ object ShareService {
         rows.map { row ->
             val isFile = row[ShareLinksTable.file] != null
             val targetName = if (isFile) {
-                FilesTable.selectAll().where { FilesTable.id eq row[ShareLinksTable.file]!! }
+                val fid = row[ShareLinksTable.file] ?: return@map ShareDto(
+                    row[ShareLinksTable.id].toString(), "/s/<token>", "file", "(已删除)",
+                    row[ShareLinksTable.expiresAt]?.let { Instant.ofEpochMilli(it).toString() },
+                    Instant.ofEpochMilli(row[ShareLinksTable.createdAt]).toString(),
+                    row[ShareLinksTable.viewCount], row[ShareLinksTable.downloadCount],
+                )
+                FilesTable.selectAll().where { FilesTable.id eq fid }
                     .singleOrNull()?.get(FilesTable.name) ?: "(已删除)"
             } else {
-                FoldersTable.selectAll().where { FoldersTable.id eq row[ShareLinksTable.folder]!! }
+                val gid = row[ShareLinksTable.folder] ?: return@map ShareDto(
+                    row[ShareLinksTable.id].toString(), "/s/<token>", "folder", "(已删除)",
+                    row[ShareLinksTable.expiresAt]?.let { Instant.ofEpochMilli(it).toString() },
+                    Instant.ofEpochMilli(row[ShareLinksTable.createdAt]).toString(),
+                    row[ShareLinksTable.viewCount], row[ShareLinksTable.downloadCount],
+                )
+                FoldersTable.selectAll().where { FoldersTable.id eq gid }
                     .singleOrNull()?.get(FoldersTable.name) ?: "(已删除)"
             }
             ShareDto(
@@ -201,8 +213,9 @@ object ShareService {
                 )
             }
         }
+        val folderId = share.folderId ?: throw ApiException.notFound("链接无效或已过期")
         return transaction(DatabaseFactory.db) {
-            val r = FoldersTable.selectAll().where { FoldersTable.id eq share.folderId!! }.singleOrNull()
+            val r = FoldersTable.selectAll().where { FoldersTable.id eq folderId }.singleOrNull()
                 ?: throw ApiException.notFound("链接无效或已过期")
             SharedInfoResponse("folder", r[FoldersTable.name])
         }
@@ -211,15 +224,15 @@ object ShareService {
     /** Lists one folder inside a folder share; the requested folder must belong
      *  to the share subtree (server-enforced boundary). */
     fun sharedContents(share: ResolvedShare, folderParam: String?): SharedContentsResponse {
-        if (share.folderId == null) throw ApiException.notFound("链接无效或已过期")
+        val rootId = share.folderId ?: throw ApiException.notFound("链接无效或已过期")
         return transaction(DatabaseFactory.db) {
             val parent: UUID = when {
-                folderParam.isNullOrBlank() || folderParam == "root" -> share.folderId!!
+                folderParam.isNullOrBlank() || folderParam == "root" -> rootId
                 else -> {
                     val fid = folderParam.toUuidOrBadRequest()
                     val row = FoldersTable.selectAll().where { FoldersTable.id eq fid }.singleOrNull()
                         ?: throw ApiException.notFound("文件夹不存在")
-                    if (!insideSubtree(fid, share.folderId!!)) throw ApiException.notFound("文件夹不存在")
+                    if (!insideSubtree(fid, rootId)) throw ApiException.notFound("文件夹不存在")
                     row[FoldersTable.id]
                 }
             }
@@ -244,7 +257,8 @@ object ShareService {
         }
         val folder = row[FilesTable.folder]
             ?: throw ApiException.notFound("文件不存在")
-        if (!insideSubtree(folder, share.folderId!!)) throw ApiException.notFound("文件不存在")
+        val rootId = share.folderId ?: throw ApiException.notFound("文件不存在")
+        if (!insideSubtree(folder, rootId)) throw ApiException.notFound("文件不存在")
         row.toFileMeta()
     }
 

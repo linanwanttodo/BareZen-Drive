@@ -3,9 +3,6 @@ package com.linan.barezen_drive.platform
 /** Which distribution channel this build was installed through. */
 enum class InstallChannel { ANDROID, IOS, DESKTOP, WEB }
 
-/** True when an update must be fetched by opening the release page externally. */
-val InstallChannel.updatesViaReleasePage: Boolean
-    get() = this != InstallChannel.WEB
 
 expect val installChannel: InstallChannel
 

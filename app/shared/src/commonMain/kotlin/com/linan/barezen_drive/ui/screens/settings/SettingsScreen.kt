@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -46,9 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.foundation.border
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.glass.GlassCard
@@ -59,6 +56,14 @@ import com.linan.barezen_drive.ui.theme.ThemeMode
 import com.linan.barezen_drive.ui.theme.avatarColor
 import com.linan.barezen_drive.ui.theme.avatarLetter
 import com.linan.barezen_drive.i18n.LocalStrings
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.graphics.drawscope.Stroke
 
 /**
  * Google-style account avatar: a single solid-color circle filled with the
@@ -110,17 +115,8 @@ private fun SettingsRow(
     }
 }
 
-@Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-    )
-}
 
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     username: String,
@@ -219,12 +215,12 @@ fun SettingsScreen(
                     LocalStrings.current.languageChinese,
                     LocalStrings.current.languageEnglish,
                 )
-                androidx.compose.material3.ExposedDropdownMenuBox(
+                ExposedDropdownMenuBox(
                     expanded = languageOpen,
                     onExpandedChange = { languageOpen = it },
                     modifier = Modifier.width(140.dp),
                 ) {
-                    androidx.compose.material3.OutlinedTextField(
+                    OutlinedTextField(
                         value = languageLabels.getOrElse(languageMode) { languageLabels[0] },
                         onValueChange = {},
                         readOnly = true,
@@ -232,16 +228,16 @@ fun SettingsScreen(
                         textStyle = MaterialTheme.typography.bodyMedium,
                         shape = MaterialTheme.shapes.medium,
                         trailingIcon = {
-                            androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(languageOpen)
+                            ExposedDropdownMenuDefaults.TrailingIcon(languageOpen)
                         },
                         modifier = Modifier.menuAnchor().width(140.dp),
                     )
-                    androidx.compose.material3.DropdownMenu(
+                    DropdownMenu(
                         expanded = languageOpen,
                         onDismissRequest = { languageOpen = false },
                     ) {
                         languageLabels.forEachIndexed { index, label ->
-                            androidx.compose.material3.DropdownMenuItem(
+                            DropdownMenuItem(
                                 text = { Text(label) },
                                 onClick = {
                                     onLanguageModeChange(index)
@@ -274,7 +270,7 @@ fun SettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 AccentSwatches.forEach { swatch ->
                     val selected = !useDynamicColor && accentColor == swatch
@@ -287,7 +283,7 @@ fun SettingsScreen(
                                     drawCircle(
                                         ringColor,
                                         radius = size.minDimension / 2 + 3.dp.toPx(),
-                                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()),
+                                        style = Stroke(width = 2.dp.toPx()),
                                     )
                                 }
                             }
@@ -353,7 +349,7 @@ fun SettingsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
-                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(onClick = onClearWallpaper) { Text(LocalStrings.current.clearWallpaper) }
                 }
@@ -464,7 +460,7 @@ private fun AccountInfoDialog(
         runCatching { latency = ping() }.onFailure { pingFailed = true }
     }
 
-    androidx.compose.material3.AlertDialog(
+    AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(LocalStrings.current.accountInfo) },
         text = {
@@ -488,7 +484,7 @@ private fun AccountInfoDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) { Text(LocalStrings.current.actionClose) }
+            TextButton(onClick = onDismiss) { Text(LocalStrings.current.actionClose) }
         },
     )
 }

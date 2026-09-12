@@ -99,8 +99,7 @@ class DampedDragAnimation(
             if (value != targetValue) {
                 val threshold = (valueRange.endInclusive - valueRange.start) * 0.025f
                 snapshotFlow { valueAnimation.value }
-                    .filter { abs(it - valueAnimation.targetValue) < threshold }
-                    .first()
+                    .first { abs(it - valueAnimation.targetValue) < threshold }
             }
             launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
             launch { scaleXAnimation.animateTo(initialScale, scaleXAnimationSpec) }
@@ -116,13 +115,13 @@ class DampedDragAnimation(
     }
 
     fun animateToValue(value: Float) {
-        animationScope.launch {
+        animationScope.launch outer@{
             mutatorMutex.mutate {
                 press()
                 val targetValue = value.coerceIn(valueRange)
-                launch { valueAnimation.animateTo(targetValue, valueAnimationSpec) }
+                this@outer.launch { valueAnimation.animateTo(targetValue, valueAnimationSpec) }
                 if (velocity != 0f) {
-                    launch { velocityAnimation.animateTo(0f, velocityAnimationSpec) }
+                    this@outer.launch { velocityAnimation.animateTo(0f, velocityAnimationSpec) }
                 }
                 release()
             }

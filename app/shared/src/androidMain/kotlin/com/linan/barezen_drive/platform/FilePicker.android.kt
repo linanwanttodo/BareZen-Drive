@@ -57,6 +57,8 @@ internal class AndroidPickedFile(internal val ctx: Context, internal val uri: Ur
         originDateMs = dateMs
     }
 
+    // toSkip/read are both reassigned in the copy loop; CanBeVal misfires here.
+    @Suppress("CanBeVal")
     override suspend fun readRange(offset: Long, length: Int): ByteArray? = withContext(Dispatchers.IO) {
         ctx.contentResolver.openInputStream(uri)?.use { ins ->
             var toSkip = offset

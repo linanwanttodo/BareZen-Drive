@@ -19,6 +19,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
+// position/pressProgress/shader stay for upstream parity while pinned to the
+// backdrop alpha shim (see the shader note below); the IDE sees them as unused.
+@Suppress("UnusedSymbol")
 class InteractiveHighlight(
     val animationScope: CoroutineScope,
     val position: (size: Size, offset: Offset) -> Offset = { _, offset -> offset }

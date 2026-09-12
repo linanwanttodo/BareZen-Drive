@@ -6,7 +6,6 @@ import com.linan.barezen_drive.core.dto.*
 import com.linan.barezen_drive.storage.StorageProvider
 import com.linan.barezen_drive.storage.thumbKey
 import io.ktor.http.*
-import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*

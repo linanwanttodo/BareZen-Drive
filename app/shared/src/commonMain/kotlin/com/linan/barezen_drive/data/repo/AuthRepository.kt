@@ -48,7 +48,7 @@ class AuthRepository(
             return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
                 trimmed
             } else {
-                "http://" + trimmed
+                "http://$trimmed"
             }
         }
     }

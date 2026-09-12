@@ -1,6 +1,5 @@
 package com.linan.barezen_drive.ui.theme
 
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.graphics.Color
 import com.linan.barezen_drive.ui.wallpaper.WallpaperImage

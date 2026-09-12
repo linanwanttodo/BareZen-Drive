@@ -1,6 +1,5 @@
 package com.linan.barezen_drive.platform
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -23,6 +22,13 @@ actual object TransferNotifier {
 
     private fun manager(): NotificationManagerCompat? =
         runCatching { NotificationManagerCompat.from(AndroidContext.app) }.getOrNull()
+
+    private fun canNotify(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                AndroidContext.app,
+                android.Manifest.permission.POST_NOTIFICATIONS,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     private fun ensureChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -63,7 +69,7 @@ actual object TransferNotifier {
     actual fun showProgress(tag: String, title: String, text: String?, fraction: Float?) {
         runCatching {
             ensureChannels()
-            val nm = manager() ?: return
+            val nm = manager()?.takeIf { canNotify() } ?: return
             val b = builder(CHANNEL_PROGRESS, title, text)
             if (fraction != null) {
                 b.setProgress(100, (fraction.coerceIn(0f, 1f) * 100).toInt(), false)
@@ -77,7 +83,7 @@ actual object TransferNotifier {
     actual fun showFinished(tag: String, title: String, text: String, ok: Boolean) {
         runCatching {
             ensureChannels()
-            val nm = manager() ?: return
+            val nm = manager()?.takeIf { canNotify() } ?: return
             val b = NotificationCompat.Builder(AndroidContext.app, CHANNEL_DONE)
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
                 .setContentTitle(title)

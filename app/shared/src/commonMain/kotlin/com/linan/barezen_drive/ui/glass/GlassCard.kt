@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.theme.LocalCardAlpha
+import androidx.compose.material3.Text
 
 /**
  * NPatch-style frosted card: a rounded translucent panel that content groups
@@ -41,7 +42,7 @@ fun GlassCard(
 /** Section header shown above a card group, NPatch-style. */
 @Composable
 fun GlassSectionHeader(text: String, modifier: Modifier = Modifier) {
-    androidx.compose.material3.Text(
+    Text(
         text,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
