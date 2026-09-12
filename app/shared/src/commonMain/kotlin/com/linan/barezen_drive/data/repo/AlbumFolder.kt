@@ -56,7 +56,9 @@ object AlbumFolder {
         val platforms = repo.contents(root).getOrNull()?.folders ?: return emptyList()
         for (platform in platforms) {
             val devices = repo.contents(platform.id).getOrNull() ?: continue
-            devices.folders.forEach { (name, id) -> out += name to id }
+            // Field order note: FolderDto is (id, name) - destructure by position and
+// this swaps into (uuid -> name) pairs, which is exactly the dropdown bug.
+devices.folders.forEach { folder -> out += folder.name to folder.id }
         }
         return out
     }

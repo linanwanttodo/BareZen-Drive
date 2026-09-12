@@ -165,7 +165,13 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
                     val album = (if (iPath >= 0) c.getString(iPath)?.trim('/')?.split('/')?.lastOrNull() else null)
                         ?: (if (iBucket >= 0) c.getString(iBucket) else null)
                     val date = if (iDate >= 0) c.getLong(iDate) else 0L
-                    out.add(MediaRef(uri, album?.takeIf { it.isNotBlank() }, date))
+                    // Hidden cache albums (dot-names, long hex hashes like
+                    // WeChat's) would otherwise become garbage category folders.
+                    val cleanAlbum = album?.takeIf {
+                        it.isNotBlank() && !it.startsWith(".") &&
+                            !Regex("[0-9a-fA-F]{16,}").matches(it)
+                    }
+                    out.add(MediaRef(uri, cleanAlbum, date))
                 }
             }
         }
