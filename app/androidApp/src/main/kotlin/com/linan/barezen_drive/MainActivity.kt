@@ -19,11 +19,18 @@ class MainActivity : ComponentActivity() {
     private val requestNotifications =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    // Album auto-sync reads the MediaStore; Android 13+ splits read access by
+    // media type. Declining simply disables auto-sync, the rest of the app
+    // keeps working.
+    private val requestMediaRead =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         AndroidContext.init(applicationContext)
         maybeRequestNotificationPermission()
+        maybeRequestMediaReadPermission()
 
         setContent {
             App()
@@ -37,6 +44,20 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
         if (!granted) requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun maybeRequestMediaReadPermission() {
+        val wanted = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+            )
+            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        val missing = wanted.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) requestMediaRead.launch(missing.toTypedArray())
     }
 }
 

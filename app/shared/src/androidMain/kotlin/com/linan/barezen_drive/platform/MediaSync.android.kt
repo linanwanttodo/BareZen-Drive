@@ -56,13 +56,12 @@ actual object MediaSync {
     }
 
     actual fun syncNow(wifiOnly: Boolean) {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
-            .build()
-        val request = OneTimeWorkRequestBuilder<SyncWorker>().setConstraints(constraints).build()
-        WorkManager.getInstance(AndroidContext.app)
-            .enqueueUniqueWork("${WORK_NAME}-now", ExistingWorkPolicy.REPLACE, request)
-    }
+    // An explicit "sync now" always runs: queueing it behind the Wi-Fi
+    // constraint made the button a silent no-op on metered connections.
+    val request = OneTimeWorkRequestBuilder<SyncWorker>().build()
+    WorkManager.getInstance(AndroidContext.app)
+        .enqueueUniqueWork(WORK_NAME + "-now", ExistingWorkPolicy.REPLACE, request)
+}
 
     internal fun syncedSet(): MutableSet<String> =
         AndroidContext.app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

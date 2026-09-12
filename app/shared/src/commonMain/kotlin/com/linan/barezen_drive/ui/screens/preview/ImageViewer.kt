@@ -2,9 +2,11 @@ package com.linan.barezen_drive.ui.screens.preview
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -82,15 +84,41 @@ private fun ZoomableImage(file: FileDto, repo: FilesRepository) {
 
     var scale by remember(file.id) { mutableFloatStateOf(1f) }
     var offset by remember(file.id) { mutableStateOf(Offset.Zero) }
-    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-        scale = (scale * zoomChange).coerceIn(1f, 6f)
-        offset = if (scale > 1f) offset + panChange else Offset.Zero
-    }
 
     Box(
         Modifier
             .fillMaxSize()
-            .transformable(transformState)
+            // Gestures, Google-Photos style: at 1x the horizontal drag belongs
+            // to the pager (swipe between photos); only a two-finger pinch
+            // starts a zoom. Once zoomed in, drags pan the image instead.
+            .pointerInput(file.id) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.count { it.pressed }
+                        if (event.changes.any { it.isConsumed }) break
+                        if (pressed == 0) break
+                        val zoomChange = event.calculateZoom()
+                        val panChange = event.calculatePan()
+                        val multiTouch = pressed >= 2
+                        if (multiTouch || scale > 1f) {
+                            val newScale = (scale * zoomChange).coerceIn(1f, 6f)
+                            scale = newScale
+                            if (newScale > 1f) {
+                                offset += panChange
+                            } else {
+                                offset = Offset.Zero
+                            }
+                            // Two fingers always belong to the zoom gesture;
+                            // a single drag only when the image is zoomed in.
+                            if (multiTouch || newScale > 1f) {
+                                event.changes.forEach { if (it.pressed) it.consume() }
+                            }
+                        }
+                    }
+                }
+            }
             .pointerInput(file.id) {
                 detectTapGestures(onDoubleTap = {
                     if (scale > 1.2f) {

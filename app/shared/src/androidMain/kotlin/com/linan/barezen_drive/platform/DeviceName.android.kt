@@ -1,15 +1,25 @@
 package com.linan.barezen_drive.platform
 
 import android.os.Build
+import android.provider.Settings
+import com.linan.barezen_drive.AndroidContext
 
 /**
- * The concrete device model (for example "Pixel 8" or "2210132C"), so the
- * album tree can tell multiple Android devices apart. Sanitized to a safe
- * folder name; falls back to "Android" when the model is blank.
+ * The album-tree device folder name: the user's own device name from system
+ * settings when set (a friendly label like "米13" or "Pixel 8"), falling back
+ * to the model string, then "Android". Build.MODEL alone is often a factory
+ * code ("2210132C"), which reads like garbage in the device picker.
  */
 actual fun deviceName(): String {
+    val friendly = runCatching {
+        Settings.Global.getString(
+            AndroidContext.app.contentResolver,
+            Settings.Global.DEVICE_NAME,
+        )
+    }.getOrNull()?.trim().orEmpty()
     val model = Build.MODEL?.trim().orEmpty()
-    if (model.isEmpty()) return "Android"
-    val safe = model.replace(Regex("[/\\\\:*.?\"<>|]"), "-").trim('-', ' ', '.')
+    val name = if (friendly.isNotEmpty()) friendly else model
+    if (name.isEmpty()) return "Android"
+    val safe = name.replace(Regex("[/\\\\:*.?\"<>|]"), "-").trim('-', ' ', '.')
     return safe.ifEmpty { "Android" }
 }

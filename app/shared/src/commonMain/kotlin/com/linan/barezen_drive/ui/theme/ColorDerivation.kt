@@ -12,29 +12,82 @@ import kotlin.math.abs
  */
 @Stable
 fun averageColor(pixels: IntArray): Color {
-    var r = 0L
-    var g = 0L
-    var b = 0L
-    var n = 0L
+    // A plain average of any photo is mud-brown, so the wallpaper seed picks
+    // the most prominent VIVID hue instead: 24 hue bins vote with saturation-
+    // weighted counts and the winning bin's most saturated pixel is the seed.
+    // Wallpapers without a clear hue fall back to the default blue.
+    val votes = FloatArray(24)
+    val best = arrayOfNulls<Color>(24)
+    val bestWeight = FloatArray(24)
     var i = 0
+    var colored = 0
     while (i < pixels.size) {
         val p = pixels[i]
-        val a = (p ushr 24) and 0xFF
-        if (a > 127) {
-            r += (p shr 16) and 0xFF
-            g += (p shr 8) and 0xFF
-            b += p and 0xFF
-            n++
+        if ((p ushr 24) and 0xFF > 127) {
+            val r = ((p shr 16) and 0xFF) / 255f
+            val g = ((p shr 8) and 0xFF) / 255f
+            val b = (p and 0xFF) / 255f
+            val max = maxOf(r, g, b)
+            val min = minOf(r, g, b)
+            val delta = max - min
+            val saturation = if (max == 0f) 0f else delta / max
+            val value = max
+            // Near-gray / near-black / near-white pixels carry no hue.
+            if (saturation > 0.25f && value in 0.15f..0.95f) {
+                val hue = when {
+                    delta == 0f -> 0f
+                    max == r -> 60f * (((g - b) / delta + 6f) % 6f)
+                    max == g -> 60f * (((b - r) / delta) + 2f)
+                    else -> 60f * (((r - g) / delta) + 4f)
+                }
+                val bin = (hue / 15f).toInt().coerceIn(0, 23)
+                val weight = saturation * saturation * value
+                votes[bin] += weight
+                if (weight > bestWeight[bin]) {
+                    bestWeight[bin] = weight
+                    best[bin] = Color(r, g, b)
+                }
+                colored++
+            }
         }
         i++
     }
-    if (n == 0L) return Color(0xFF607D8B)
-    return Color(
-        red = (r / n).toInt() / 255f,
-        green = (g / n).toInt() / 255f,
-        blue = (b / n).toInt() / 255f,
-        alpha = 1f,
-    )
+    if (colored == 0) return DefaultSeed
+    val winner = votes.indices.maxBy { votes[it] }
+    val seedPixel = best[winner] ?: return DefaultSeed
+    // Re-express the winning pixel at full mid-lightness saturation so the
+    // generated tonal palette keeps the hue with enough chroma to work with.
+    val sr = seedPixel.red * 255f
+    val sg = seedPixel.green * 255f
+    val sb = seedPixel.blue * 255f
+    val max = maxOf(sr, sg, sb) / 255f
+    val min = minOf(sr, sg, sb) / 255f
+    val delta = max - min
+    var hue = when {
+        delta == 0f -> 220f
+        max == sr -> 60f * (((sg - sb) / delta + 6f) % 6f)
+        max == sg -> 60f * (((sb - sr) / delta) + 2f)
+        else -> 60f * (((sr - sg) / delta) + 4f)
+    }
+    val saturation = (if (max == 0f) 0f else delta / max).coerceIn(0.45f, 0.8f)
+    return hslColor(hue, saturation)
+}
+
+/** Vivid mid-lightness color for an HSL hue/saturation pair. */
+private fun hslColor(hue: Float, saturation: Float): Color {
+    val l = 0.5f
+    val c = (1f - kotlin.math.abs(2f * l - 1f)) * saturation
+    val x = c * (1f - kotlin.math.abs((hue / 60f) % 2f - 1f))
+    val m = l - c / 2f
+    val (r, g, b) = when (((hue % 360f) / 60f).toInt()) {
+        0 -> Triple(c, x, 0f)
+        1 -> Triple(x, c, 0f)
+        2 -> Triple(0f, c, x)
+        3 -> Triple(0f, x, c)
+        4 -> Triple(x, 0f, c)
+        else -> Triple(c, 0f, x)
+    }
+    return Color(r + m, g + m, b + m)
 }
 
 /**

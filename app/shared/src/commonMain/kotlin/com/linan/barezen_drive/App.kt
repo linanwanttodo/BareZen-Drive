@@ -175,7 +175,10 @@ fun App() {
         // which hides the toggle offline and on servers without the endpoint.
         var registrationOpen by remember { mutableStateOf<Boolean?>(null) }
         val scope = rememberCoroutineScope()
-        LaunchedEffect(Unit) {
+        // Re-run whenever the auth token changes: before login both calls
+        // fail, and the settings server card reads these - a one-shot probe
+        // would leave the registration toggle hidden for the whole session.
+        LaunchedEffect(TokenStorage.accessToken) {
             registrationOpen = files.registrationStatus().getOrNull()?.open
             currentUserId = files.me().getOrNull()?.id
         }
