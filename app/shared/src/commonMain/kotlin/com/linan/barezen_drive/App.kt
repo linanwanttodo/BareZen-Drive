@@ -2,6 +2,7 @@ package com.linan.barezen_drive
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.padding
@@ -15,7 +16,9 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Alignment
+import org.jetbrains.compose.resources.painterResource
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.Composable
@@ -50,13 +53,14 @@ import com.linan.barezen_drive.ui.screens.settings.UsersScreen
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.shell.MainShell
 import com.linan.barezen_drive.ui.shell.MainTab
+import barezen_drive.app.shared.generated.resources.Res
+import barezen_drive.app.shared.generated.resources.barezen_logo_on_white
 import com.linan.barezen_drive.ui.AvatarButton
 import com.linan.barezen_drive.ui.theme.AppTheme
 import com.linan.barezen_drive.ui.theme.DefaultSeed
 import com.linan.barezen_drive.ui.theme.LocalCardAlpha
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.ui.theme.ThemeMode
-import com.linan.barezen_drive.ui.theme.wallpaperSeedColor
 import com.linan.barezen_drive.ui.wallpaper.WallpaperImage
 import com.linan.barezen_drive.ui.wallpaper.loadPersistedWallpaper
 import com.linan.barezen_drive.ui.wallpaper.rememberWallpaperPicker
@@ -143,10 +147,8 @@ fun App() {
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
-    // Accent seed priority: wallpaper (if shown) > system dynamic > user pick > default.
-    val systemAccent = remember { systemAccentColor() }
+    // Accent seed: the user's pick (settings swatches), else the default blue.
     var accentColor by remember { mutableStateOf(if (prefs.accentColor != 0) Color(prefs.accentColor) else DefaultSeed) }
-    var useDynamicColor by remember { mutableStateOf(prefs.useDynamicColor) }
     var glassBlur by remember { mutableStateOf(prefs.glassBlurEnabled) }
     var albumAutoSync by remember { mutableStateOf(prefs.albumAutoSync) }
     var currentUserId by remember { mutableStateOf<String?>(null) }
@@ -155,19 +157,7 @@ fun App() {
     var signedIn by remember { mutableStateOf(TokenStorage.accessToken != null) }
     var syncWifiOnly by remember { mutableStateOf(prefs.syncWifiOnly) }
     var glassAlpha by remember { mutableStateOf(prefs.glassAlphaPercent) }
-    val accentSeed = when {
-        useDynamicColor && systemAccent != null -> systemAccent
-        else -> accentColor
-    }
-    val effectiveSeed = if (useDynamicColor) {
-        wallpaperSeedColor(wallpaper.takeIf { wallpaperEnabled })
-            ?: systemAccent
-            ?: accentSeed
-    } else {
-        accentSeed
-    }
-
-    AppTheme(themeMode = themeMode, seed = effectiveSeed) {
+    AppTheme(themeMode = themeMode, seed = accentColor) {
         CompositionLocalProvider(
             LocalStrings provides stringsFor(language),
             LocalPanelAlpha provides (if (wallpaperEnabled || wallpaperBitmap != null) 0.6f else 1f),
@@ -368,15 +358,8 @@ fun App() {
                 onAccentColorChange = { c ->
                 accentColor = c
                 prefs.accentColor = c.toArgb()
-                useDynamicColor = false
-                prefs.useDynamicColor = false
                 },
-                useDynamicColor = useDynamicColor,
-                systemAccent = systemAccent,
-                onDynamicColorChange = { on ->
-                useDynamicColor = on
-                prefs.useDynamicColor = on
-                },                            glassBlurEnabled = glassBlur,
+                            glassBlurEnabled = glassBlur,
                 onGlassBlurChange = { on ->
                 glassBlur = on
                 prefs.glassBlurEnabled = on
@@ -471,11 +454,12 @@ fun App() {
 private fun NotSignedInPane(onLogin: () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                androidx.compose.material.icons.Icons.Default.Cloud,
+            Image(
+                painter = painterResource(Res.drawable.barezen_logo_on_white),
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(56.dp),
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(MaterialTheme.shapes.large),
             )
             Spacer(Modifier.height(12.dp))
             Text(

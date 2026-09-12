@@ -138,9 +138,6 @@ fun SettingsScreen(
     onLanguageModeChange: (Int) -> Unit,
     accentColor: Color,
     onAccentColorChange: (Color) -> Unit,
-    useDynamicColor: Boolean,
-    systemAccent: Color?,
-    onDynamicColorChange: (Boolean) -> Unit,
     glassBlurEnabled: Boolean,
     onGlassBlurChange: (Boolean) -> Unit,
     glassAlphaPercent: Int,
@@ -274,20 +271,9 @@ fun SettingsScreen(
                 }
             }
             HorizontalDivider(Modifier.padding(horizontal = 16.dp))
-            if (systemAccent != null || wallpaperEnabled) {
-                SettingsRow(
-                    title = LocalStrings.current.dynamicColor,
-                    subtitle = if (wallpaperEnabled) LocalStrings.current.wallpaperHint
-                    else LocalStrings.current.monetHint,
-                    trailing = {
-                        Switch(checked = useDynamicColor, onCheckedChange = onDynamicColorChange)
-                    },
-                )
-                HorizontalDivider(Modifier.padding(horizontal = 16.dp))
-            }
             SettingsRow(
                 title = LocalStrings.current.settingsAccentColor,
-                subtitle = if (useDynamicColor) LocalStrings.current.dynamicColorOverridesAccent else LocalStrings.current.pickAccentColor,
+                subtitle = LocalStrings.current.pickAccentColor,
             )
             // Full-width block BELOW the title row - putting the swatches in
             // the row's trailing slot squeezes them against the labels.
@@ -298,7 +284,7 @@ fun SettingsScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 AccentSwatches.forEach { swatch ->
-                    val selected = !useDynamicColor && accentColor == swatch
+                    val selected = accentColor == swatch
                     val ringColor = MaterialTheme.colorScheme.primary
                     Box(
                         modifier = Modifier

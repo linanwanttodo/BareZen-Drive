@@ -57,6 +57,7 @@ import com.linan.barezen_drive.ui.theme.filledButtonColors
 import org.jetbrains.compose.resources.painterResource
 import barezen_drive.app.shared.generated.resources.Res
 import barezen_drive.app.shared.generated.resources.barezen_logo
+import barezen_drive.app.shared.generated.resources.barezen_logo_on_white
 import kotlinx.coroutines.launch
 
 @Composable
@@ -100,11 +101,13 @@ fun LoginScreen(
                         .fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // Brand mark: the actual BareZen logo artwork.
+                    // Brand mark: the on-white artwork in a rounded tile.
                     Image(
-                        painter = painterResource(Res.drawable.barezen_logo),
+                        painter = painterResource(Res.drawable.barezen_logo_on_white),
                         contentDescription = "BareZen Drive",
-                        modifier = Modifier.size(88.dp),
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(MaterialTheme.shapes.large),
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
