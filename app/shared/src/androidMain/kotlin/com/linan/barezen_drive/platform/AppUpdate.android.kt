@@ -45,37 +45,53 @@ actual suspend fun downloadAndInstallUpdate(url: String): Boolean = withContext(
         val destination = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), name)
 
         val downloader = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val request = DownloadManager.Request(Uri.parse(url))
-            .setTitle(name)
-            .setMimeType("application/vnd.android.package-archive")
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationUri(Uri.fromFile(destination))
-        val downloadId = downloader.enqueue(request)
+        var downloadId = -1L
 
-        withTimeout(15 * 60 * 1000L) {
-            suspendCancellableCoroutine { continuation ->
-                val receiver = object : BroadcastReceiver() {
-                    override fun onReceive(receiverContext: Context, intent: Intent) {
-                        if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
-                        val query = DownloadManager.Query().setFilterById(downloadId)
-                        val ok = downloader.query(query).use { cursor ->
-                            cursor.moveToFirst() &&
-                                cursor.getInt(
-                                    cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS),
-                                ) == DownloadManager.STATUS_SUCCESSFUL
-                        }
-                        context.unregisterReceiver(this)
-                        if (continuation.isActive) continuation.resume(ok)
+        // The completion receiver MUST be live before enqueue: on a fast
+        // network the broadcast can otherwise land before registration, the
+        // wait would time out, and the flow would fall back to the browser.
+        lateinit var receiver: BroadcastReceiver
+        val completed = suspendCancellableCoroutine { continuation ->
+            receiver = object : BroadcastReceiver() {
+                override fun onReceive(receiverContext: Context, intent: Intent) {
+                    if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
+                    val query = DownloadManager.Query().setFilterById(downloadId)
+                    val ok = downloader.query(query).use { cursor ->
+                        cursor.moveToFirst() &&
+                            cursor.getInt(
+                                cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS),
+                            ) == DownloadManager.STATUS_SUCCESSFUL
                     }
+                    context.unregisterReceiver(this)
+                    if (continuation.isActive) continuation.resume(ok)
                 }
-                ContextCompat.registerReceiver(
-                    context,
-                    receiver,
-                    IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-                    ContextCompat.RECEIVER_NOT_EXPORTED,
-                )
             }
-        } || return@withContext false
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+
+            val request = DownloadManager.Request(Uri.parse(url))
+                .setTitle(name)
+                .setMimeType("application/vnd.android.package-archive")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationUri(Uri.fromFile(destination))
+            downloadId = downloader.enqueue(request)
+        }
+
+        val ok = withTimeout(15 * 60 * 1000L) { completed } || run {
+            // The broadcast may already have fired before this line; the queue
+            // is the source of truth either way.
+            val query = DownloadManager.Query().setFilterById(downloadId)
+            downloader.query(query).use { cursor ->
+                cursor.moveToFirst() &&
+                    cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) ==
+                        DownloadManager.STATUS_SUCCESSFUL
+            }
+        }
+        if (!ok) return@withContext false
 
         installApk(context, destination)
         true
