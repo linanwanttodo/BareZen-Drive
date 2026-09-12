@@ -183,6 +183,8 @@ interface Strings {
     val appTagline: String
     val notSignedInPrompt: String
     val notSignedInLogin: String
+    val tabSync: String
+    val transferQueued: String
     val tabSearch: String
     val searchHint: String
     val searchEmpty: String

@@ -174,6 +174,8 @@ object StringsZh : Strings {
 override val appTagline: String = "你的个人云盘"
 override val notSignedInPrompt: String = "登录后开始使用你的云盘"
 override val notSignedInLogin: String = "登录 / 注册"
+override val tabSync: String = "同步"
+override val transferQueued: String = "排队中"
 override val tabSearch: String = "搜索"
 override val searchHint: String = "搜索文件名"
 override val searchEmpty: String = "没有匹配的文件"

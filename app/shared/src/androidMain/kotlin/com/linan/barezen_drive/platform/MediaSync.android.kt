@@ -104,34 +104,50 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
         val total = pending.size
         val batchId = TransferCenter.start(batchTitle, TransferKind.SYNC, total.toLong())
 
+        // The queue the user sees: every pending file as a child row under the
+        // batch, Google-Photos backup-list style.
+        val childIds = pending.map { (item, fingerprint) ->
+            batchId to TransferCenter.queueFile(batchId, item.name, 0L)
+        }
+
         var doneCount = 0
         var failed = 0
-        for ((item, fingerprint) in pending) {
+        for ((index, pair) in childIds.withIndex()) {
             // The stop button marks the batch cancelled between files; the
             // in-flight upload finishes, the rest of the queue is dropped.
-            if (TransferCenter.isCancelled(batchId)) {
-                TransferCenter.fail(batchId, if (java.util.Locale.getDefault().language == "zh") "已停止" else "stopped")
+            val (batchRef, childId) = pair
+            if (TransferCenter.isCancelled(batchRef)) {
+                TransferCenter.fail(batchRef, if (java.util.Locale.getDefault().language == "zh") "已停止" else "stopped")
                 MediaSync.saveSynced(synced)
                 return@runBlocking Result.success()
             }
+            val (item, fingerprint) = pending[index]
+            TransferCenter.fileStart(childId)
             try {
                 val picked = AndroidPickedFile(ctx, item.uri)
                 // Category folder created on demand from the phone-album name.
                 val target = item.album?.takeIf { it.isNotBlank() }
                     ?.let { AlbumFolder.resolveCategory(repo, deviceFolder, it) }
                     ?: deviceFolder
-                // The batch owns the transfer entry; per-file reporting is off.
+                // The batch owns the aggregate; per-file reporting is off.
                 uploader.upload(picked, target, reportTransfer = false)
-                    .onSuccess { synced.add(fingerprint) }
-                    .onFailure { failed++ }
+                    .onSuccess {
+                        synced.add(fingerprint)
+                        TransferCenter.done(childId)
+                    }
+                    .onFailure {
+                        failed++
+                        TransferCenter.fail(childId, it.message ?: "failed")
+                    }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 TransferCenter.fail(batchId, e.message ?: "cancelled")
                 throw e
             } catch (e: Exception) {
                 failed++
+                TransferCenter.fail(childId, e.message ?: "failed")
             }
             doneCount++
-            TransferCenter.progress(batchId, doneCount.toLong(), total.toLong(), "$doneCount / $total")
+            TransferCenter.progress(batchRef, doneCount.toLong(), total.toLong(), "$doneCount / $total")
         }
         MediaSync.saveSynced(synced)
         if (failed == 0) {
@@ -146,12 +162,14 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
         val uri: Uri,
         val album: String?,
         val dateModified: Long,
+        val name: String,
     )
 
     private fun queryMedia(ctx: Context): List<MediaRef> {
         val out = mutableListOf<MediaRef>()
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
             MediaStore.MediaColumns.RELATIVE_PATH,
             MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
             MediaStore.MediaColumns.DATE_MODIFIED,
@@ -163,6 +181,7 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
         for (collection in collections) {
             ctx.contentResolver.query(collection, projection, null, null, null)?.use { c ->
                 val iId = c.getColumnIndex(MediaStore.MediaColumns._ID)
+                val iName = c.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
                 val iPath = c.getColumnIndex(MediaStore.MediaColumns.RELATIVE_PATH)
                 val iBucket = c.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
                 val iDate = c.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
@@ -178,7 +197,7 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
                         it.isNotBlank() && !it.startsWith(".") &&
                             !Regex("[0-9a-fA-F]{16,}").matches(it)
                     }
-                    out.add(MediaRef(uri, cleanAlbum, date))
+                    out.add(MediaRef(uri, cleanAlbum, date, c.getString(iName) ?: "photo"))
                 }
             }
         }

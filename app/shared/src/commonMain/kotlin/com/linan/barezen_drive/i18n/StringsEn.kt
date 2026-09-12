@@ -174,6 +174,8 @@ object StringsEn : Strings {
 override val appTagline: String = "Your personal cloud drive"
 override val notSignedInPrompt: String = "Sign in to start using your cloud drive"
 override val notSignedInLogin: String = "Sign in / Register"
+override val tabSync: String = "Sync"
+override val transferQueued: String = "Queued"
 override val tabSearch: String = "Search"
 override val searchHint: String = "Search file names"
 override val searchEmpty: String = "No matching files"

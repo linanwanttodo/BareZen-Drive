@@ -20,6 +20,13 @@ actual object TransferNotifier {
     private var counter = 0
     private val ids = mutableMapOf<String, Int>()
 
+    /** Brand silhouette; the app module injects its drawable at startup. */
+    private var smallIconRes: Int = android.R.drawable.stat_sys_upload
+
+    fun setSmallIcon(resId: Int) {
+        smallIconRes = resId
+    }
+
     private fun manager(): NotificationManagerCompat? =
         runCatching { NotificationManagerCompat.from(AndroidContext.app) }.getOrNull()
 
@@ -57,7 +64,7 @@ actual object TransferNotifier {
 
     private fun builder(channel: String, title: String, text: String?): NotificationCompat.Builder {
         val b = NotificationCompat.Builder(AndroidContext.app, channel)
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            .setSmallIcon(smallIconRes)
             .setContentTitle(title)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -85,7 +92,7 @@ actual object TransferNotifier {
             ensureChannels()
             val nm = manager()?.takeIf { canNotify() } ?: return
             val b = NotificationCompat.Builder(AndroidContext.app, CHANNEL_DONE)
-                .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+                .setSmallIcon(smallIconRes)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setAutoCancel(true)

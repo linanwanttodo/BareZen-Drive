@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         AndroidContext.init(applicationContext)
+        com.linan.barezen_drive.platform.TransferNotifier.setSmallIcon(R.drawable.ic_notification)
         maybeRequestNotificationPermission()
         maybeRequestMediaReadPermission()
 

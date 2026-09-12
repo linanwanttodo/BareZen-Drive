@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.update
 /** What a transfer row represents. */
 enum class TransferKind { UPLOAD, DOWNLOAD, SYNC }
 
-enum class TransferPhase { RUNNING, DONE, FAILED }
+enum class TransferPhase { QUEUED, RUNNING, DONE, FAILED }
 
 data class TransferItem(
     val id: String,
@@ -18,6 +18,8 @@ data class TransferItem(
     val bytesTotal: Long = 0,
     /** Short status line under the name, e.g. "3 / 12" for batch syncs. */
     val statusText: String? = null,
+    /** Set on file rows that belong to a batch (the id of the batch row). */
+    val parent: String? = null,
     val error: String? = null,
     val atMs: Long = 0,
 )
@@ -48,6 +50,30 @@ object TransferCenter {
     }
 
     fun isCancelled(id: String): Boolean = id in cancelledIds
+
+    /** Adds a queued file row under a batch (Google-Photos backup queue). */
+    fun queueFile(batchId: String, name: String, size: Long): String {
+        val id = "t${++seq}"
+        push(TransferItem(id, name, TransferKind.SYNC, TransferPhase.QUEUED, 0, size, parent = batchId, atMs = nowMs()))
+        return id
+    }
+
+    fun fileStart(id: String) {
+        update(id) { it.copy(phase = TransferPhase.RUNNING, statusText = null) }
+    }
+
+    /** When a batch ends (done/fail/cancel), its queued children settle too. */
+    private fun settleChildren(batchId: String, phase: TransferPhase, error: String?) {
+        _items.update { list ->
+            list.map {
+                if (it.parent == batchId && (it.phase == TransferPhase.QUEUED || it.phase == TransferPhase.RUNNING)) {
+                    it.copy(phase = phase, error = error)
+                } else {
+                    it
+                }
+            }
+        }
+    }
 
     fun start(name: String, kind: TransferKind, total: Long): String {
         val id = "t${++seq}"
@@ -84,6 +110,7 @@ object TransferCenter {
             if (item.kind == TransferKind.SYNC) {
                 // A finished backup is not news: dismiss the progress entry
                 // instead of stacking a result notification on top of it.
+                settleChildren(id, TransferPhase.DONE, null)
                 com.linan.barezen_drive.platform.TransferNotifier.dismiss(id)
             } else {
                 com.linan.barezen_drive.platform.TransferNotifier.showFinished(id, item.name, "Done", ok = true)
@@ -93,9 +120,10 @@ object TransferCenter {
 
     fun fail(id: String, error: String) {
         cancelledIds.remove(id)
-        val name = _items.value.firstOrNull { it.id == id }?.name ?: return
+        val item = _items.value.firstOrNull { it.id == id } ?: return
         update(id) { it.copy(phase = TransferPhase.FAILED, error = error, atMs = nowMs()) }
-        runCatching { com.linan.barezen_drive.platform.TransferNotifier.showFinished(id, name, error, ok = false) }
+        if (item.kind == TransferKind.SYNC) settleChildren(id, TransferPhase.FAILED, error)
+        runCatching { com.linan.barezen_drive.platform.TransferNotifier.showFinished(id, item.name, error, ok = false) }
     }
 
     /** Removes finished rows (the "clear" action on the done tab). */

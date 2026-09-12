@@ -62,7 +62,15 @@ fun TransferCenterScreen(
 
     val uploading = all.filter { it.kind == TransferKind.UPLOAD && it.phase == TransferPhase.RUNNING }
     val downloading = all.filter { it.kind == TransferKind.DOWNLOAD && it.phase == TransferPhase.RUNNING }
-    val finished = all.filter { it.phase != TransferPhase.RUNNING }
+    // Sync tab: batches with their per-file queue rows beneath them.
+    val syncBatches = all.filter { it.kind == TransferKind.SYNC && it.parent == null }
+    val syncRows = buildList {
+        syncBatches.forEach { batch ->
+            add(batch)
+            addAll(all.filter { it.parent == batch.id })
+        }
+    }
+    val finished = all.filter { it.phase != TransferPhase.RUNNING && it.parent == null }
 
     Scaffold(
         topBar = {
@@ -87,12 +95,13 @@ fun TransferCenterScreen(
             TabRow(selectedTabIndex = tab) {
                 Tab(tab == 0, { tab = 0 }) { Text(LocalStrings.current.tabUploading, Modifier.padding(12.dp)) }
                 Tab(tab == 1, { tab = 1 }) { Text(LocalStrings.current.tabDownloading, Modifier.padding(12.dp)) }
-                Tab(tab == 2, { tab = 2 }) { Text(LocalStrings.current.tabDone, Modifier.padding(12.dp)) }
+                Tab(tab == 2, { tab = 2 }) { Text(LocalStrings.current.tabSync, Modifier.padding(12.dp)) }
+                Tab(tab == 3, { tab = 3 }) { Text(LocalStrings.current.tabDone, Modifier.padding(12.dp)) }
             }
 
             // Album auto-sync settings live here, next to the flows they drive.
             // Hidden where the platform has no background scheduler (web).
-            if (tab == 0 && syncSupported) {
+            if (tab == 2 && syncSupported) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -135,6 +144,7 @@ fun TransferCenterScreen(
             val rows = when (tab) {
                 0 -> uploading
                 1 -> downloading
+                2 -> syncRows
                 else -> finished
             }
             if (rows.isEmpty()) {
@@ -149,6 +159,7 @@ fun TransferCenterScreen(
                     items(rows, key = { it.id }) { item ->
                         TransferRow(
                             item,
+                            indent = item.parent != null,
                             onStop = {
                                 TransferCenter.cancel(item.id)
                             },
@@ -161,7 +172,7 @@ fun TransferCenterScreen(
 }
 
 @Composable
-private fun TransferRow(item: TransferItem, onStop: () -> Unit = {}) {
+private fun TransferRow(item: TransferItem, indent: Boolean = false, onStop: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -174,9 +185,10 @@ private fun TransferRow(item: TransferItem, onStop: () -> Unit = {}) {
                 when (item.phase) {
                     TransferPhase.DONE -> LocalStrings.current.transferDone
                     TransferPhase.FAILED -> LocalStrings.current.transferFailed
+                    TransferPhase.QUEUED -> LocalStrings.current.transferQueued
                     else -> when {
                         // Batch syncs count files, byte uploads count bytes.
-                        item.kind == TransferKind.SYNC && item.bytesTotal > 0 ->
+                        item.parent == null && item.kind == TransferKind.SYNC && item.bytesTotal > 0 ->
                             "\${item.bytesDone.toInt()} / \${item.bytesTotal.toInt()}"
                         else -> "\${formatFileSize(item.bytesDone)} / \${formatFileSize(item.bytesTotal)}"
                     }
@@ -185,9 +197,9 @@ private fun TransferRow(item: TransferItem, onStop: () -> Unit = {}) {
                 color = if (item.phase == TransferPhase.FAILED) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            // Stop button for running batches: flags the worker, which drops
-            // the rest of the queue after the in-flight file.
-            if (item.phase == TransferPhase.RUNNING && item.kind == TransferKind.SYNC) {
+            // Stop button on the batch row: flags the worker, which drops the
+            // rest of the queue after the in-flight file.
+            if (item.phase == TransferPhase.RUNNING && item.kind == TransferKind.SYNC && item.parent == null) {
                 TextButton(onClick = onStop) { Text(LocalStrings.current.actionCancel) }
             }
         }
