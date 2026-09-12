@@ -368,13 +368,13 @@ jobs:
           base="https://github.com/${repo}/releases/download/v${VERSION}"
           notes="https://github.com/${repo}/releases/tag/v${VERSION}"
 
-          asset() { # platform arch kind filename
+          asset() { # platform arch kind filename (path relative to the repo root)
             local f="$4"
             local sha size
-            sha=$(sha256sum "dist/$f" | cut -d' ' -f1)
-            size=$(stat -c%s "dist/$f")
+            sha=$(sha256sum "$f" | cut -d' ' -f1)
+            size=$(stat -c%s "$f")
             printf '    {"platform":"%s","arch":"%s","kind":"%s","url":"%s/%s","sha256":"%s","size":%s}' \
-              "$1" "$2" "$3" "$base" "$f" "$sha" "$size"
+              "$1" "$2" "$3" "$base" "${f##*/}" "$sha" "$size"
           }
 
           {
@@ -386,7 +386,7 @@ jobs:
             echo "  \"releaseNotesUrl\": \"${notes}\","
             echo "  \"assets\": ["
             first=true
-            for f in BareZen-Drive-${VERSION}-android-*.apk; do
+            for f in dist/BareZen-Drive-${VERSION}-android-*.apk; do
               case "$f" in
                 *arm64-v8a*) arch=arm64-v8a ;;
                 *armeabi-v7a*) arch=armeabi-v7a ;;
@@ -398,8 +398,8 @@ jobs:
               asset android "$arch" apk "$f"
             done
             echo ","
-            asset web any zip "BareZen-Drive-${VERSION}-web.zip"; echo ","
-            asset server any tar.gz "BareZen-Drive-${VERSION}-server.tar.gz"; echo ""
+            asset web any zip "dist/BareZen-Drive-${VERSION}-web.zip"; echo ","
+            asset server any tar.gz "dist/BareZen-Drive-${VERSION}-server.tar.gz"; echo ""
             echo "  ],"
             echo "  \"docker\": {"
             echo "    \"image\": \"ghcr.io/${repo}\","
