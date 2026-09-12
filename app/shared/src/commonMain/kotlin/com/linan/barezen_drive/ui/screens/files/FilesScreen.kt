@@ -394,8 +394,15 @@ fun FilesScreen(
             when {
                 ui == null && loadError != null -> {
                     // Load failed: show the error with a retry affordance instead of an
-                    // endless spinner.
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    // endless spinner. The standard translucent surface behind it
+                    // keeps the liquid bar's backdrop clean - raw wallpaper with
+                    // floating text made the glass render glitched black.
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current)),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 loadError ?: LocalStrings.current.loadFailed,

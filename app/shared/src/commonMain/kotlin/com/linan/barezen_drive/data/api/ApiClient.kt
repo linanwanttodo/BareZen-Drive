@@ -134,7 +134,14 @@ class ApiClient(
                             },
                             onFailure = { e ->
                                 if (e is CancellationException) throw e
-                                store.clear()
+                                // A rejection from the refresh endpoint is
+                                // definitive: the session is gone. A NETWORK
+                                // failure (server offline mid-session) must
+                                // keep the stored tokens - the refresh token
+                                // outlives outages, so the session heals by
+                                // itself once connectivity returns. Clearing
+                                // here used to force a logout+login round trip.
+                                if (e is ResponseException) store.clear()
                                 null
                             },
                         )
