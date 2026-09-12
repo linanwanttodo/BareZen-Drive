@@ -16,6 +16,7 @@ import com.linan.barezen_drive.files.shareOwnerRoutes
 import com.linan.barezen_drive.files.sharePublicRoutes
 import com.linan.barezen_drive.files.thumbnailRoutes
 import com.linan.barezen_drive.files.uploadRoutes
+import com.linan.barezen_drive.files.UploadService
 import com.linan.barezen_drive.system.adminUserRoutes
 import com.linan.barezen_drive.system.avatarRoutes
 import com.linan.barezen_drive.system.settingsRoutes
@@ -38,6 +39,7 @@ import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.plugins.partialcontent.*
 import io.ktor.server.plugins.statuspages.*
+import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.util.AttributeKey
@@ -64,6 +66,7 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     // Connect + schema DDL inside module() so testApplication exercises it too.
     // Guarded so repeated testApplication entry reuses the Exposed connection.
     connectDatabaseOnce(cfg)
+    UploadService.maxFileSize = cfg.maxFileSize
     // Install-wizard bootstrap: seed the owner account from env on a fresh
     // instance, so a headless deploy is signed up before the first open.
     runCatching {
@@ -73,7 +76,18 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     // default values (updateAvailable, assets, hasThumbnail...) are always
     // present in responses instead of silently omitted.
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
-    install(CallLogging)
+    install(CallLogging) {
+        // Signed content/thumbnail URLs carry a bearer-grade `sig` in the query
+        // string; the default formatter would write it to the access log, so
+        // replace it with a placeholder while keeping the default layout.
+        format { call ->
+            val req = call.request
+            val safeUri = if (req.queryParameters.contains("sig")) {
+                req.uri.replace(Regex("sig=[^&#]*"), "sig=***")
+            } else req.uri
+            "${call.response.status()}: ${req.httpMethod.value} - $safeUri"
+        }
+    }
     install(PartialContent)
     install(StatusPages) {
         exception<ApiException> { call, cause ->

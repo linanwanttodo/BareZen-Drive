@@ -1,8 +1,10 @@
 package com.linan.barezen_drive.files
 
 import com.linan.barezen_drive.api.ApiException
+import com.linan.barezen_drive.api.readBounded
 import com.linan.barezen_drive.api.toUuidOrBadRequest
 import com.linan.barezen_drive.auth.userId
+import com.linan.barezen_drive.core.dto.ErrorCodes
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.storage.StorageProvider
@@ -30,12 +32,10 @@ fun Route.thumbnailRoutes(storage: StorageProvider) {
     put("/api/files/{id}/thumbnail") {
         val id = call.parameters["id"]!!.toUuidOrBadRequest()
         val meta = withContext(Dispatchers.IO) { FileService.getFileMeta(call.userId, id) }
-        // Reject before buffering when the declared size is already over the cap;
-        // the post-receive check covers proxies that strip Content-Length.
-        val declared = call.request.header(HttpHeaders.ContentLength)?.toLongOrNull()
-        if (declared != null && declared > MAX_THUMB_BYTES) throw ApiException.badRequest("缩略图超过 512KB")
-        val bytes = call.receive<ByteArray>()
-        if (bytes.size > MAX_THUMB_BYTES) throw ApiException.badRequest("缩略图超过 512KB")
+        // Bounded read: stop at the cap instead of buffering whatever the client
+        // streams, so a missing/stripped Content-Length cannot exhaust heap.
+        val bytes = readBounded(call.receiveChannel(), MAX_THUMB_BYTES.toLong())
+            ?: throw ApiException.badRequest("缩略图超过 512KB", ErrorCodes.FILE_TOO_LARGE)
         // Content-addressed + idempotent: put() skips when the thumb already exists.
         storage.put(thumbKey(meta.sha256), ByteReadChannel(bytes))
         // Same content => same cover: flag every row that references this sha256.

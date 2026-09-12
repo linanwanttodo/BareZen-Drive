@@ -89,10 +89,11 @@ object ThumbnailService {
         }
         // Get-or-create one shared future per thumb key: concurrent requests
         // await the winner's result instead of duplicating the decode work.
-        val current = CompletableFuture.completedFuture(false)
-        val future = inFlight.putIfAbsent(key, current) ?: run {
-            val f = current.thenApplyAsync { generateAndStore(storage, meta, key) }
-            f.whenComplete { _, _ -> inFlight.remove(key) }
+        // (computeIfAbsent must store the REAL future - storing a completed
+        // placeholder would hand late callers an instant false.)
+        val future = inFlight.computeIfAbsent(key) {
+            val f = CompletableFuture.supplyAsync<Boolean> { generateAndStore(storage, meta, key) }
+            f.whenComplete { _, _ -> inFlight.remove(key, f) }
             f
         }
         runCatching { future.get(FFMPEG_TIMEOUT_SECONDS + 30, TimeUnit.SECONDS) }.getOrDefault(false)

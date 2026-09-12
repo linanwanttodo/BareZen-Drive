@@ -59,15 +59,15 @@ fun Route.adminUserRoutes(storage: StorageProvider) {
             call.userId
             val target = call.parameters["id"]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                 ?: throw ApiException.badRequest("用户 ID 非法", ErrorCodes.VALIDATION_ERROR)
-            val blobKeys = withContext(Dispatchers.IO) {
-                transaction(DatabaseFactory.db) {
+            val (blobKeys, sessionIds) = withContext(Dispatchers.IO) {
+                val sessionIds = mutableListOf<UUID>()
+                val blobs = transaction(DatabaseFactory.db) {
                     UsersTable.selectAll().where { UsersTable.id eq target }.singleOrNull()
                         ?: throw ApiException.notFound("用户不存在")
                     // Reuse the tested recursive folder deletion for every root:
                     // it cleans upload sessions/chunks, files and folders
                     // (children first), and reports blobs whose refcount hits zero.
                     val keys = mutableListOf<String>()
-                    val sessionIds = mutableListOf<UUID>()
                     val roots = FoldersTable.selectAll()
                         .where { (FoldersTable.user eq target) and FoldersTable.parent.isNull() }
                         .map { it[FoldersTable.id] }
@@ -95,6 +95,7 @@ fun Route.adminUserRoutes(storage: StorageProvider) {
                         FilesTable.selectAll().where { FilesTable.storageKey eq key }.count() == 0L
                     }
                 }
+                blobs to sessionIds
             }
             // Mirror FolderRoutes cleanup: blobs, their thumbnails, temp parts.
             blobKeys.forEach { key ->
@@ -102,6 +103,9 @@ fun Route.adminUserRoutes(storage: StorageProvider) {
                     storage.delete(key)
                     storage.delete(thumbKey(key.substringAfterLast('/')))
                 }
+            }
+            sessionIds.forEach { sid ->
+                runCatching { storage.tmpDir.resolve(sid.toString()).toFile().deleteRecursively() }
             }
             call.respond(HttpStatusCode.NoContent)
         }

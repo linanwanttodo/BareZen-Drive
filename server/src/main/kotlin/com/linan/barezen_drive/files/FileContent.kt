@@ -37,10 +37,14 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
         } else {
             withContext(Dispatchers.IO) {
                 transaction(DatabaseFactory.db) {
+                    // Escape LIKE metacharacters: a query of "%" should find a
+                    // literal percent sign, not "every file".
+                    val like = q.lowercase()
+                        .replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                     FilesTable.selectAll()
                         .where {
                             (FilesTable.user eq call.userId) and
-                                (FilesTable.name.lowerCase() like "%${q.lowercase()}%")
+                                FilesTable.name.lowerCase().like(LikePattern("%$like%", '\\'))
                         }
                         .orderBy(FilesTable.updatedAt, SortOrder.DESC)
                         .limit(100)

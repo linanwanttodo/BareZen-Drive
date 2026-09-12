@@ -100,4 +100,33 @@ class AuthTest {
         assertEquals(HttpStatusCode.Unauthorized, res.status)
         assertTrue(res.bodyAsText().contains("INVALID_CREDENTIALS"))
     }
+
+    @Test
+    fun passwordOver72BytesIsRejectedNotCrashing() = testApplication {
+        setup()
+        // 72 bytes is the BCrypt ceiling: exactly 72 must still work.
+        val ok = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"username":"exactly72","password":"${"a".repeat(72)}"}""")
+        }
+        assertEquals(HttpStatusCode.Created, ok.status, ok.bodyAsText())
+        val tooLong = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"username":"toolongpw","password":"${"a".repeat(73)}"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, tooLong.status)
+        assertTrue(tooLong.bodyAsText().contains("VALIDATION_ERROR"))
+        // Multi-byte chars count by UTF-8 bytes: 25 CJK chars = 75 bytes.
+        val wide = client.post("/api/auth/register") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"username":"widepw","password":"${"中".repeat(25)}"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, wide.status)
+        // Logging in with an impossible password answers 401, not 500.
+        val login = client.post("/api/auth/login") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"username":"exactly72","password":"${"a".repeat(73)}"}""")
+        }
+        assertEquals(HttpStatusCode.Unauthorized, login.status)
+    }
 }

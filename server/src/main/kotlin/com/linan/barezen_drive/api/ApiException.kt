@@ -17,5 +17,7 @@ class ApiException(val code: String, val status: HttpStatusCode, override val me
             ApiException(code, HttpStatusCode.Unauthorized, message)
         fun forbidden(message: String, code: String = ErrorCodes.VALIDATION_ERROR) =
             ApiException(code, HttpStatusCode.Forbidden, message)
+        fun tooLarge(message: String, code: String = ErrorCodes.FILE_TOO_LARGE) =
+            ApiException(code, HttpStatusCode.PayloadTooLarge, message)
     }
 }

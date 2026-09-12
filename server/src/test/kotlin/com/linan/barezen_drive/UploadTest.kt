@@ -242,4 +242,64 @@ class UploadTest {
         val put = client.put("/api/uploads/$uploadId/chunks/0") { header(HttpHeaders.Authorization, auth); setBody(ByteArray(16)) }
         assertEquals(HttpStatusCode.Conflict, put.status); assertTrue(put.bodyAsText().contains("SESSION_EXPIRED"))
     }
+
+    @Test
+    fun expiredSessionIsNotResumed() = testApplication {
+        setup()
+        val initBody = """{"name":"stale.bin","size":16,"chunkSize":${1024L * 1024}}"""
+        val init = client.post("/api/uploads/init") { header(HttpHeaders.Authorization, auth); contentType(ContentType.Application.Json); setBody(initBody) }
+        val oldId = json.decodeFromString<UploadInitResponse>(init.bodyAsText()).uploadId
+        transaction { UploadSessionsTable.update({ UploadSessionsTable.id eq UUID.fromString(oldId) }) { it[expiresAt] = System.currentTimeMillis() - 10_000 } }
+        // Re-init with the same name/size must NOT hand back the dead session...
+        val re = client.post("/api/uploads/init") { header(HttpHeaders.Authorization, auth); contentType(ContentType.Application.Json); setBody(initBody) }
+        val newId = json.decodeFromString<UploadInitResponse>(re.bodyAsText()).uploadId
+        assertNotEquals(oldId, newId)
+        // ...and the fresh session accepts chunks.
+        val put = client.put("/api/uploads/$newId/chunks/0") { header(HttpHeaders.Authorization, auth); setBody(ByteArray(16)) }
+        assertEquals(HttpStatusCode.NoContent, put.status, put.bodyAsText())
+    }
+
+    @Test
+    fun initRejectsFilesOverConfiguredCap() = testApplication {
+        val tiny = AppConfig(0, "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH", "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1024L)
+        val storage = LocalStorageProvider(java.nio.file.Path.of(tiny.storageDir))
+        application { module(tiny, storage) }
+        client.post("/api/auth/register") { contentType(ContentType.Application.Json); setBody("""{"username":"user1","password":"password123"}""") }
+        val login = client.post("/api/auth/login") { contentType(ContentType.Application.Json); setBody("""{"username":"user1","password":"password123"}""") }
+        auth = "Bearer " + Regex(""""accessToken":"([^"]+)"""").find(login.bodyAsText())!!.groupValues[1]
+        val init = client.post("/api/uploads/init") { header(HttpHeaders.Authorization, auth); contentType(ContentType.Application.Json); setBody("""{"name":"huge.bin","size":4096}""") }
+        assertEquals(HttpStatusCode.PayloadTooLarge, init.status)
+        assertTrue(init.bodyAsText().contains("FILE_TOO_LARGE"))
+    }
+
+    @Test
+    fun instantUploadIgnoresLyingSize() = testApplication {
+        setup()
+        val body = "truth-size".encodeToByteArray()
+        doUpload(body, "real.txt")
+        // Same content, but the client claims a bogus size on the instant path.
+        val init = client.post("/api/uploads/init") {
+            header(HttpHeaders.Authorization, auth); contentType(ContentType.Application.Json)
+            setBody("""{"name":"clone.txt","size":999999,"sha256":"${sha256hex(body)}"}""")
+        }
+        val ir = json.decodeFromString<UploadInitResponse>(init.bodyAsText())
+        assertTrue(ir.instantUpload)
+        assertEquals(body.size.toLong(), ir.file?.size)
+    }
+
+    @Test
+    fun searchTreatsPercentLiterally() = testApplication {
+        setup()
+        doUpload("x".encodeToByteArray(), "50%off.txt")
+        doUpload("y".encodeToByteArray(), "plain.txt")
+        // A bare "%" must not act as a match-everything wildcard: it matches only
+        // the file whose name literally contains a percent sign.
+        val wildcard = client.get("/api/search?q=%25") { header(HttpHeaders.Authorization, auth) }
+        val w = json.decodeFromString<RecentFilesResponse>(wildcard.bodyAsText())
+        assertEquals(listOf("50%off.txt"), w.files.map { it.name })
+        // But a literal percent in the query still matches names containing it.
+        val hit = client.get("/api/search?q=50%25") { header(HttpHeaders.Authorization, auth) }
+        val h = json.decodeFromString<RecentFilesResponse>(hit.bodyAsText())
+        assertEquals(listOf("50%off.txt"), h.files.map { it.name })
+    }
 }

@@ -27,12 +27,14 @@ import java.time.Duration
  * The lookup is done once per server instead of in each client, so a
  * self-hosted instance behind a restrictive network reports "unknown" rather
  * than making every client try and fail. The result is cached for
- * [CACHE_TTL_MS]; any failure degrades to latestVersion = null and is not
- * cached, so the next call retries.
+ * [CACHE_TTL_MS]; any failure degrades to latestVersion = null and is held
+ * off for [FAIL_COOLDOWN_MS] so a broken upstream cannot be re-tried on
+ * every public request.
  */
 object VersionService {
 
     private const val CACHE_TTL_MS = 10 * 60 * 1000L
+    private const val FAIL_COOLDOWN_MS = 60 * 1000L
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -53,6 +55,7 @@ object VersionService {
 
     @Volatile private var cached: Release? = null
     @Volatile private var cachedAtMs: Long = 0
+    @Volatile private var failedAtMs: Long = 0
     private val cacheLock = Any()
 
     /** Test seam: forget any cached release. Called from :server tests. */
@@ -61,6 +64,7 @@ object VersionService {
         synchronized(cacheLock) {
             cached = null
             cachedAtMs = 0
+            failedAtMs = 0
         }
     }
 
@@ -83,12 +87,20 @@ object VersionService {
         val now = System.currentTimeMillis()
         synchronized(cacheLock) {
             cached?.let { if (now - cachedAtMs < CACHE_TTL_MS) return it }
+            // Negative cache: after a failed lookup, do not let every public
+            // GET /api/version block on the 6s upstream timeout again.
+            if (now - failedAtMs < FAIL_COOLDOWN_MS) return null
         }
         val fetched = (manifestUrl?.let { fetchManifest(it, githubToken) }
-            ?: fetchLatestRelease(repoUrl, githubToken)) ?: return null
+            ?: fetchLatestRelease(repoUrl, githubToken))
+        if (fetched == null) {
+            synchronized(cacheLock) { failedAtMs = now }
+            return null
+        }
         synchronized(cacheLock) {
             cached = fetched
             cachedAtMs = now
+            failedAtMs = 0
         }
         return fetched
     }

@@ -9,6 +9,7 @@ import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.RefreshTokensTable
 import com.linan.barezen_drive.db.UsersTable
 import org.jetbrains.exposed.sql.ResultRow
+import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -48,6 +49,11 @@ object AuthService {
             throw ApiException.badRequest("用户名需 3-32 位字母数字下划线", ErrorCodes.USERNAME_INVALID)
         }
         if (password.length < 8) throw ApiException.badRequest("密码至少 8 位", ErrorCodes.PASSWORD_TOO_SHORT)
+        // favre BCrypt rejects raw passwords longer than 72 bytes outright;
+        // surface it as a 400 instead of letting it bubble up as a 500.
+        if (password.encodeToByteArray().size > 72) {
+            throw ApiException.badRequest("密码过长（最多 72 字节）", ErrorCodes.VALIDATION_ERROR)
+        }
         return transaction(DatabaseFactory.db) {
             if (UsersTable.selectAll().where { UsersTable.username eq username }.any()) {
                 throw ApiException.conflict(ErrorCodes.USERNAME_TAKEN, "用户名已存在")
@@ -80,9 +86,11 @@ object AuthService {
     fun login(username: String, password: String): LoginResponse = transaction(DatabaseFactory.db) {
         val row = UsersTable.selectAll().where { UsersTable.username eq username }.singleOrNull()
             ?: throw ApiException.unauthorized("用户名或密码错误")
-        if (!PasswordHasher.verify(password, row[UsersTable.passwordHash])) {
-            throw ApiException.unauthorized("用户名或密码错误")
-        }
+        // A stored hash can never correspond to a >72-byte raw password (register
+        // rejects those), so verify() would only throw; answer like a wrong password.
+        val ok = password.encodeToByteArray().size <= 72 &&
+            PasswordHasher.verify(password, row[UsersTable.passwordHash])
+        if (!ok) throw ApiException.unauthorized("用户名或密码错误")
         issueTokens(row[UsersTable.id])
     }
 
@@ -114,7 +122,12 @@ object AuthService {
             throw ApiException.unauthorized("refresh token 已过期", ErrorCodes.TOKEN_EXPIRED)
         }
         val uid = row[RefreshTokensTable.user]
-        RefreshTokensTable.update({ RefreshTokensTable.tokenHash eq h }) { it[revokedAt] = System.currentTimeMillis() }
+        // Conditional revoke: if a concurrent refresh already took this token,
+        // the update matches zero rows and we reject instead of issuing a second pair.
+        val revoked = RefreshTokensTable.update({
+            (RefreshTokensTable.tokenHash eq h) and (RefreshTokensTable.revokedAt eq null)
+        }) { it[revokedAt] = System.currentTimeMillis() }
+        if (revoked == 0) throw ApiException.unauthorized("refresh token 已失效", ErrorCodes.TOKEN_INVALID)
         val (newRaw, expMs) = newRefreshToken()
         RefreshTokensTable.insert {
             it[id] = UUID.randomUUID()

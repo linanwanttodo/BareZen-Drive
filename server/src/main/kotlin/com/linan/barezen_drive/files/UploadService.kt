@@ -9,6 +9,7 @@ import com.linan.barezen_drive.core.dto.UploadInitResponse
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
+import com.linan.barezen_drive.db.RefreshTokensTable
 import com.linan.barezen_drive.db.UploadChunksTable
 import com.linan.barezen_drive.db.UploadSessionsTable
 import com.linan.barezen_drive.storage.StorageProvider
@@ -34,7 +35,15 @@ object UploadService {
     const val MAX_CHUNK = 20L * MIB
     private const val SESSION_TTL_MILLIS = 24L * 3600 * 1000
 
-    private fun expectedChunks(size: Long, chunkSize: Long) = ((size + chunkSize - 1) / chunkSize).toInt()
+    /** MAX_FILE_SIZE from the environment; wired once at module startup. */
+    @Volatile
+    var maxFileSize: Long = Long.MAX_VALUE
+
+    private fun expectedChunks(size: Long, chunkSize: Long): Int {
+        // Clamp instead of overflowing Long arithmetic for absurd stored sizes.
+        val chunks = if (size > Long.MAX_VALUE - chunkSize) Long.MAX_VALUE else (size + chunkSize - 1) / chunkSize
+        return chunks.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
 
     /** Folders and files share one sibling namespace: a clash on either side is a conflict. */
     private fun siblingNameTaken(userId: UUID, parent: UUID?, name: String): Boolean {
@@ -68,6 +77,7 @@ object UploadService {
     suspend fun initUpload(userId: UUID, req: UploadInitRequest, storage: StorageProvider): UploadInitResponse {
         if (req.name.isBlank() || req.name.contains('/') || req.name.length > 255) throw ApiException.badRequest("文件名非法")
         if (req.size < 0) throw ApiException.badRequest("size 非法")
+        if (req.size > maxFileSize) throw ApiException.tooLarge("文件超过服务器上限 ${maxFileSize / MIB} MiB")
         val parent: UUID? = req.folderId?.let {
             val pid = it.toUuidOrBadRequest()
             transaction(DatabaseFactory.db) { FoldersTable.selectAll().where { (FoldersTable.id eq pid) and (FoldersTable.user eq userId) }.singleOrNull() }
@@ -86,10 +96,15 @@ object UploadService {
                 val hasThumb = storage.exists(thumbKey(sha))
                 val created = transaction(DatabaseFactory.db) {
                     if (siblingNameTaken(userId, parent, req.name)) null else {
+                        // Never trust a client-declared size for dedup: reuse the size
+                        // already recorded for this content, or the stored blob length.
+                        val storedSize = FilesTable.selectAll().where { FilesTable.storageKey eq key }
+                            .firstOrNull()?.get(FilesTable.size)
+                            ?: storage.resolvePath(key)?.toFile()?.length()?.takeIf { it > 0 }
                         val id = UUID.randomUUID()
                         FilesTable.insert {
                             it[FilesTable.id] = id; it[user] = userId; it[folder] = parent
-                            it[FilesTable.name] = req.name; it[FilesTable.size] = req.size
+                            it[FilesTable.name] = req.name; it[FilesTable.size] = storedSize ?: req.size
                             it[mimeType] = req.mimeType; it[FilesTable.sha256] = sha; it[storageKey] = key
                             it[hasThumbnail] = hasThumb
                             it[takenAt] = req.takenAt
@@ -102,11 +117,14 @@ object UploadService {
         }
 
         // Resume match: open session with the same user, folder, name and size.
+        // Expired rows are skipped: the cleanup job runs only every 6h, and handing
+        // back a dead session id would lock the client in 409 loops until then.
+        val nowMs = System.currentTimeMillis()
         val existing = transaction(DatabaseFactory.db) {
             (if (parent == null)
-                UploadSessionsTable.selectAll().where { (UploadSessionsTable.user eq userId) and UploadSessionsTable.folder.isNull() and (UploadSessionsTable.name eq req.name) and (UploadSessionsTable.size eq req.size) and (UploadSessionsTable.status eq "open") }
+                UploadSessionsTable.selectAll().where { (UploadSessionsTable.user eq userId) and UploadSessionsTable.folder.isNull() and (UploadSessionsTable.name eq req.name) and (UploadSessionsTable.size eq req.size) and (UploadSessionsTable.status eq "open") and (UploadSessionsTable.expiresAt greater nowMs) }
             else
-                UploadSessionsTable.selectAll().where { (UploadSessionsTable.user eq userId) and (UploadSessionsTable.folder eq parent) and (UploadSessionsTable.name eq req.name) and (UploadSessionsTable.size eq req.size) and (UploadSessionsTable.status eq "open") }
+                UploadSessionsTable.selectAll().where { (UploadSessionsTable.user eq userId) and (UploadSessionsTable.folder eq parent) and (UploadSessionsTable.name eq req.name) and (UploadSessionsTable.size eq req.size) and (UploadSessionsTable.status eq "open") and (UploadSessionsTable.expiresAt greater nowMs) }
             ).firstOrNull()
         }
         val sessionId = existing?.get(UploadSessionsTable.id) ?: UUID.randomUUID().also { sid ->
@@ -269,9 +287,11 @@ object UploadService {
         // run if the database is not wired yet.
         if (!DatabaseFactory.connected) return
         val now = System.currentTimeMillis()
+        // Any expired session goes - open (abandoned uploads), but also aborted and
+        // completed rows, whose staging dirs and chunk rows nothing else ever prunes.
         val expired = transaction(DatabaseFactory.db) {
             UploadSessionsTable.selectAll()
-                .where { (UploadSessionsTable.status eq "open") and (UploadSessionsTable.expiresAt less now) }
+                .where { UploadSessionsTable.expiresAt less now }
                 .map { it[UploadSessionsTable.id] }
         }
         withContext(Dispatchers.IO) {
@@ -282,6 +302,18 @@ object UploadService {
                     UploadSessionsTable.deleteWhere { UploadSessionsTable.id eq sid }
                 }
                 cleanupSessionDir(storage, sid)
+            }
+        }
+        // Expired refresh tokens (revoked or not) are dead weight: purge them too.
+        // (select ids first: the deleteWhere lambda scope does not expose the
+        // full SqlExpressionBuilder operator set.)
+        transaction(DatabaseFactory.db) {
+            val stale = RefreshTokensTable.selectAll()
+                .where { RefreshTokensTable.expiresAt less now }
+                .limit(5000)
+                .map { it[RefreshTokensTable.id] }
+            stale.forEach { id ->
+                RefreshTokensTable.deleteWhere { RefreshTokensTable.id eq id }
             }
         }
     }
