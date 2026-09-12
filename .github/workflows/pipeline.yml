@@ -36,14 +36,15 @@ env:
 
 jobs:
   # Resolves the single version used by every job and decides whether this run
-  # publishes a release. Tag wins, then the manual input, then gradle.properties.
+  # publishes a release. A tag wins, then the manual input, then
+  # gradle.properties. Every push builds once; the release job below is the
+  # single place that deduplicates an already-published version.
   version:
     name: Resolve version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       is_release: ${{ steps.resolve.outputs.is_release }}
-      tagged: ${{ steps.resolve.outputs.tagged }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,15 +59,9 @@ jobs:
             v=$(grep -E '^version=' gradle.properties | head -1 | cut -d= -f2 | tr -d '[:space:]')
             release=false
           fi
-          # A branch push whose HEAD is also tagged (pushing master + tag in
-          # one command) must not double-build: the tag run wins.
-          tagged=""
-          git fetch --tags --quiet
-          git describe --tags --exact-match HEAD 2>/dev/null && tagged=true || true
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "is_release=$release" >> "$GITHUB_OUTPUT"
-          echo "tagged=$tagged" >> "$GITHUB_OUTPUT"
-          echo "Using version $v (release: $release, tagged: ${tagged:-no})"
+          echo "Using version $v (release: $release)"
 
   test:
     name: Tests
@@ -102,7 +97,7 @@ jobs:
     name: Web bundle
     runs-on: ubuntu-latest
     needs: [ version, test ]
-    if: github.event_name != 'pull_request' && github.ref_type != 'tag' && needs.version.outputs.tagged != 'true'
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -128,7 +123,7 @@ jobs:
     name: Android APKs
     runs-on: ubuntu-latest
     needs: [ version, test ]
-    if: github.event_name != 'pull_request' && github.ref_type != 'tag' && needs.version.outputs.tagged != 'true'
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -192,7 +187,7 @@ jobs:
     name: Server distribution
     runs-on: ubuntu-latest
     needs: [ version, test, web ]
-    if: github.event_name != 'pull_request' && github.ref_type != 'tag' && needs.version.outputs.tagged != 'true'
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -233,7 +228,7 @@ jobs:
     name: Container image (amd64, arm64)
     runs-on: ubuntu-latest
     needs: [ version, server ]
-    if: github.event_name != 'pull_request' && github.ref_type != 'tag' && needs.version.outputs.tagged != 'true'
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -280,7 +275,7 @@ jobs:
     name: Desktop packages (reserved)
     runs-on: ubuntu-latest
     needs: [ version, test ]
-    if: github.event_name != 'pull_request' && github.ref_type != 'tag' && needs.version.outputs.tagged != 'true'
+    if: github.event_name != 'pull_request'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -312,7 +307,7 @@ jobs:
     name: iOS app (macOS, reserved)
     runs-on: macos-latest
     needs: [ version, test ]
-    if: github.event_name != 'pull_request' && github.ref_type != 'tag' && needs.version.outputs.tagged != 'true'
+    if: github.event_name != 'pull_request'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -433,7 +428,19 @@ jobs:
         with:
           name: release-bundle
           path: dist
+      - name: Skip when this version is already published
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ needs.version.outputs.version }}" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release v${{ needs.version.outputs.version }} already exists; skipping publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish
+        if: steps.published.outputs.exists != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.version }}
