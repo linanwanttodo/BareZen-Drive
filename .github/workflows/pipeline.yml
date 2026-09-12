@@ -6,15 +6,15 @@ name: Pipeline
 # the failed job and its consumers pick the cached artifacts back up.
 #
 # pull_request            -> tests only (fast feedback)
-# push master             -> tests, packaging, :latest multi-arch image
-# push v* tag             -> the above plus a GitHub Release and versioned image
-# workflow_dispatch       -> same as a tag; optionally pass a version
+# push master             -> one build: tests, packaging, :latest image; when the
+#                            pushed commit carries a v* tag this same run also
+#                            publishes the GitHub Release and versioned image
+# workflow_dispatch       -> same as a tagged master push; optionally pass a version
 on:
   pull_request:
     branches: [ master ]
   push:
     branches: [ master ]
-    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       version:
@@ -36,9 +36,10 @@ env:
 
 jobs:
   # Resolves the single version used by every job and decides whether this run
-  # publishes a release. A tag wins, then the manual input, then
-  # gradle.properties. Every push builds once; the release job below is the
-  # single place that deduplicates an already-published version.
+  # publishes a release: a v* tag on the pushed commit or a manual input makes
+  # it a release; otherwise gradle.properties drives the build only. The
+  # release job below is the single place that deduplicates an
+  # already-published version.
   version:
     name: Resolve version
     runs-on: ubuntu-latest
@@ -51,10 +52,10 @@ jobs:
           fetch-depth: 0
       - id: resolve
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            v="${GITHUB_REF_NAME#v}"; release=true
-          elif [ -n "${{ inputs.version }}" ]; then
+          if [ -n "${{ inputs.version }}" ]; then
             v="${{ inputs.version }}"; release=true
+          elif git describe --tags --exact-match HEAD 2>/dev/null | grep -q '^v'; then
+            v="$(git describe --tags --exact-match HEAD | sed 's/^v//')"; release=true
           else
             v=$(grep -E '^version=' gradle.properties | head -1 | cut -d= -f2 | tr -d '[:space:]')
             release=false
@@ -255,7 +256,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/master' }}
-            type=ref,event=tag
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.is_release == 'true' }}
             type=sha,format=short,prefix=sha-
       - uses: docker/build-push-action@v6
         with:
