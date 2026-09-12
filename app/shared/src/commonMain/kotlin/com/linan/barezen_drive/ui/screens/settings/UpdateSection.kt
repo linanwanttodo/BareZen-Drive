@@ -109,10 +109,15 @@ internal fun UpdateCheckRow(
     status?.let { outcome ->
         UpdateResultDialog(outcome = outcome, onDismiss = { status = null }, onDownload = {
             downloading = true
+            downloadProgress = 0f
             scope.launch {
                 val url = (outcome as? UpdateStatus.Available)
                 val target = url?.downloadUrl ?: return@launch
-                val ok = runCatching { downloadAndInstallUpdate(target) }.getOrDefault(false)
+                // Wire the platform progress callback into the row: without it
+                // the percentage label never moves off zero.
+                val ok = runCatching {
+                    downloadAndInstallUpdate(target) { p -> downloadProgress = p }
+                }.getOrDefault(false)
                 downloading = false
                 if (ok) {
                     UpdateBadge.set(false)

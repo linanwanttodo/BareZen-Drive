@@ -29,7 +29,7 @@ interface AppPrefs {
     /** Liquid glass blur on the bottom pill; off = plain translucent. */
     var glassBlurEnabled: Boolean
 
-    /** Glass surface tint opacity percent (10-91). */
+    /** Glass surface tint opacity percent (30-91). */
     var glassAlphaPercent: Int
 
     /** UI language: 0 = follow the system (default), 1 = Chinese, 2 = English. */

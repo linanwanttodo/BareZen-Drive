@@ -31,13 +31,19 @@ object AlbumFolder {
             val friendly = platformContents.folders.firstOrNull { it.name == deviceName }
             val legacy = platformContents.folders.firstOrNull { it.name == legacyName }
             if (friendly == null && legacy != null) {
-                repo.renameFolder(legacy.id, deviceName).getOrThrow()
+                // Best effort: a failed rename (409 race, offline, forbidden)
+                // must not crash the screen's LaunchedEffect; fall through and
+                // resolve/create the friendly folder instead.
+                repo.renameFolder(legacy.id, deviceName).onFailure { }
             }
         }
         return findOrCreateChild(repo, platform, deviceName)
     }
 
-    /** The Album root folder - the "all devices" scope for the timeline. */
+    /** The Album root folder id (created when missing) - the "all devices"
+     *  scope for the album timeline. */
+    suspend fun rootId(repo: FilesRepository): String? = findOrCreateRoot(repo)
+
     /**
      * The phone-album category folder inside a device folder, created on
      * demand - only uploads that carry a source album name ever create one.
@@ -56,9 +62,9 @@ object AlbumFolder {
         val platforms = repo.contents(root).getOrNull()?.folders ?: return emptyList()
         for (platform in platforms) {
             val devices = repo.contents(platform.id).getOrNull() ?: continue
-            // Field order note: FolderDto is (id, name) - destructure by position and
-// this swaps into (uuid -> name) pairs, which is exactly the dropdown bug.
-devices.folders.forEach { folder -> out += folder.name to folder.id }
+            // Pairs are (display name -> folder id); swapping the order here is
+            // what once made the device dropdown show raw UUIDs.
+            devices.folders.forEach { folder -> out += folder.name to folder.id }
         }
         return out
     }

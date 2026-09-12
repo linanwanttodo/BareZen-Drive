@@ -2,6 +2,7 @@ package com.linan.barezen_drive.ui.screens.home
 
 import com.linan.barezen_drive.core.dto.ServerStatsDto
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,11 +29,14 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import kotlin.time.Duration.Companion.seconds
 import androidx.compose.material3.Text
 import androidx.compose.material3.IconButton
@@ -44,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,7 +88,6 @@ fun HomeScreen(
     onPreview: (List<FileDto>, Int) -> Unit,
     saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit,
     themeToggle: (@Composable () -> Unit)? = null,
-    onDeleteFiles: (List<FileDto>) -> Unit = {},
     onOpenTransfers: () -> Unit = {},
     avatar: @Composable () -> Unit = {},
 ) {
@@ -91,31 +95,52 @@ fun HomeScreen(
     var album by remember { mutableStateOf<List<FileDto>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var stats by remember { mutableStateOf<ServerStatsDto?>(null) }
+    var statsUnavailable by remember { mutableStateOf(false) }
     var latency by remember { mutableStateOf<Long?>(null) }
+    val snackbar = SnackbarHostState()
+    val scope = rememberCoroutineScope()
+    // Pending batch delete from the selection bar; confirmed through a dialog
+    // like the files screen does - a bare tap must never destroy data.
+    var confirmDelete by remember { mutableStateOf<List<FileDto>?>(null) }
 
     // Sections load independently so one failure cannot blank the page; the
     // album strip simply stays hidden when its request fails.
+    fun reload() {
+        scope.launch {
+            repo.recentFiles(RECENT_LIMIT).fold(
+                onSuccess = { recent = it.files; error = null },
+                onFailure = { if (recent == null) error = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed },
+            )
+            repo.album(ALBUM_STRIP_SIZE).fold(
+                onSuccess = { album = it.files },
+                onFailure = { /* album strip stays hidden on failure */ },
+            )
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        reload()
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
-            stats = repo.serverStats().getOrNull()
+            val s = repo.serverStats().getOrNull()
+            if (s != null) {
+                stats = s
+                statsUnavailable = false
+            } else if (stats == null) {
+                // Never had data: show why instead of a permanent "reading"
+                // spinner while the server is down.
+                statsUnavailable = true
+            }
             latency = runCatching { repo.ping() }.getOrNull()
             delay(3.seconds)
         }
     }
 
-    LaunchedEffect(Unit) {
-        repo.recentFiles(RECENT_LIMIT).fold(
-            onSuccess = { recent = it.files; error = null },
-            onFailure = { if (recent == null) error = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed },
-        )
-        repo.album(ALBUM_STRIP_SIZE).fold(
-            onSuccess = { album = it.files },
-            onFailure = { /* album strip stays hidden on failure */ },
-        )
-    }
-
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(LocalStrings.current.tabHome) },
@@ -158,7 +183,8 @@ fun HomeScreen(
                     selected = emptySet()
                 }) { Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload) }
                 IconButton(onClick = {
-                    onDeleteFiles(recentList.filter { it.id in selected })
+                    // Ask first: a bare tap must never destroy data.
+                    confirmDelete = recentList.filter { it.id in selected }
                     selected = emptySet()
                 }) {
                     Icon(Icons.Default.Delete, contentDescription = LocalStrings.current.actionDelete,
@@ -179,7 +205,7 @@ fun HomeScreen(
         ) {
             // ---- Server status section ----
             item(key = "server_status") {
-                ServerStatusCard(stats, latency)
+                ServerStatusCard(stats, latency, statsUnavailable)
             }
             // ---- Album section ----
             if (!albumList.isNullOrEmpty()) {
@@ -250,6 +276,28 @@ fun HomeScreen(
                     HorizontalDivider()
                 }
             }
+        }
+
+        confirmDelete?.let { list ->
+            AlertDialog(
+                onDismissRequest = { confirmDelete = null },
+                title = { Text(LocalStrings.current.deleteFile) },
+                text = { Text(LocalStrings.current.confirmDeleteCount(list.size)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmDelete = null
+                        scope.launch {
+                            var failed = 0
+                            list.forEach { f -> if (repo.deleteFile(f.id).isFailure) failed++ }
+                            if (failed > 0) snackbar.showSnackbar(I18n.strings.deleteFailed)
+                            reload()
+                        }
+                    }) { Text(LocalStrings.current.actionDelete) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDelete = null }) { Text(LocalStrings.current.actionCancel) }
+                },
+            )
         }
     }
 }
@@ -342,7 +390,7 @@ private fun formatBytesPerSec(v: Long): String = if (v < 0) "—" else formatFil
 
 /** Top server status panel: CPU / memory / disk / latency / up-down throughput. */
 @Composable
-private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?) {
+private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?, unavailable: Boolean = false) {
     val panelAlpha = com.linan.barezen_drive.ui.theme.LocalPanelAlpha.current
     Surface(
         modifier = Modifier
@@ -375,12 +423,19 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?) {
                 )
             }
             Spacer(Modifier.height(10.dp))
-                        if (stats == null) {
+            if (stats == null && !unavailable) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     Text(LocalStrings.current.readingServerStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            } else if (stats == null) {
+                // Server unreachable: say so instead of spinning forever.
+                Text(
+                    LocalStrings.current.networkCannotConnect,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             } else {
                 Row(
                     Modifier.fillMaxWidth(),
@@ -391,11 +446,11 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?) {
                     val diskUsedFrac = if (stats.diskTotalBytes <= 0 || stats.diskFreeBytes < 0) 0f
                         else ((stats.diskTotalBytes - stats.diskFreeBytes).toFloat() / stats.diskTotalBytes)
 
-                    MetricChip("CPU", if (stats.cpuPercent < 0) "—" else "${stats.cpuPercent.toInt()}%", cpuFrac)
-                    MetricChip(LocalStrings.current.metricMemory, if (stats.memTotalBytes <= 0) "—" else formatFileSize(stats.memUsedBytes), memFrac)
-                    MetricChip(LocalStrings.current.metricDiskFree, if (stats.diskFreeBytes < 0) "—" else formatFileSize(stats.diskFreeBytes), diskUsedFrac)
-                    MetricChip(LocalStrings.current.actionDownload, formatBytesPerSec(stats.netRxBytesPerSec), null)
-                    MetricChip(LocalStrings.current.actionUpload, formatBytesPerSec(stats.netTxBytesPerSec), null)
+                    MetricChip("CPU", if (stats.cpuPercent < 0) "—" else "${stats.cpuPercent.toInt()}%", cpuFrac, Modifier.weight(1f))
+                    MetricChip(LocalStrings.current.metricMemory, if (stats.memTotalBytes <= 0) "—" else formatFileSize(stats.memUsedBytes), memFrac, Modifier.weight(1f))
+                    MetricChip(LocalStrings.current.metricDiskFree, if (stats.diskFreeBytes < 0) "—" else formatFileSize(stats.diskFreeBytes), diskUsedFrac, Modifier.weight(1f))
+                    MetricChip(LocalStrings.current.actionDownload, formatBytesPerSec(stats.netRxBytesPerSec), null, Modifier.weight(1f))
+                    MetricChip(LocalStrings.current.actionUpload, formatBytesPerSec(stats.netTxBytesPerSec), null, Modifier.weight(1f))
                 }
             }
         }
@@ -403,12 +458,17 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?) {
 }
 
 @Composable
-private fun MetricChip(label: String, value: String, usageFraction: Float? = null) {
+private fun MetricChip(
+    label: String,
+    value: String,
+    usageFraction: Float? = null,
+    modifier: Modifier = Modifier,
+) {
     val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
     val progress = MaterialTheme.colorScheme.primary
-    Column {
+    Column(modifier) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+        Text(value, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (usageFraction != null) {
             Spacer(Modifier.height(4.dp))
             Box(Modifier.size(20.dp)) {

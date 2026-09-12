@@ -76,22 +76,28 @@ class UploadManager(
         // progress and history instead of a modal. Album-sync batches pass
         // reportTransfer=false: the batch owns one aggregate entry, so a
         // hundred-photo backup does not spam a hundred rows/notifications.
-        if (!reportTransfer) {
-            return doUpload(file, folderId, null)
+        val transferId = if (reportTransfer) {
+            com.linan.barezen_drive.data.transfer.TransferCenter
+                .start(file.name, com.linan.barezen_drive.data.transfer.TransferKind.UPLOAD, file.size)
+        } else {
+            null
         }
-        val transferId = com.linan.barezen_drive.data.transfer.TransferCenter
-            .start(file.name, com.linan.barezen_drive.data.transfer.TransferKind.UPLOAD, file.size)
         try {
             val result = doUpload(file, folderId, transferId)
-            result.fold(
-                onSuccess = { com.linan.barezen_drive.data.transfer.TransferCenter.done(transferId) },
-                onFailure = { com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, it.message ?: "failed") },
-            )
+            if (transferId != null) {
+                result.fold(
+                    onSuccess = { com.linan.barezen_drive.data.transfer.TransferCenter.done(transferId) },
+                    onFailure = { com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, it.message ?: "failed") },
+                )
+            }
             return result
         } catch (e: CancellationException) {
-            com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, "cancelled")
-            // Best-effort cleanup so the server does not keep an orphaned
-            // session; must not swallow the cancellation itself.
+            // Cancellation must abort the server session even when the upload
+            // is not mirrored in the transfer centre (batch mode): previously
+            // only the mirrored path cleaned up, leaking orphaned sessions.
+            if (transferId != null) {
+                com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, "cancelled")
+            }
             activeUploadId?.let { id ->
                 runCatching { withContext(NonCancellable) { api.abort(id) } }
             }
@@ -145,12 +151,16 @@ class UploadManager(
         val expectedChunks = ((file.size + chunkSize - 1) / chunkSize).toInt()
 
         // 3) Sequential chunks in index order, skipping received indexes.
+        // Hashing already consumed the first half of the transfer-centre
+        // scale (hashed / 2), so byte progress maps into 50..100% here and
+        // never runs backwards.
         for (index in 0 until expectedChunks) {
             val offset = index.toLong() * chunkSize
             val length = minOf(chunkSize, file.size - offset).toInt()
             val doneBytes = minOf((index + 1).toLong() * chunkSize, file.size)
             if (index in init.receivedChunks) {
                 _progress.value = Progress(Phase.UPLOADING, file.name, doneBytes, file.size)
+                transferId?.let { com.linan.barezen_drive.data.transfer.TransferCenter.progress(it, file.size / 2 + doneBytes / 2, file.size) }
                 continue
             }
             val bytes = file.readRange(offset, length)
@@ -170,6 +180,7 @@ class UploadManager(
                 delay(backoffBaseMs * (1L shl (attempt - 1)))
             }
             _progress.value = Progress(Phase.UPLOADING, file.name, doneBytes, file.size)
+            transferId?.let { com.linan.barezen_drive.data.transfer.TransferCenter.progress(it, file.size / 2 + doneBytes / 2, file.size) }
         }
 
         // 4) Complete.

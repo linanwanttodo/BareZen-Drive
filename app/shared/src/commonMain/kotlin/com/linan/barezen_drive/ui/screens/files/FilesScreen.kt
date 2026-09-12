@@ -75,6 +75,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -87,7 +88,6 @@ import com.linan.barezen_drive.core.dto.ShareDto
 import com.linan.barezen_drive.platform.copyToClipboard
 import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.data.repo.AlbumFolder
-import com.linan.barezen_drive.data.repo.AuthRepository
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.upload.UploadManager
 import com.linan.barezen_drive.platform.PickedFile
@@ -150,7 +150,6 @@ fun FilesScreen(
     path: List<FolderDto>,
     repo: FilesRepository,
     uploader: UploadManager,
-    auth: AuthRepository,
     thumbs: ThumbnailLoader,
     wallpaperBehind: Boolean = false,
     onOpenFolder: (FolderDto) -> Unit,
@@ -158,7 +157,6 @@ fun FilesScreen(
     avatar: @Composable () -> Unit = {},
     onJumpTo: (Int) -> Unit,
     onPreview: (List<FileDto>, Int) -> Unit,
-    onLoggedOut: () -> Unit,
     themeToggle: (@Composable () -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
@@ -220,26 +218,34 @@ fun FilesScreen(
     // action bar with select-all.
     val selectedFiles = remember { mutableStateOf(setOf<String>()) }
 
-    // Drain pending picks sequentially; the target folder is read through
-    // rememberUpdatedState so a stale picker closure cannot upload into a
-    // folder the user has already navigated away from.
-    LaunchedEffect(pendingUploads) {
-        val picks = pendingUploads
-        if (picks.isEmpty() || uploading) return@LaunchedEffect
-        uploading = true
-        val target = uploadTarget?.first ?: currentPath.lastOrNull()?.id
-        try {
-            for (p in picks) {
-                uploader.upload(p, target).fold(
-                    onSuccess = { },
-                    onFailure = { e -> snackbar.showSnackbar(msg(e, I18n.strings.uploadFailedNamed(p.name))) },
-                )
+    // Drain pending picks sequentially. Picks that arrive while an upload is
+    // running stay queued and go out in the next round instead of silently
+    // vanishing (Compose state is UI-thread confined, so the take-and-clear
+    // below cannot interleave with a picker callback).
+    LaunchedEffect(Unit) {
+        snapshotFlow { pendingUploads.isNotEmpty() }.collect { nonEmpty ->
+            if (!nonEmpty) return@collect
+            while (pendingUploads.isNotEmpty()) {
+                val picks = pendingUploads
+                pendingUploads = emptyList()
+                uploading = true
+                // The dialog choice is authoritative when present: its id is
+                // null for an explicit "root" pick and must NOT fall back to
+                // the folder currently on screen. It is consumed together
+                // with the picks - clearing it only after the round would
+                // wipe a choice the user made while this round was uploading.
+                val choice = uploadTarget
+                uploadTarget = null
+                val target = if (choice != null) choice.first else currentPath.lastOrNull()?.id
+                for (p in picks) {
+                    uploader.upload(p, target).fold(
+                        onSuccess = { },
+                        onFailure = { e -> snackbar.showSnackbar(msg(e, I18n.strings.uploadFailedNamed(p.name))) },
+                    )
+                }
+                uploading = false
+                reload()
             }
-        } finally {
-            pendingUploads = emptyList()
-            uploading = false
-            uploadTarget = null
-            reload()
         }
     }
 
@@ -350,7 +356,8 @@ fun FilesScreen(
                         selectedFiles.value = emptySet()
                     }) { Icon(Icons.Default.Share, contentDescription = LocalStrings.current.actionShare) }
                     IconButton(onClick = {
-                        deleting = ui.files.firstOrNull { it.id == sel.first() }
+                        // Delete every selected file, not just the first one.
+                        deleting = ui.files.filter { it.id in sel }
                         selectedFiles.value = emptySet()
                     }) {
                         Icon(Icons.Default.Delete, contentDescription = LocalStrings.current.actionDelete,
@@ -559,6 +566,7 @@ fun FilesScreen(
 
     deleting?.let { item ->
         val isFolder = item is FolderDto
+        val batch = item as? List<*>
         val name = when (item) {
             is FolderDto -> item.name
             is FileDto -> item.name
@@ -567,21 +575,27 @@ fun FilesScreen(
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text(if (isFolder) LocalStrings.current.deleteFolder else LocalStrings.current.deleteFile) },
-            text = { Text(LocalStrings.current.confirmDelete(name)) },
+            text = {
+                Text(
+                    if (batch != null) LocalStrings.current.confirmDeleteCount(batch.size)
+                    else LocalStrings.current.confirmDelete(name),
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     val d = deleting
                     deleting = null
                     scope.launch {
-                        val r = when (d) {
-                            is FolderDto -> repo.deleteFolder(d.id)
-                            is FileDto -> repo.deleteFile(d.id)
-                            else -> return@launch
+                        var failed = 0
+                        when (d) {
+                            is FolderDto -> if (repo.deleteFolder(d.id).isFailure) failed++
+                            is FileDto -> if (repo.deleteFile(d.id).isFailure) failed++
+                            is List<*> -> d.filterIsInstance<FileDto>().forEach { f ->
+                                if (repo.deleteFile(f.id).isFailure) failed++
+                            }
                         }
-                        r.fold(
-                            onSuccess = { reload() },
-                            onFailure = { snackbar.showSnackbar(msg(it, I18n.strings.deleteFailed)) },
-                        )
+                        if (failed > 0) snackbar.showSnackbar(I18n.strings.deleteFailed)
+                        reload()
                     }
                 }) { Text(LocalStrings.current.actionDelete) }
             },
@@ -1032,82 +1046,79 @@ private fun MoveDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
+    // Drill-down picker like the upload destination dialog: tapping a folder
+    // descends into it, and "move here" targets the folder currently on
+    // display. The old flat root-level list could never reach nested
+    // destinations (e.g. album category folders).
     // Selection uses sentinel ROOT_FOLDER_ID for the root directory.
-    var selected by remember { mutableStateOf(target.fromFolderId ?: ROOT_FOLDER_ID) }
-    var folders by remember { mutableStateOf<List<FolderDto>>(emptyList()) }
+    var stack by remember { mutableStateOf(listOf<FolderDto>()) }
+    var entries by remember { mutableStateOf<List<FolderDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    var retry by remember { mutableStateOf(0) }
+    val currentId = stack.lastOrNull()?.id ?: ROOT_FOLDER_ID
 
-    suspend fun loadInto(id: String?) {
-        val r = repo.contents(id ?: ROOT_FOLDER_ID)
-        r.fold(
-            onSuccess = {
-                folders = it.folders
-                loading = false
-            },
-            onFailure = {
-                error = it.message ?: I18n.strings.loadFailed
+    LaunchedEffect(stack, retry) {
+        loading = true
+        error = null
+        repo.contents(currentId).fold(
+            onSuccess = { entries = it.folders; loading = false },
+            onFailure = { e ->
+                entries = emptyList()
+                error = e.message?.takeIf { it.isNotBlank() } ?: I18n.strings.loadFailed
                 loading = false
             },
         )
     }
-
-    LaunchedEffect(Unit) { loadInto(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(LocalStrings.current.moveToTitle(target.fileName)) },
         text = {
             Box(modifier = Modifier.height(280.dp)) {
-                when {
-                    loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
-                    error != null -> Text(error!!, color = MaterialTheme.colorScheme.error)
-                    else -> Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState()),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selected = ROOT_FOLDER_ID }
-                                .padding(vertical = 10.dp, horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Default.Folder,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(LocalStrings.current.rootFolder)
-                            Spacer(Modifier.weight(1f))
-                            if (selected == ROOT_FOLDER_ID) {
-                                Text(LocalStrings.current.selected, style = MaterialTheme.typography.labelSmall)
-                            }
+                Column(Modifier.fillMaxSize()) {
+                    if (stack.isNotEmpty()) {
+                        TextButton(onClick = { stack = stack.dropLast(1) }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text(stack.dropLast(1).lastOrNull()?.name ?: LocalStrings.current.rootFolder)
                         }
-                        folders.forEach { f ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { selected = f.id }
-                                    .padding(vertical = 10.dp, horizontal = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    Icons.Default.Folder,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Spacer(Modifier.weight(1f))
-                                if (selected == f.id) {
-                                    Text(LocalStrings.current.selected, style = MaterialTheme.typography.labelSmall)
+                    }
+                    when {
+                        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                        error != null -> Column {
+                            Text(error!!, color = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(onClick = { retry++ }) { Text(LocalStrings.current.actionRetry) }
+                        }
+                        entries.isEmpty() -> Text(
+                            LocalStrings.current.folderEmpty,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+                        )
+                        else -> Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            entries.forEach { f ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { stack = stack + f }
+                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Default.Folder,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }
@@ -1117,9 +1128,14 @@ private fun MoveDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = !loading && selected != target.fromFolderId,
-                onClick = { onConfirm(selected) },
-            ) { Text(LocalStrings.current.moveHere) }
+                // Move into the folder on display; disabled on load errors and
+                // when it is the file's current folder (a no-op move).
+                enabled = !loading && error == null &&
+                    currentId != (target.fromFolderId ?: ROOT_FOLDER_ID),
+                onClick = { onConfirm(currentId) },
+            ) {
+                Text(LocalStrings.current.moveHere)
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(LocalStrings.current.actionCancel) } },
     )
@@ -1304,13 +1320,22 @@ private fun UploadLocationDialog(
     var stack by remember { mutableStateOf(listOf<FolderDto>()) }
     var entries by remember { mutableStateOf(listOf<FolderDto>()) }
     var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var retry by remember { mutableStateOf(0) }
     val currentId = stack.lastOrNull()?.id
 
-    LaunchedEffect(stack) {
+    LaunchedEffect(stack, retry) {
         loading = true
+        error = null
         repo.contents(currentId ?: "root").fold(
             onSuccess = { entries = it.folders },
-            onFailure = { entries = emptyList() },
+            // A failed listing must read as an error, not as "no folders":
+            // confirming would otherwise upload into a folder the user never
+            // saw, silently.
+            onFailure = { e ->
+                entries = emptyList()
+                error = e.message?.takeIf { it.isNotBlank() } ?: I18n.strings.loadFailed
+            },
         )
         loading = false
     }
@@ -1327,21 +1352,27 @@ private fun UploadLocationDialog(
                         Text(stack.dropLast(1).lastOrNull()?.name ?: LocalStrings.current.rootFolder)
                     }
                 }
+                val err = error
                 if (loading) {
                     Text(LocalStrings.current.loading, style = MaterialTheme.typography.bodySmall)
+                } else if (err != null) {
+                    Text(err, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { retry++ }) { Text(LocalStrings.current.actionRetry) }
                 }
-                LazyColumn {
-                    items(entries, key = { it.id }) { folder ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { stack = stack + folder }
-                                .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Default.Folder, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
-                            Text(folder.name)
+                if (!loading && err == null) {
+                    LazyColumn {
+                        items(entries, key = { it.id }) { folder ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { stack = stack + folder }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Default.Folder, contentDescription = null)
+                                Spacer(Modifier.width(10.dp))
+                                Text(folder.name)
+                            }
                         }
                     }
                 }
@@ -1349,9 +1380,12 @@ private fun UploadLocationDialog(
         },
         confirmButton = {
             val rootLabel = LocalStrings.current.rootFolder
-            TextButton(onClick = {
-                onPicked(currentId, stack.lastOrNull()?.name ?: rootLabel)
-            }) { Text(LocalStrings.current.actionConfirm) }
+            TextButton(
+                enabled = error == null,
+                onClick = {
+                    onPicked(currentId, stack.lastOrNull()?.name ?: rootLabel)
+                },
+            ) { Text(LocalStrings.current.actionConfirm) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(LocalStrings.current.actionCancel) }

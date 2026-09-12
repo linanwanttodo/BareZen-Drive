@@ -61,7 +61,10 @@ fun UsersScreen(
     fun reload() {
         scope.launch {
             list = null
-            list = runCatching { users() }.getOrElse { error = I18n.strings.loadFailed; emptyList() }
+            runCatching { users() }.fold(
+                onSuccess = { list = it; error = null },
+                onFailure = { error = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed; list = emptyList() },
+            )
         }
     }
     LaunchedEffect(Unit) { reload() }
@@ -161,8 +164,15 @@ fun UsersScreen(
                 TextButton(onClick = {
                     deleting = null
                     scope.launch {
-                        onDelete(user)
-                        reload()
+                        // onDelete throws on failure. A failed delete must keep
+                        // its error visible; reloading only on success (and a
+                        // reload clears the error, so it must not run after one).
+                        runCatching { onDelete(user) }.fold(
+                            onSuccess = { reload() },
+                            onFailure = { e ->
+                                error = e.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.operationFailed
+                            },
+                        )
                     }
                 }) { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) }
             },

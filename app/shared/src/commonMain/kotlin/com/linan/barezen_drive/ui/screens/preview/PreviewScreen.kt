@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
 import io.ktor.utils.io.ByteReadChannel
 import com.linan.barezen_drive.data.repo.FilesRepository
+import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.media.formatDateTime
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
@@ -44,6 +45,8 @@ import com.linan.barezen_drive.platform.rememberFileSaver
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.Button
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 
 /**
  * Full-screen preview. The pager swipes across the whole collection like a
@@ -65,13 +68,18 @@ fun PreviewScreen(
     }
     val file = files.getOrNull(index) ?: return
     val scope = rememberCoroutineScope()
-    val saver = rememberFileSaver { }
+    val snackbar = SnackbarHostState()
+    val saver = rememberFileSaver { result ->
+        // The saver reports null when the write failed or was cancelled.
+        if (result == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    }
 
     var showInfo by remember { mutableStateOf(false) }
     var shareUrl by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(file.name, maxLines = 1) },
@@ -99,7 +107,7 @@ fun PreviewScreen(
                         scope.launch {
                             repo.createShare(fileId = file.id).fold(
                                 onSuccess = { shareUrl = it.url },
-                                onFailure = { },
+                                onFailure = { snackbar.showSnackbar(I18n.strings.operationFailed) },
                             )
                         }
                     }) {
@@ -191,7 +199,7 @@ fun PreviewScreen(
                                 onChanged()
                                 onBack()
                             },
-                            onFailure = { },
+                            onFailure = { snackbar.showSnackbar(I18n.strings.deleteFailed) },
                         )
                     }
                 }) { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) }

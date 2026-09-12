@@ -39,7 +39,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
@@ -59,6 +62,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
+import kotlinx.coroutines.launch
 
 /**
  * Public share landing page (no login required). File shares show metadata and
@@ -110,7 +114,7 @@ private fun InvalidShare(onExit: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(20.dp))
-            TextButton(onClick = onExit) { Text(LocalStrings.current.goToLogin) }
+            TextButton(onClick = onExit) { Text(LocalStrings.current.goToApp) }
         }
     }
 }
@@ -124,12 +128,18 @@ private fun SharedFileView(
     repo: FilesRepository,
     onExit: () -> Unit,
 ) {
-    val saver = rememberFileSaver { }
+    val scope = rememberCoroutineScope()
+    val snackbar = SnackbarHostState()
+    val saver = rememberFileSaver { result ->
+        // A failed or cancelled save must not look like success.
+        if (result == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    }
     val fileId = info.fileId ?: return InvalidShare(onExit)
     // Only images preview inline; everything else offers a plain download.
     val isImage = info.mimeType?.startsWith("image/") == true
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(info.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -236,6 +246,7 @@ private fun SharedFolderView(
     val currentId = crumbs.lastOrNull()?.id
     var listing by remember { mutableStateOf<SharedContentsResponse?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
+    val snackbar = SnackbarHostState()
 
     LaunchedEffect(currentId) {
         repo.sharedContents(token, currentId).fold(
@@ -245,6 +256,7 @@ private fun SharedFolderView(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(crumbs.lastOrNull()?.name ?: info.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
@@ -299,7 +311,7 @@ private fun SharedFolderView(
                         HorizontalDivider()
                     }
                     items(l.files, key = { "d_${it.id}" }) { file ->
-                        SharedFileRow(token, file, repo)
+                        SharedFileRow(token, file, repo, snackbar)
                         HorizontalDivider()
                     }
                 }
@@ -324,8 +336,16 @@ private fun SharedFolderRow(folder: SharedFolderDto, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun SharedFileRow(token: String, file: SharedFileDto, repo: FilesRepository) {
-    val saver = rememberFileSaver { }
+private fun SharedFileRow(
+    token: String,
+    file: SharedFileDto,
+    repo: FilesRepository,
+    snackbar: SnackbarHostState,
+) {
+    val scope = rememberCoroutineScope()
+    val saver = rememberFileSaver { result ->
+        if (result == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()

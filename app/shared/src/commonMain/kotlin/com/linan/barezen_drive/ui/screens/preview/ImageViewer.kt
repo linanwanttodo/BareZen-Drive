@@ -39,9 +39,10 @@ import kotlinx.coroutines.withContext
 import com.linan.barezen_drive.i18n.LocalStrings
 
 /**
- * Swipeable full-screen image viewer. Every page loads a low-cost thumbnail
- * first (instant visual) and then the full content; pages support pinch
- * zoom + pan and double-tap to toggle 1x/2.5x.
+ * Swipeable full-screen image viewer. Every page loads the full content with
+ * the private-file preview endpoint; pages support pinch zoom + pan and
+ * double-tap to toggle 1x/2.5x. At 1x a horizontal drag belongs to the pager,
+ * so browsing photos stays natural.
  */
 @Composable
 fun ImageViewer(files: List<FileDto>, initialIndex: Int, repo: FilesRepository, onPageChange: (Int) -> Unit = {}) {

@@ -189,6 +189,9 @@ fun App() {
         LaunchedEffect(TokenStorage.accessToken) {
             registrationOpen = files.registrationStatus().getOrNull()?.open
             currentUserId = files.me().getOrNull()?.id
+            // Logout / account switch: never carry the previous account's
+            // thumbnails across (in-memory cache + negative entries).
+            thumbs.clear()
         }
         // Keep the background album-sync job in step with the stored settings.
         LaunchedEffect(albumAutoSync, syncWifiOnly) {
@@ -202,14 +205,16 @@ fun App() {
                 ),
             )
         }
-        // Public share pages bypass login and the tab shell entirely.
-        val shareToken = shareEntryToken
+        // Public share pages bypass login and the tab shell entirely. The
+        // token lives in state: "go to app" must be able to leave the share
+        // page, and a process-level constant could never be dismissed.
+        var shareToken by remember { mutableStateOf(shareEntryToken) }
         if (shareToken != null) {
             Box(Modifier.fillMaxSize().background(scheme.background)) {
                 ShareScreen(
-                    token = shareToken,
+                    token = shareToken!!,
                     repo = files,
-                    onExit = { stack = listOf(Screen.Login) },
+                    onExit = { shareToken = null },
                 )
             }
             return@Box
@@ -279,6 +284,10 @@ fun App() {
                 pop()
                 },
                 themeToggle = themeToggle,
+                // Browse-first: login reached from the signed-out panes must be
+                // escapable back to the app shell (never offered when it is the
+                // root screen, e.g. after logout or a share-page exit).
+                onBack = if (stack.size > 1) ({ pop() }) else null,
             )
             is Screen.Main -> {
                 MainShell(
@@ -297,11 +306,6 @@ fun App() {
                             saver = recentSaver,
                             themeToggle = themeToggle,
                             onOpenTransfers = { push(Screen.Transfers) },
-                            onDeleteFiles = { list ->
-                                scope.launch {
-                                    list.forEach { f -> files.deleteFile(f.id) }
-                                }
-                            },
                             avatar = { if (signedIn) AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else AlbumScreen(
@@ -313,22 +317,16 @@ fun App() {
                             onOpenTransfers = { push(Screen.Transfers) },
                             avatar = { if (signedIn) AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
                         )
-                        MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(                            path = filesPath,
+                        MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(
+                            path = filesPath,
                             repo = files,
                             uploader = uploader,
-                            auth = auth,
                             thumbs = thumbs,
                             wallpaperBehind = wallpaperBehind,
                             onOpenTransfers = { push(Screen.Transfers) },
                             onOpenFolder = { filesPath = filesPath + it },
                             onJumpTo = { idx -> filesPath = filesPath.take(idx + 1) },
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
-                            onLoggedOut = {
-                                username = ""
-                                prefs.username = ""
-                                auth.logout()
-                                stack = listOf(Screen.Login)
-                            },
                             themeToggle = themeToggle,
                         )
                         MainTab.SEARCH -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else SearchScreen(
@@ -420,17 +418,15 @@ fun App() {
                 currentUserId = currentUserId,
                 users = { files.adminUsers().getOrThrow().users },
                 onDelete = { user ->
-                    files.adminDeleteUser(user.id).fold(
-                        onSuccess = {
-                            if (user.id == currentUserId) {
-                                username = ""
-                                prefs.username = ""
-                                auth.logout()
-                                stack = listOf(Screen.Login)
-                            }
-                        },
-                        onFailure = { },
-                    )
+                    // getOrThrow so the screen can surface the failure; the
+                    // previous silent fold made a failed delete look done.
+                    files.adminDeleteUser(user.id).getOrThrow()
+                    if (user.id == currentUserId) {
+                        username = ""
+                        prefs.username = ""
+                        auth.logout()
+                        stack = listOf(Screen.Login)
+                    }
                 },
                 onBack = pop,
             )

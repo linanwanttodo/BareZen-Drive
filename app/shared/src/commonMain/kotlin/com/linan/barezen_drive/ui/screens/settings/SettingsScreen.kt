@@ -159,6 +159,9 @@ fun SettingsScreen(
     onBack: (() -> Unit)? = null,
 ) {
     var showAccountInfo by remember { androidx.compose.runtime.mutableStateOf(false) }
+    // Sign-out drops the session and forces re-entry of credentials; confirm
+    // first so a stray tap cannot trigger it.
+    var confirmLogout by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
@@ -204,7 +207,7 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                OutlinedButton(onClick = onLogout) { Text(LocalStrings.current.actionSignOut) }
+                OutlinedButton(onClick = { confirmLogout = true }) { Text(LocalStrings.current.actionSignOut) }
             }
             }
 
@@ -448,6 +451,23 @@ fun SettingsScreen(
                 onDismiss = { showAccountInfo = false },
             )
         }
+
+        if (confirmLogout) {
+            AlertDialog(
+                onDismissRequest = { confirmLogout = false },
+                title = { Text(LocalStrings.current.actionSignOut) },
+                text = { Text(LocalStrings.current.confirmLogoutQuestion) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmLogout = false
+                        onLogout()
+                    }) { Text(LocalStrings.current.actionSignOut, color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmLogout = false }) { Text(LocalStrings.current.actionCancel) }
+                },
+            )
+        }
     }
 }
 
@@ -529,10 +549,4 @@ private val AccentSwatches = listOf(
     Color(0xFFBC4C00), // orange
     Color(0xFF1B7C83), // teal
     Color(0xFFCF222E), // red
-)
-
-
-/** Circle clip helper kept tiny for the avatar image. */
-private fun Modifier.androidxCircleClip(): Modifier = this.then(
-    Modifier.clip(androidx.compose.foundation.shape.CircleShape),
 )

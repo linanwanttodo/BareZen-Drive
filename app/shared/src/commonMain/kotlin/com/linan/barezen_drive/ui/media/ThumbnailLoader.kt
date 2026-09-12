@@ -30,6 +30,22 @@ class ThumbnailLoader(private val repo: FilesRepository) {
     private val mutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    /**
+     * Drops cached bitmaps, negative entries and in-flight fetches. Called on
+     * logout / account switch so the previous account's covers never survive
+     * in memory (in-flight fetches are cancelled outright).
+     */
+    suspend fun clear() {
+        mutex.withLock {
+            cache.clear()
+            cacheBytes.clear()
+            totalBytes = 0
+            missing.clear()
+            inFlight.values.forEach { it.cancel() }
+            inFlight.clear()
+        }
+    }
+
     suspend fun load(fileId: String): ImageBitmap? {
         mutex.withLock {
             cache.remove(fileId)?.let { bmp ->

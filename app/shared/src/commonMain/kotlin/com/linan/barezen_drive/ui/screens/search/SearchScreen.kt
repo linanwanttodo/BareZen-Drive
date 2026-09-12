@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Description
@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
+import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.AvatarButton
 import com.linan.barezen_drive.ui.media.formatDateTime
@@ -55,15 +56,27 @@ fun SearchScreen(
 ) {
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<FileDto>?>(null) }
+    var searchError by remember { mutableStateOf<String?>(null) }
 
     // Debounced live search: every keystroke waits 300ms, then queries.
     LaunchedEffect(query) {
         delay(300)
-        results = if (query.isBlank()) {
-            null
-        } else {
-            files.search(query.trim()).getOrNull()?.files ?: emptyList()
+        if (query.isBlank()) {
+            results = null
+            searchError = null
+            return@LaunchedEffect
         }
+        // A failed query must read as a failure, not as "no results".
+        files.search(query.trim()).fold(
+            onSuccess = {
+                results = it.files
+                searchError = null
+            },
+            onFailure = { e ->
+                results = null
+                searchError = e.message?.takeIf { it.isNotBlank() } ?: I18n.strings.loadFailed
+            },
+        )
     }
 
     Scaffold(
@@ -89,7 +102,14 @@ fun SearchScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
             val shown = results
+            val err = searchError
             when {
+                err != null && query.isNotBlank() -> Box(
+                    Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(err, color = MaterialTheme.colorScheme.error)
+                }
                 shown == null -> {}
                 shown.isEmpty() && query.isNotBlank() -> Box(
                     Modifier.fillMaxSize(),
@@ -101,14 +121,11 @@ fun SearchScreen(
                     )
                 }
                 else -> LazyColumn(Modifier.fillMaxSize()) {
-                    items(shown, key = { it.id }) { file ->
+                    itemsIndexed(shown, key = { _, f -> f.id }) { i, file ->
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    val index = shown.indexOf(file).coerceAtLeast(0)
-                                    onPreview(listOf(file), index)
-                                }
+                                .clickable { onPreview(shown, i) }
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

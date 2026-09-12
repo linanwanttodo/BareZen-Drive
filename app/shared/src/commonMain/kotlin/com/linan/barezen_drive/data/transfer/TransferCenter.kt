@@ -104,6 +104,7 @@ object TransferCenter {
     }
 
     fun done(id: String) {
+        cancelledIds.remove(id)
         val item = _items.value.firstOrNull { it.id == id } ?: return
         update(id) { it.copy(phase = TransferPhase.DONE, atMs = nowMs()) }
         runCatching {
@@ -128,9 +129,15 @@ object TransferCenter {
 
     /** Removes finished rows (the "clear" action on the done tab). */
     fun clearFinished() {
-        val finished = _items.value.filter { it.phase != TransferPhase.RUNNING }
-        _items.update { list -> list.filter { it.phase == TransferPhase.RUNNING } }
-        finished.forEach { runCatching { com.linan.barezen_drive.platform.TransferNotifier.dismiss(it.id) } }
+        // Only settled rows: queued children of a still-running batch must
+        // stay visible. A cancel flag whose batch has left the list is also
+        // dropped, keeping cancelledIds bounded to live work.
+        val finished = _items.value.filter { it.phase == TransferPhase.DONE || it.phase == TransferPhase.FAILED }
+        _items.update { list -> list.filter { it.phase != TransferPhase.DONE && it.phase != TransferPhase.FAILED } }
+        finished.forEach {
+            cancelledIds.remove(it.id)
+            runCatching { com.linan.barezen_drive.platform.TransferNotifier.dismiss(it.id) }
+        }
     }
 
     private fun push(item: TransferItem) {

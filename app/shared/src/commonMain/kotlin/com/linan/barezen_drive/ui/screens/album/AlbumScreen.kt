@@ -94,10 +94,13 @@ import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.platform.copyToClipboard
 import com.linan.barezen_drive.platform.rememberFileSaver
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.text.style.TextOverflow
 
 private const val PAGE_SIZE = 200
@@ -137,18 +140,33 @@ fun AlbumScreen(
     avatar: @Composable () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val snackbar = SnackbarHostState()
     var groups by remember { mutableStateOf<List<AlbumGroup>>(emptyList()) }
     var cursor by remember { mutableStateOf<String?>(null) }
     var exhausted by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // Bumped whenever the page list is discarded (scope/category switch,
+    // refresh): lets an in-flight page from the OLD scope be dropped instead of
+    // leaking into the new one and leaving the fresh load swallowed by the
+    // loading flag.
+    var generation by remember { mutableStateOf(0) }
+    // Bumped on a scope switch that lands on the SAME folder id, which the
+    // key-based reload effect below would otherwise not notice.
+    var reloadTick by remember { mutableStateOf(0) }
     var pendingUploads by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
     var uploadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val progress by uploader.progress.collectAsState()
-    // The dedicated album folder tree plus per-device subfolder: the timeline
-    // scans only this subtree and uploads land inside it, keeping photos out of
-    // the general file tree.
+    // This device's own album folder: uploads always target it. Kept apart
+    // from albumFolderId (the currently *browsed* scope: a device folder, a
+    // category, or the album root for "all devices"), so switching the
+    // browsing scope can never redirect uploads into another device's folder.
+    var deviceFolderId by remember { mutableStateOf<String?>(null) }
     var albumFolderId by remember { mutableStateOf<String?>(null) }
+    // Album-folder resolution can fail while the server is unreachable.
+    // Without a visible retry the screen just sits on "no photos" forever.
+    var resolveFailed by remember { mutableStateOf(false) }
+    var resolveTick by remember { mutableStateOf(0) }
     val device = remember { deviceName() }
 
     var scopeName by remember { mutableStateOf(device) }
@@ -172,17 +190,24 @@ fun AlbumScreen(
     var collections by remember { mutableStateOf<List<CollectionTile>>(emptyList()) }
     var collectionsLoading by remember { mutableStateOf(false) }
     val allPhotosLabel = LocalStrings.current.allPhotos
+    val allDevicesLabel = LocalStrings.current.allDevices
 
-    LaunchedEffect(Unit) {
-        albumFolderId = AlbumFolder.resolve(repo, device, legacyDeviceName())
+    LaunchedEffect(resolveTick) {
+        val id = AlbumFolder.resolve(repo, device, legacyDeviceName())
+        resolveFailed = id == null
+        deviceFolderId = id
+        // First success (or success after a failed start) also opens the
+        // default browsing scope; later retries must not yank the user out
+        // of a scope they had switched to.
+        if (id != null && albumFolderId == null) albumFolderId = id
         deviceOptions = AlbumFolder.listDevices(repo)
-        albumFolderId?.let { categories = repo.contents(it).getOrNull()?.folders?.map { f -> f.name to f.id } ?: emptyList() }
+        id?.let { categories = repo.contents(it).getOrNull()?.folders?.map { f -> f.name to f.id } ?: emptyList() }
     }
 
     // Covers for the collections landing: the newest photo of each folder.
     LaunchedEffect(albumFolderId, categories) {
         val scope = albumFolderId ?: return@LaunchedEffect
-        if (timelineMode) return@LaunchedEffect
+        if (timelineMode || scopeName == allDevicesLabel) return@LaunchedEffect
         collectionsLoading = true
         suspend fun coverOf(folderId: String?): FileDto? =
             repo.album(1, null, folderId).getOrNull()?.files?.firstOrNull()
@@ -195,15 +220,22 @@ fun AlbumScreen(
     }
 
     fun switchScope(id: String?, name: String) {
+        generation++
+        loading = false
         groups = emptyList(); cursor = null; exhausted = false; error = null
         activeCategory = null
         timelineMode = false
-        scope.launch {
-            categories = id?.let { repo.contents(it).getOrNull()?.folders?.map { f -> f.name to f.id } } ?: emptyList()
-        }
         scopeName = name
-        // The LaunchedEffect(albumFolderId) reload picks this up.
+        categories = emptyList()
+        scope.launch {
+            categories = id?.let { cid ->
+                if (name == allDevicesLabel) emptyList()
+                else repo.contents(cid).getOrNull()?.folders?.map { f -> f.name to f.id } ?: emptyList()
+            } ?: emptyList()
+        }
+        // The reload effect picks this up (tick makes same-scope reselects reload too).
         albumFolderId = id
+        reloadTick++
     }
 
     // Upload speed: derived from consecutive progress callbacks, sampled at
@@ -231,46 +263,64 @@ fun AlbumScreen(
 
     fun loadMore() {
         if (loading || exhausted) return
+        val myGen = generation
         scope.launch {
             loading = true
             repo.album(PAGE_SIZE, cursor, activeCategory ?: albumFolderId).fold(
                 onSuccess = { page ->
-                    val all = groups.flatMap { it.files } + page.files
-                    groups = groupByMonth(all)
-                    cursor = page.nextCursor
-                    if (page.nextCursor == null) exhausted = true
-                    error = null
-                    loading = false
+                    // Page answering a discarded request (the user switched
+                    // device/category in the meantime): drop it, do not touch
+                    // the fresh scope's flags or append into its list.
+                    if (myGen == generation) {
+                        loading = false
+                        val all = groups.flatMap { it.files } + page.files
+                        groups = groupByMonth(all)
+                        cursor = page.nextCursor
+                        if (page.nextCursor == null) exhausted = true
+                        error = null
+                    }
                 },
                 onFailure = {
-                    loading = false
-                    error = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed
+                    if (myGen == generation) {
+                        loading = false
+                        error = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed
+                    }
                 },
             )
         }
     }
 
-    LaunchedEffect(albumFolderId) { if (albumFolderId != null) loadMore() }
+    LaunchedEffect(albumFolderId, reloadTick) { if (albumFolderId != null) loadMore() }
 
-    // Upload the picked photos sequentially into the album/<device> folder;
+    // Upload the picked photos sequentially into THIS DEVICE's album folder;
     // cancelling the current one aborts its session and moves to the next.
     LaunchedEffect(pendingUploads) {
         if (pendingUploads.isEmpty()) return@LaunchedEffect
-        val target = albumFolderId ?: AlbumFolder.resolve(repo, device, legacyDeviceName())
-        albumFolderId = target
+        val target = deviceFolderId
+            ?: AlbumFolder.resolve(repo, device, legacyDeviceName()).also { deviceFolderId = it }
+        if (target == null) {
+            // Offline album resolution must not silently drop photos into the
+            // general file tree (folderId null): fail the batch visibly.
+            pendingUploads = emptyList()
+            snackbar.showSnackbar(I18n.strings.uploadFailedRetry)
+            return@LaunchedEffect
+        }
         val picks = pendingUploads
-        picks.forEachIndexed { i, picked ->
+        picks.forEach { picked ->
             // Photos carry their phone-album name; the matching category
             // folder is created on first upload (null = straight into the
             // device folder, e.g. web/desktop uploads).
             val perFile = picked.originAlbum?.takeIf { it.isNotBlank() }
-                ?.let { cat -> target?.let { t -> AlbumFolder.resolveCategory(repo, t, cat) } }
+                ?.let { cat -> AlbumFolder.resolveCategory(repo, target, cat) }
                 ?: target
             uploadJob = launch { uploader.upload(picked, perFile) }
             uploadJob?.join()
         }
+        uploadJob = null
         pendingUploads = emptyList()
         // Refresh the grid so new photos appear immediately.
+        generation++
+        loading = false
         groups = emptyList()
         cursor = null
         exhausted = false
@@ -278,10 +328,13 @@ fun AlbumScreen(
     }
 
 
-    val saver = rememberFileSaver { }
+    val saver = rememberFileSaver { result ->
+        if (result == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    }
     var shareUrl by remember { mutableStateOf<String?>(null) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
+        snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             if (selectionMode) {
                 // Google-Photos action bar: share / download / delete for the
@@ -300,7 +353,10 @@ fun AlbumScreen(
                         BarAction(Icons.Default.Share, LocalStrings.current.actionShare) {
                             scope.launch {
                                 selected.values.firstOrNull()?.let { first ->
-                                    repo.createShare(fileId = first.id).onSuccess { shareUrl = it.url }
+                                    repo.createShare(fileId = first.id).fold(
+                                        onSuccess = { shareUrl = it.url },
+                                        onFailure = { snackbar.showSnackbar(I18n.strings.operationFailed) },
+                                    )
                                 }
                             }
                         }
@@ -314,11 +370,16 @@ fun AlbumScreen(
                         }
                         BarAction(Icons.Default.Delete, LocalStrings.current.actionDelete, tint = MaterialTheme.colorScheme.error) {
                             scope.launch {
-                                selected.values.forEach { file -> repo.deleteFile(file.id) }
-                                val count = selected.size
+                                val failed = selected.values.count { repo.deleteFile(it.id).isFailure }
+                                val hadSelection = selected.isNotEmpty()
                                 selected.clear()
-                                groups = emptyList(); cursor = null; exhausted = false
-                                loadMore()
+                                if (hadSelection) {
+                                    generation++
+                                    loading = false
+                                    groups = emptyList(); cursor = null; exhausted = false; error = null
+                                    loadMore()
+                                }
+                                if (failed > 0) snackbar.showSnackbar(I18n.strings.deleteFailed)
                             }
                         }
                     }
@@ -356,6 +417,19 @@ fun AlbumScreen(
                                     },
                                 )
                             }
+                            // "All devices": the whole album subtree, with no
+                            // collections landing (categories differ per device).
+                            DropdownMenuItem(
+                                text = { Text(allDevicesLabel) },
+                                onClick = {
+                                    deviceMenuOpen = false
+                                    scope.launch {
+                                        val root = AlbumFolder.rootId(repo)
+                                        if (root != null) switchScope(root, allDevicesLabel)
+                                        else snackbar.showSnackbar(I18n.strings.loadFailed)
+                                    }
+                                },
+                            )
                         }
                     }
                 },
@@ -409,9 +483,16 @@ fun AlbumScreen(
     ) { pad ->
         val flat = groups.flatMap { it.files }
         when {
+            // Album folder unreachable: offer a retry instead of a permanent
+            // empty screen.
+            resolveFailed -> Centered(pad) {
+                Text(LocalStrings.current.loadFailed, color = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { resolveTick++ }) { Text(LocalStrings.current.actionRetry) }
+            }
             // Collections landing: one rounded cover per phone album (the
             // first photo), plus an all-photos tile - Google Photos style.
-            !timelineMode && scopeName != LocalStrings.current.allDevices -> Centered(pad) {
+            !timelineMode && scopeName != allDevicesLabel -> Centered(pad) {
                 if (collectionsLoading) {
                     CircularProgressIndicator()
                 } else {
@@ -426,18 +507,39 @@ fun AlbumScreen(
                             val tile = collections[i]
                             CollectionCoverTile(tile = tile, thumbs = thumbs, onClick = {
                                 timelineMode = true
-                                if (tile.folderId != albumFolderId) {
-                                    activeCategory = tile.folderId
-                                    groups = emptyList(); cursor = null; exhausted = false
-                                    loadMore()
-                                }
+                                // The "all photos" tile keeps activeCategory
+                                // null; a category tile scopes the load. Always
+                                // reset the page list, otherwise a previous
+                                // category's photos leak into this view.
+                                activeCategory = if (tile.folderId != albumFolderId) tile.folderId else null
+                                generation++
+                                loading = false
+                                groups = emptyList(); cursor = null; exhausted = false; error = null
+                                loadMore()
                             })
                         }
                     }
                 }
             }
+            // Initial load failed (pages already on screen report through the
+            // grid footer instead).
+            error != null && groups.isEmpty() -> Centered(pad) {
+                Text(error ?: LocalStrings.current.loadFailed, color = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { error = null; loadMore() }) { Text(LocalStrings.current.actionRetry) }
+            }
+            groups.isEmpty() && loading -> Centered(pad) { CircularProgressIndicator() }
+            groups.isEmpty() -> Centered(pad) {
+                Text(LocalStrings.current.noPhotos, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (timelineMode) {
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { timelineMode = false }) {
+                        Text(LocalStrings.current.backToCollections)
+                    }
+                }
+            }
             // Dated layout: day sections of uniform squares.
-            viewMode == 2 -> LazyColumn(
+            timelineMode && viewMode == 2 -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(pad),
                 contentPadding = PaddingValues(bottom = 16.dp),
             ) {
@@ -481,13 +583,17 @@ fun AlbumScreen(
                     }
                 }
                 item(key = "loading") {
-                    if (loading) Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
+                    AlbumLoadMoreFooter(
+                        pageToken = groups,
+                        error = error,
+                        loading = loading,
+                        onRequest = { loadMore() },
+                        onRetry = { error = null; loadMore() },
+                    )
                 }
             }
             // Uniform grid: fixed square cells.
-            viewMode == 1 -> Column(Modifier.fillMaxSize().padding(pad)) {
+            timelineMode && viewMode == 1 -> Column(Modifier.fillMaxSize().padding(pad)) {
                 BackToCollectionsChip { timelineMode = false }
                 if (loading) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -516,16 +622,18 @@ fun AlbumScreen(
                             onLongClick = { selected[flat[i].id] = flat[i] },
                         )
                     }
+                    if (!exhausted) {
+                        item(key = "footer", span = { GridItemSpan(maxLineSpan) }) {
+                            AlbumLoadMoreFooter(
+                                pageToken = groups,
+                                error = error,
+                                loading = loading,
+                                onRequest = { loadMore() },
+                                onRetry = { error = null; loadMore() },
+                            )
+                        }
+                    }
                 }
-            }
-            error != null && groups.isEmpty() -> Centered(pad) {
-                Text(error ?: LocalStrings.current.loadFailed, color = MaterialTheme.colorScheme.error)
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { error = null; loadMore() }) { Text(LocalStrings.current.actionRetry) }
-            }
-            groups.isEmpty() && loading -> Centered(pad) { CircularProgressIndicator() }
-            groups.isEmpty() -> Centered(pad) {
-                Text(LocalStrings.current.noPhotos, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             else -> LazyVerticalStaggeredGrid(
                 columns = StaggeredGridCells.Adaptive(minSize = 110.dp),
@@ -574,14 +682,13 @@ fun AlbumScreen(
                 }
                 if (!exhausted) {
                     item(key = "loading", span = StaggeredGridItemSpan.FullLine) {
-                        Box(
-                            Modifier.fillMaxWidth().padding(16.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            // Fetch the next page whenever this cell becomes visible.
-                            LaunchedEffect(groups) { loadMore() }
-                            if (error == null) CircularProgressIndicator()
-                        }
+                        AlbumLoadMoreFooter(
+                            pageToken = groups,
+                            error = error,
+                            loading = loading,
+                            onRequest = { loadMore() },
+                            onRetry = { error = null; loadMore() },
+                        )
                     }
                 }
             }
@@ -645,6 +752,35 @@ fun AlbumScreen(
 private fun Centered(pad: PaddingValues, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) { content() }
+    }
+}
+
+/**
+ * Timeline footer shared by the three grid modes: fetches the next page
+ * whenever it becomes visible (keyed on the page list identity), and swaps
+ * the spinner for an inline retry when the last page failed.
+ */
+@Composable
+private fun AlbumLoadMoreFooter(
+    pageToken: Any,
+    error: String?,
+    loading: Boolean,
+    onRequest: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        LaunchedEffect(pageToken) { onRequest() }
+        val err = error
+        if (err != null) {
+            Text(err, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+            Spacer(Modifier.height(4.dp))
+            TextButton(onClick = onRetry) { Text(LocalStrings.current.actionRetry) }
+        } else if (loading) {
+            CircularProgressIndicator(Modifier.size(28.dp))
+        }
     }
 }
 

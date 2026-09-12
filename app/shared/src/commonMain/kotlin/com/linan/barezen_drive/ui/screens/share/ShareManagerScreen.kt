@@ -23,6 +23,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -56,6 +58,7 @@ fun ShareManagerScreen(
 ) {
     var shares by remember { mutableStateOf<List<ShareDto>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    val snackbar = SnackbarHostState()
     val scope = rememberCoroutineScope()
 
     fun refresh() {
@@ -70,6 +73,7 @@ fun ShareManagerScreen(
     LaunchedEffect(Unit) { refresh() }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(LocalStrings.current.shareManagement) },
@@ -116,7 +120,7 @@ fun ShareManagerScreen(
                 }
                 else -> LazyColumn(Modifier.fillMaxSize()) {
                     items(s, key = { it.id }) { share ->
-                        ShareRow(repo, share, onRevoked = { refresh() })
+                        ShareRow(repo, share, snackbar, onRevoked = { refresh() })
                         HorizontalDivider()
                     }
                 }
@@ -126,7 +130,12 @@ fun ShareManagerScreen(
 }
 
 @Composable
-private fun ShareRow(repo: FilesRepository, share: ShareDto, onRevoked: () -> Unit) {
+private fun ShareRow(
+    repo: FilesRepository,
+    share: ShareDto,
+    snackbar: SnackbarHostState,
+    onRevoked: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
     Row(
         modifier = Modifier
@@ -155,7 +164,13 @@ private fun ShareRow(repo: FilesRepository, share: ShareDto, onRevoked: () -> Un
             scope.launch {
                 repo.revokeShare(share.id).fold(
                     onSuccess = { onRevoked() },
-                    onFailure = { },
+                    // A failed revoke must not look like a success: the link
+                    // is still live, so report it.
+                    onFailure = {
+                        snackbar.showSnackbar(
+                            it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.operationFailed,
+                        )
+                    },
                 )
             }
         }) { Text(LocalStrings.current.actionClose, color = MaterialTheme.colorScheme.error) }

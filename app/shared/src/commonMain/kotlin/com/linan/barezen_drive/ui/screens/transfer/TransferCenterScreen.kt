@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,6 +60,9 @@ fun TransferCenterScreen(
 ) {
     var tab by remember { mutableIntStateOf(0) }
     val all by TransferCenter.items.collectAsState()
+    // Batch ids whose stop button was pressed: the worker finishes the
+    // in-flight file first, so the row must acknowledge the request.
+    var stopRequested by remember { mutableStateOf(setOf<String>()) }
 
     val uploading = all.filter { it.kind == TransferKind.UPLOAD && it.phase == TransferPhase.RUNNING }
     val downloading = all.filter { it.kind == TransferKind.DOWNLOAD && it.phase == TransferPhase.RUNNING }
@@ -160,8 +164,10 @@ fun TransferCenterScreen(
                         TransferRow(
                             item,
                             indent = item.parent != null,
+                            stopping = item.id in stopRequested,
                             onStop = {
                                 TransferCenter.cancel(item.id)
+                                stopRequested = stopRequested + item.id
                             },
                         )
                     }
@@ -172,7 +178,12 @@ fun TransferCenterScreen(
 }
 
 @Composable
-private fun TransferRow(item: TransferItem, indent: Boolean = false, onStop: () -> Unit = {}) {
+private fun TransferRow(
+    item: TransferItem,
+    indent: Boolean = false,
+    stopping: Boolean = false,
+    onStop: () -> Unit = {},
+) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -200,7 +211,9 @@ private fun TransferRow(item: TransferItem, indent: Boolean = false, onStop: () 
             // Stop button on the batch row: flags the worker, which drops the
             // rest of the queue after the in-flight file.
             if (item.phase == TransferPhase.RUNNING && item.kind == TransferKind.SYNC && item.parent == null) {
-                TextButton(onClick = onStop) { Text(LocalStrings.current.actionCancel) }
+                TextButton(onClick = onStop, enabled = !stopping) {
+                    Text(if (stopping) LocalStrings.current.stoppingSoon else LocalStrings.current.actionCancel)
+                }
             }
         }
         item.statusText?.let {

@@ -33,6 +33,7 @@ interface Strings {
     val actionRegister: String
     val registerAndSignIn: String
     val actionSignOut: String
+    val confirmLogoutQuestion: String
     val reopen: String
     val loading: String
     val loadFailed: String
@@ -94,6 +95,7 @@ interface Strings {
     fun finalizingFile(fileName: String): String
     fun uploadFailedNamed(name: String): String
     fun confirmDelete(name: String): String
+    fun confirmDeleteCount(count: Int): String
     fun moveToTitle(fileName: String): String
     val pickFromGallery: String
     fun monthLabel(year: Int, month: Int): String
@@ -137,7 +139,7 @@ interface Strings {
     val shareFolder: String
     val shareLinkInvalid: String
     val askSharerForNewLink: String
-    val goToLogin: String
+    val goToApp: String
     fun updatedAt(dateTime: String): String
     val settingsAppearance: String
     val settingsTheme: String
@@ -227,6 +229,7 @@ interface Strings {
     val transferFailed: String
     val noTransfers: String
     val clearFinished: String
+    val stoppingSoon: String
     val albumAutoSync: String
     val albumAutoSyncHint: String
     val syncWifiOnly: String
