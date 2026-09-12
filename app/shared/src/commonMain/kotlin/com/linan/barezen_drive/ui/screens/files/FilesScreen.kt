@@ -540,11 +540,11 @@ fun FilesScreen(
             repo = repo,
             target = target,
             onDismiss = { moveTarget = null },
-        ) {
+        ) { destination ->
             scope.launch {
                 // Pass the sentinel through: server maps "root" to a root move; null keeps
                 // the folder unchanged. Never collapse root to null here.
-                repo.updateFile(target.fileId, null, it).fold(
+                repo.updateFile(target.fileId, null, destination).fold(
                     onSuccess = {
                         moveTarget = null
                         reload()

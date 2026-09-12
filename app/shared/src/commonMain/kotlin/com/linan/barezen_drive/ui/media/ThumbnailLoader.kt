@@ -71,7 +71,10 @@ class ThumbnailLoader(private val repo: FilesRepository) {
             }
             return bitmap
         } finally {
-            mutex.withLock { inFlight.remove(fileId) }
+            mutex.withLock {
+                inFlight.remove(fileId)
+                Unit
+            }
         }
     }
 
