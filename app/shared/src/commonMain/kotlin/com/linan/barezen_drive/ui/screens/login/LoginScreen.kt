@@ -1,5 +1,6 @@
 package com.linan.barezen_drive.ui.screens.login
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,6 +54,9 @@ import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.platform.isWebPlatform
 import com.linan.barezen_drive.ui.theme.DefaultSeed
 import com.linan.barezen_drive.ui.theme.filledButtonColors
+import org.jetbrains.compose.resources.painterResource
+import barezen_drive.app.shared.generated.resources.Res
+import barezen_drive.app.shared.generated.resources.barezen_logo
 import kotlinx.coroutines.launch
 
 @Composable
@@ -96,22 +100,12 @@ fun LoginScreen(
                         .fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    // Brand mark: a filled circle with the cloud glyph, the
-                    // big-company pattern of one strong shape above the name.
-                    Box(
-                        Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Default.Cloud,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(40.dp),
-                        )
-                    }
+                    // Brand mark: the actual BareZen logo artwork.
+                    Image(
+                        painter = painterResource(Res.drawable.barezen_logo),
+                        contentDescription = "BareZen Drive",
+                        modifier = Modifier.size(88.dp),
+                    )
                     Spacer(Modifier.height(16.dp))
                     Text(
                         "BareZen Drive",
