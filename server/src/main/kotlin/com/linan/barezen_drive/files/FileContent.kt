@@ -28,6 +28,29 @@ import org.jetbrains.exposed.sql.LongColumnType
 import org.jetbrains.exposed.sql.QueryBuilder
 
 fun Route.fileContentRoutes(storage: StorageProvider) {
+    get("/api/search") {
+        // Name search across everything the account owns (files page, search
+        // tab). Case-insensitive substring, newest first, hard cap 100.
+        val q = call.request.queryParameters["q"]?.trim().orEmpty()
+        val items = if (q.isEmpty()) {
+            emptyList()
+        } else {
+            withContext(Dispatchers.IO) {
+                transaction(DatabaseFactory.db) {
+                    FilesTable.selectAll()
+                        .where {
+                            (FilesTable.user eq call.userId) and
+                                (FilesTable.name.lowerCase() like "%${q.lowercase()}%")
+                        }
+                        .orderBy(FilesTable.updatedAt, SortOrder.DESC)
+                        .limit(100)
+                        .map { it.toFileDto() }
+                }
+            }
+        }
+        call.respond(RecentFilesResponse(items))
+    }
+
     get("/api/files/recent") {
         // Most recently touched files for the home screen ("recent" tab). Distinct by
         // name+folder is not required for v0.0.1: rows are per-file metadata, sorted by

@@ -73,6 +73,13 @@ fun TransferCenterScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = LocalStrings.current.actionBack)
                     }
                 },
+                actions = {
+                    // Clear sits in the top bar: at the bottom of a long
+                    // history it was unreachable.
+                    TextButton(onClick = { TransferCenter.clearFinished() }) {
+                        Text(LocalStrings.current.clearFinished)
+                    }
+                },
             )
         },
     ) { pad ->
@@ -140,18 +147,6 @@ fun TransferCenterScreen(
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(rows, key = { it.id }) { item -> TransferRow(item) }
-                    if (tab == 2) {
-                        item {
-                            Row(
-                                Modifier.fillMaxWidth().padding(8.dp),
-                                horizontalArrangement = Arrangement.End,
-                            ) {
-                                TextButton(onClick = { TransferCenter.clearFinished() }) {
-                                    Text(LocalStrings.current.clearFinished)
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -178,6 +173,10 @@ private fun TransferRow(item: TransferItem) {
                 color = if (item.phase == TransferPhase.FAILED) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        item.statusText?.let {
+            Spacer(Modifier.height(2.dp))
+            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (item.phase == TransferPhase.RUNNING) {
             Spacer(Modifier.height(6.dp))

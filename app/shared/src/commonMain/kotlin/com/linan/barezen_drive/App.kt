@@ -32,6 +32,7 @@ import com.linan.barezen_drive.ui.screens.home.HomeScreen
 import com.linan.barezen_drive.ui.screens.login.LoginScreen
 import com.linan.barezen_drive.ui.screens.preview.PreviewScreen
 import com.linan.barezen_drive.ui.screens.settings.OpenSourceScreen
+import com.linan.barezen_drive.ui.screens.search.SearchScreen
 import com.linan.barezen_drive.ui.screens.settings.SettingsScreen
 import com.linan.barezen_drive.ui.screens.settings.WebUpdatePrompt
 import com.linan.barezen_drive.ui.screens.transfer.TransferCenterScreen
@@ -39,6 +40,7 @@ import com.linan.barezen_drive.ui.screens.settings.UsersScreen
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.shell.MainShell
 import com.linan.barezen_drive.ui.shell.MainTab
+import com.linan.barezen_drive.ui.AvatarButton
 import com.linan.barezen_drive.ui.theme.AppTheme
 import com.linan.barezen_drive.ui.theme.DefaultSeed
 import com.linan.barezen_drive.ui.theme.LocalCardAlpha
@@ -84,6 +86,7 @@ private sealed interface Screen {
     data object ShareManager : Screen
     data object Transfers : Screen
     data object Users : Screen
+    data object Settings : Screen
 }
 
 /** /s/<token> public share entry captured once at startup; null on non-web. */
@@ -293,6 +296,7 @@ fun App() {
                                     list.forEach { f -> files.deleteFile(f.id) }
                                 }
                             },
+                            avatar = { AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.ALBUM -> AlbumScreen(
                             repo = files,
@@ -301,6 +305,7 @@ fun App() {
                             onBack = null,
                             onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
                             onOpenTransfers = { push(Screen.Transfers) },
+                            avatar = { AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.FILES -> FilesScreen(                            path = filesPath,
                             repo = files,
@@ -320,74 +325,11 @@ fun App() {
                             },
                             themeToggle = themeToggle,
                         )
-                        MainTab.SETTINGS -> SettingsScreen(
-                            username = username,
-                            themeMode = themeMode,
-                            onThemeModeChange = { m ->
-                                themeMode = m
-                                prefs.themeMode = m.ordinal
-                            },
-                            languageMode = languageMode,
-                            onLanguageModeChange = { m ->
-                                languageMode = m
-                                prefs.languageMode = m
-                            },
-                            accentColor = accentColor,
-                            onAccentColorChange = { c ->
-                                accentColor = c
-                                prefs.accentColor = c.toArgb()
-                                useDynamicColor = false
-                                prefs.useDynamicColor = false
-                            },
-                            useDynamicColor = useDynamicColor,
-                            systemAccent = systemAccent,
-                            onDynamicColorChange = { on ->
-                                useDynamicColor = on
-                                prefs.useDynamicColor = on
-                            },                            glassBlurEnabled = glassBlur,
-                            onGlassBlurChange = { on ->
-                                glassBlur = on
-                                prefs.glassBlurEnabled = on
-                            },
-                            glassAlphaPercent = glassAlpha,
-                            onGlassAlphaChange = { v ->
-                                glassAlpha = v
-                                prefs.glassAlphaPercent = v
-                            },
-                            serverUrl = files.baseUrl,
-                            ping = { files.ping() },
-                            currentVersion = com.linan.barezen_drive.core.BuildInfo.VERSION,
-                            checkUpdate = { com.linan.barezen_drive.data.update.UpdateChecker.check(files) },
-                            registrationOpen = registrationOpen,
-                            onRegistrationOpenChange = { open ->
-                                // Optimistic flip; the server answer is the truth.
-                                registrationOpen = open
-                                scope.launch {
-                                    registrationOpen = files.setRegistrationOpen(open)
-                                        .getOrNull()?.open ?: open
-                                }
-                            },
-                            wallpaperEnabled = wallpaperEnabled,
-                            onWallpaperToggle = { on ->
-                                wallpaperEnabled = on
-                                prefs.wallpaperEnabled = on
-                            },
-                            onPickWallpaper = { wallpaperPicker() },
-                            onClearWallpaper = {
-                                wallpaper = null
-                                wallpaperBitmap = null
-                                wallpaperEnabled = false
-                                prefs.wallpaperEnabled = false
-                            },
-                            onOpenSource = { push(Screen.OpenSource) },
-                            onOpenUsers = { push(Screen.Users) },
-                            onOpenShareManager = { push(Screen.ShareManager) },
-                            onLogout = {
-                                username = ""
-                                prefs.username = ""
-                                auth.logout()
-                                stack = listOf(Screen.Login)
-                            },
+                        MainTab.SEARCH -> SearchScreen(
+                            files = files,
+                            currentUserId = currentUserId,
+                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
+                            onOpenSettings = { push(Screen.Settings) },
                         )
                     }
                 }
@@ -396,6 +338,78 @@ fun App() {
                     filesPath = filesPath.dropLast(1)
                 }
             }
+            is Screen.Settings -> SettingsScreen(
+                username = username,
+                themeMode = themeMode,
+                onThemeModeChange = { m ->
+                themeMode = m
+                prefs.themeMode = m.ordinal
+                },
+                languageMode = languageMode,
+                onLanguageModeChange = { m ->
+                languageMode = m
+                prefs.languageMode = m
+                },
+                accentColor = accentColor,
+                onAccentColorChange = { c ->
+                accentColor = c
+                prefs.accentColor = c.toArgb()
+                useDynamicColor = false
+                prefs.useDynamicColor = false
+                },
+                useDynamicColor = useDynamicColor,
+                systemAccent = systemAccent,
+                onDynamicColorChange = { on ->
+                useDynamicColor = on
+                prefs.useDynamicColor = on
+                },                            glassBlurEnabled = glassBlur,
+                onGlassBlurChange = { on ->
+                glassBlur = on
+                prefs.glassBlurEnabled = on
+                },
+                glassAlphaPercent = glassAlpha,
+                onGlassAlphaChange = { v ->
+                glassAlpha = v
+                prefs.glassAlphaPercent = v
+                },
+                serverUrl = files.baseUrl,
+                ping = { files.ping() },
+                currentVersion = com.linan.barezen_drive.core.BuildInfo.VERSION,
+                checkUpdate = { com.linan.barezen_drive.data.update.UpdateChecker.check(files) },
+                registrationOpen = registrationOpen,
+                onRegistrationOpenChange = { open ->
+                // Optimistic flip; the server answer is the truth.
+                registrationOpen = open
+                scope.launch {
+                registrationOpen = files.setRegistrationOpen(open)
+                .getOrNull()?.open ?: open
+                }
+                },
+                wallpaperEnabled = wallpaperEnabled,
+                onWallpaperToggle = { on ->
+                wallpaperEnabled = on
+                prefs.wallpaperEnabled = on
+                },
+                onPickWallpaper = { wallpaperPicker() },
+                onClearWallpaper = {
+                wallpaper = null
+                wallpaperBitmap = null
+                wallpaperEnabled = false
+                prefs.wallpaperEnabled = false
+                },
+                onOpenSource = { push(Screen.OpenSource) },
+                onOpenUsers = { push(Screen.Users) },
+                onOpenShareManager = { push(Screen.ShareManager) },
+                onLogout = {
+                username = ""
+                prefs.username = ""
+                auth.logout()
+                stack = listOf(Screen.Login)
+                },
+                onBack = { pop() },
+                files = files,
+                currentUserId = currentUserId,
+            )
             is Screen.Preview -> PreviewScreen(
                 files = current.files,
                 initialIndex = current.index,

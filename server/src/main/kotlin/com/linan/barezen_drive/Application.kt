@@ -17,6 +17,7 @@ import com.linan.barezen_drive.files.sharePublicRoutes
 import com.linan.barezen_drive.files.thumbnailRoutes
 import com.linan.barezen_drive.files.uploadRoutes
 import com.linan.barezen_drive.system.adminUserRoutes
+import com.linan.barezen_drive.system.avatarRoutes
 import com.linan.barezen_drive.system.settingsRoutes
 import com.linan.barezen_drive.system.systemRoutes
 import com.linan.barezen_drive.system.versionRoutes
@@ -112,6 +113,7 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         // User management authenticates internally (owner model); registered
         // outside any authenticate block or the nested guard answers 500.
         adminUserRoutes(storage)
+        avatarRoutes(storage)
         authRoutes()
         // Optional: content/thumbnail GET accept a valid signature as an alternative
         // to Bearer (browser tabs, players). Strict endpoints inside check call.userId

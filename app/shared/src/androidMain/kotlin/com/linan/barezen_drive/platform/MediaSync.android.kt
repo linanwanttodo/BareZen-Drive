@@ -90,27 +90,48 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
         val synced = MediaSync.syncedSet()
         val ctx = applicationContext
 
-        for ((uri, album, dateModified) in queryMedia(ctx)) {
-            val fingerprint = "$uri|$dateModified"
-            if (fingerprint in synced) continue
+        // One aggregate transfer for the whole pass, Google-Photos style: a
+        // single progress row and a single notification that counts files up,
+        // instead of one entry (and one shade entry) per photo.
+        val batchTitle = if (java.util.Locale.getDefault().language == "zh") "相册同步" else "Album sync"
+        val pending = queryMedia(ctx)
+            .map { it to "${it.uri}|${it.dateModified}" }
+            .filter { (_, fingerprint) -> fingerprint !in synced }
+        if (pending.isEmpty()) {
+            MediaSync.saveSynced(synced)
+            return@runBlocking Result.success()
+        }
+        val total = pending.size
+        val batchId = TransferCenter.start(batchTitle, TransferKind.SYNC, total.toLong())
 
-            val picked = AndroidPickedFile(ctx, uri)
-            // Category folder created on demand from the phone-album name.
-            val target = album?.takeIf { it.isNotBlank() }
-                ?.let { AlbumFolder.resolveCategory(repo, deviceFolder, it) }
-                ?: deviceFolder
-
-            val id = TransferCenter.start(picked.name, TransferKind.SYNC, picked.size)
-            val result = uploader.upload(picked, target)
-            result.fold(
-                onSuccess = {
-                    TransferCenter.done(id)
-                    synced.add(fingerprint)
-                },
-                onFailure = { TransferCenter.fail(id, it.message ?: "sync failed") },
-            )
+        var doneCount = 0
+        var failed = 0
+        for ((item, fingerprint) in pending) {
+            try {
+                val picked = AndroidPickedFile(ctx, item.uri)
+                // Category folder created on demand from the phone-album name.
+                val target = item.album?.takeIf { it.isNotBlank() }
+                    ?.let { AlbumFolder.resolveCategory(repo, deviceFolder, it) }
+                    ?: deviceFolder
+                // The batch owns the transfer entry; per-file reporting is off.
+                uploader.upload(picked, target, reportTransfer = false)
+                    .onSuccess { synced.add(fingerprint) }
+                    .onFailure { failed++ }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                TransferCenter.fail(batchId, e.message ?: "cancelled")
+                throw e
+            } catch (e: Exception) {
+                failed++
+            }
+            doneCount++
+            TransferCenter.progress(batchId, doneCount.toLong(), total.toLong(), "$doneCount / $total")
         }
         MediaSync.saveSynced(synced)
+        if (failed == 0) {
+            TransferCenter.done(batchId)
+        } else {
+            TransferCenter.fail(batchId, if (java.util.Locale.getDefault().language == "zh") "$failed 张失败，已同步 ${total - failed} 张" else "$failed failed, ${total - failed} synced")
+        }
         Result.success()
     }
 

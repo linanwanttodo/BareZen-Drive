@@ -25,6 +25,18 @@ import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.foundation.Image
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import com.linan.barezen_drive.platform.rememberImagePicker
+import kotlinx.coroutines.launch
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -147,6 +159,9 @@ fun SettingsScreen(
     onOpenUsers: () -> Unit = {},
     onOpenShareManager: () -> Unit,
     onLogout: () -> Unit,
+    onBack: (() -> Unit)? = null,
+    files: com.linan.barezen_drive.data.repo.FilesRepository? = null,
+    currentUserId: String? = null,
 ) {
     var showAccountInfo by remember { androidx.compose.runtime.mutableStateOf(false) }
 
@@ -155,6 +170,16 @@ fun SettingsScreen(
         topBar = {
             TopAppBar(
                 title = { Text(LocalStrings.current.tabSettings) },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = LocalStrings.current.actionBack,
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             )
         },
@@ -174,7 +199,7 @@ fun SettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AccountAvatar(username)
+                AvatarPickerButton(files = files, username = username, userId = currentUserId)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(username.ifBlank { LocalStrings.current.notSignedIn }, style = MaterialTheme.typography.bodyLarge)
@@ -520,4 +545,60 @@ private val AccentSwatches = listOf(
     Color(0xFFBC4C00), // orange
     Color(0xFF1B7C83), // teal
     Color(0xFFCF222E), // red
+)
+
+/** Account avatar with an upload path: tap "change avatar" to pick an image. */
+@Composable
+private fun AvatarPickerButton(
+    files: com.linan.barezen_drive.data.repo.FilesRepository?,
+    username: String,
+    userId: String?,
+) {
+    val scope = rememberCoroutineScope()
+    var uploading by remember { mutableStateOf(false) }
+    val bmp by com.linan.barezen_drive.ui.AvatarStore.bitmap.collectAsState()
+    val picker = rememberImagePicker { picks ->
+        val pick = picks.firstOrNull() ?: return@rememberImagePicker
+        if (files == null) return@rememberImagePicker
+        uploading = true
+        scope.launch {
+            val bytes = runCatching { pick.readRange(0, pick.size.toInt()) }.getOrNull()
+            val ok = bytes != null && files.putAvatar(bytes).isSuccess
+            if (ok) {
+                com.linan.barezen_drive.ui.AvatarStore.invalidate()
+                com.linan.barezen_drive.ui.AvatarStore.ensure(files, userId)
+            }
+            uploading = false
+        }
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(contentAlignment = Alignment.Center) {
+            val image = bmp
+            if (image != null) {
+                Image(
+                    bitmap = image,
+                    contentDescription = LocalStrings.current.avatarChange,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .androidxCircleClip(),
+                )
+            } else {
+                AccountAvatar(username)
+            }
+            if (uploading) {
+                CircularProgressIndicator(Modifier.size(46.dp), strokeWidth = 2.dp)
+            }
+        }
+        if (files != null) {
+            TextButton(onClick = { picker() }) {
+                Text(LocalStrings.current.avatarChange, style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+/** Circle clip helper kept tiny for the avatar image. */
+private fun Modifier.androidxCircleClip(): Modifier = this.then(
+    Modifier.clip(androidx.compose.foundation.shape.CircleShape),
 )

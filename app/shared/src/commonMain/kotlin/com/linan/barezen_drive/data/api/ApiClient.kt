@@ -205,6 +205,27 @@ class ApiClient(
         http.get("$baseUrl/api/me").body()
     }
 
+    /** Name search across the account's files (search tab). */
+    suspend fun search(query: String): Result<RecentFilesResponse> = runApi {
+        http.get("$baseUrl/api/search") {
+            parameter("q", query)
+        }.body()
+    }
+
+    /** Uploads a new avatar (server square-crops and downscales). */
+    suspend fun putAvatar(bytes: ByteArray): Result<Unit> = runApi {
+        http.put("$baseUrl/api/me/avatar") {
+            setBody(bytes)
+            contentType(ContentType.Application.OctetStream)
+        }
+        return@runApi Unit
+    }
+
+    /** Fetches the avatar image; 404 (no avatar) becomes a failure result. */
+    suspend fun avatarBytes(userId: String): Result<ByteArray> = runApi {
+        http.get("$baseUrl/api/users/$userId/avatar").bodyAsBytes()
+    }
+
     suspend fun contents(folderId: String): Result<ContentsResponse> = runApi {
         http.get("$baseUrl/api/folders/$folderId/contents").body()
     }

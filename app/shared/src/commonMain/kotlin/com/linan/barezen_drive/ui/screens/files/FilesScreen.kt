@@ -155,6 +155,7 @@ fun FilesScreen(
     wallpaperBehind: Boolean = false,
     onOpenFolder: (FolderDto) -> Unit,
     onOpenTransfers: () -> Unit = {},
+    avatar: @Composable () -> Unit = {},
     onJumpTo: (Int) -> Unit,
     onPreview: (List<FileDto>, Int) -> Unit,
     onLoggedOut: () -> Unit,
@@ -263,6 +264,7 @@ fun FilesScreen(
                     },
                     title = { Text(LocalStrings.current.tabFiles) },
                     actions = {
+                    avatar()
                         // Upload destination, new folder and transfers live in
                         // the top bar; the breadcrumb moves below it.
                         IconButton(onClick = { showUploadLocation = true }, enabled = !uploading) {

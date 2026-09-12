@@ -58,6 +58,12 @@ class FilesRepository(private val api: ApiClient) : UploadApi {
     suspend fun adminUsers(): Result<AdminUsersResponse> = api.adminUsers()
     suspend fun adminDeleteUser(id: String): Result<Unit> = api.adminDeleteUser(id)
     suspend fun me(): Result<UserDto> = api.me()
+
+    suspend fun search(query: String): Result<RecentFilesResponse> = api.search(query)
+
+    suspend fun putAvatar(bytes: ByteArray): Result<Unit> = api.putAvatar(bytes)
+
+    suspend fun avatarBytes(userId: String): Result<ByteArray> = api.avatarBytes(userId)
     suspend fun ping(): Long = api.ping()
     suspend fun thumbnailBytes(id: String): Result<ByteArray> = api.thumbnailBytes(id)
     suspend fun fileLink(id: String, ttl: Int? = null): Result<FileLinkResponse> = api.fileLink(id, ttl)

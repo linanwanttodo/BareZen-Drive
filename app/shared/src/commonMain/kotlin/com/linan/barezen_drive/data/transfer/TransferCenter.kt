@@ -16,6 +16,8 @@ data class TransferItem(
     val phase: TransferPhase,
     val bytesDone: Long = 0,
     val bytesTotal: Long = 0,
+    /** Short status line under the name, e.g. "3 / 12" for batch syncs. */
+    val statusText: String? = null,
     val error: String? = null,
     val atMs: Long = 0,
 )
@@ -52,16 +54,16 @@ object TransferCenter {
         return id
     }
 
-    fun progress(id: String, done: Long, total: Long) {
+    fun progress(id: String, done: Long, total: Long, text: String? = null) {
         var title = ""
         var fraction: Float? = null
         update(id) {
             val t = if (total > 0) total else it.bytesTotal
             title = it.name
             fraction = if (t > 0) (done.toFloat() / t).coerceIn(0f, 1f) else null
-            it.copy(bytesDone = done, bytesTotal = t)
+            it.copy(bytesDone = done, bytesTotal = t, statusText = text ?: it.statusText)
         }
-        runCatching { com.linan.barezen_drive.platform.TransferNotifier.showProgress(id, title, null, fraction) }
+        runCatching { com.linan.barezen_drive.platform.TransferNotifier.showProgress(id, title, text, fraction) }
     }
 
     fun done(id: String) {

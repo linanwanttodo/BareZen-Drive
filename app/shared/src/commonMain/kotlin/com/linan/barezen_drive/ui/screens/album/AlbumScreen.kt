@@ -133,6 +133,7 @@ fun AlbumScreen(
     onBack: (() -> Unit)?,
     onPreview: (List<FileDto>, Int, Boolean) -> Unit,
     onOpenTransfers: () -> Unit = {},
+    avatar: @Composable () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var groups by remember { mutableStateOf<List<AlbumGroup>>(emptyList()) }
@@ -369,6 +370,7 @@ fun AlbumScreen(
                     }
                 },
                 actions = {
+                    avatar()
                     if (selectionMode) {
                         // Selection mode keeps the bar clean; actions live in
                         // the bottom bar.

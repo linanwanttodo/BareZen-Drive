@@ -14,7 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -34,7 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
-import com.linan.barezen_drive.data.update.UpdateBadge
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.linan.barezen_drive.ui.glass.LiquidBottomTab
@@ -50,7 +49,7 @@ enum class MainTab {
     HOME,
     ALBUM,
     FILES,
-    SETTINGS,
+    SEARCH,
 }
 
 /** Localized tab title. Read inside composition so a language switch recomposes. */
@@ -59,7 +58,7 @@ private fun tabLabel(tab: MainTab): String = when (tab) {
     MainTab.HOME -> LocalStrings.current.tabHome
     MainTab.ALBUM -> LocalStrings.current.tabAlbum
     MainTab.FILES -> LocalStrings.current.tabFiles
-    MainTab.SETTINGS -> LocalStrings.current.tabSettings
+    MainTab.SEARCH -> LocalStrings.current.tabSearch
 }
 
 @Composable
@@ -67,7 +66,7 @@ private fun tabIcon(tab: MainTab) = when (tab) {
     MainTab.HOME -> Icons.Default.Home
     MainTab.ALBUM -> Icons.Default.PhotoLibrary
     MainTab.FILES -> Icons.Default.Folder
-    MainTab.SETTINGS -> Icons.Default.Settings
+    MainTab.SEARCH -> Icons.Default.Search
 }
 
 /**
@@ -104,7 +103,6 @@ fun MainShell(
     val layoutType = NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(
         currentWindowAdaptiveInfo(),
     )
-    val updateAvailable by UpdateBadge.available.collectAsState()
     val compact = layoutType == NavigationSuiteType.NavigationBar ||
         layoutType == NavigationSuiteType.ShortNavigationBarCompact
 
@@ -165,7 +163,7 @@ fun MainShell(
                         val label = tabLabel(tab)
                         TabIcon(
                             tab,
-                            showDot = tab == MainTab.SETTINGS && updateAvailable,
+                            showDot = false,
                             modifier = Modifier.size(28.dp),
                             tint = tint,
                         )
@@ -189,7 +187,7 @@ fun MainShell(
                         NavigationBarItem(
                             selected = tab == selected,
                             onClick = { onSelect(tab) },
-                            icon = { TabIcon(tab, tab == MainTab.SETTINGS && updateAvailable) },
+                            icon = { TabIcon(tab, showDot = false) },
                             label = { Text(tabLabel(tab)) },
                         )
                     }
@@ -203,7 +201,7 @@ fun MainShell(
                     item(
                         selected = tab == selected,
                         onClick = { onSelect(tab) },
-                        icon = { TabIcon(tab, tab == MainTab.SETTINGS && updateAvailable) },
+                        icon = { TabIcon(tab, showDot = false) },
                         label = { Text(tabLabel(tab)) },
                     )
                 }

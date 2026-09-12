@@ -85,6 +85,7 @@ fun HomeScreen(
     themeToggle: (@Composable () -> Unit)? = null,
     onDeleteFiles: (List<FileDto>) -> Unit = {},
     onOpenTransfers: () -> Unit = {},
+    avatar: @Composable () -> Unit = {},
 ) {
     var recent by remember { mutableStateOf<List<FileDto>?>(null) }
     var album by remember { mutableStateOf<List<FileDto>?>(null) }
@@ -120,6 +121,7 @@ fun HomeScreen(
                 title = { Text(LocalStrings.current.tabHome) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 actions = {
+                    avatar()
                     IconButton(onClick = onOpenTransfers) {
                         Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
                     }
