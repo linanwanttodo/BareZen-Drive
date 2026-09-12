@@ -27,6 +27,8 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
       STORAGE_DIR: /data/storage
+      BOOTSTRAP_ADMIN_USER: ${BOOTSTRAP_ADMIN_USER:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
     volumes:
       - ./data/storage:/data/storage
     ports:

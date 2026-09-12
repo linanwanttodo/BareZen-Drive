@@ -22,13 +22,12 @@ on:
         required: false
         type: string
 
+# No concurrency group on purpose: every push builds and nothing ever cancels
+# or queues another run. Duplicate publishes are impossible anyway - the
+# release job skips a version that is already out.
 permissions:
   contents: write
   packages: write
-
-concurrency:
-  group: pipeline-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8"
@@ -163,7 +162,7 @@ jobs:
           V="${{ needs.version.outputs.version }}"
           apkdir=app/androidApp/build/outputs/apk/release
           shipped=0
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          for abi in arm64-v8a; do
             f=$(ls "$apkdir"/*-"$abi"-release.apk 2>/dev/null | head -1)
             if [ -n "$f" ] && [[ "$f" != *unsigned* ]]; then
               cp "$f" "dist/BareZen-Drive-${V}-android-$abi.apk"

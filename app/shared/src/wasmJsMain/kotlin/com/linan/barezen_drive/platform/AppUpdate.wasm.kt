@@ -16,3 +16,9 @@ actual fun openInBrowser(url: String) {
 actual fun reloadApp() {
     window.location.reload()
 }
+
+/**
+ * Browser client: updates arrive with the server bundle, so there is nothing
+ * to download in-process. The caller falls back to the server-update guidance.
+ */
+actual suspend fun downloadAndInstallUpdate(url: String): Boolean = false

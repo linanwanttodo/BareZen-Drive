@@ -7,6 +7,7 @@ import com.linan.barezen_drive.config.AppConfig
 import com.linan.barezen_drive.core.dto.ApiError
 import com.linan.barezen_drive.core.dto.ErrorCodes
 import com.linan.barezen_drive.core.dto.ErrorResponse
+import com.linan.barezen_drive.auth.AuthService
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.api.ApiException
 import com.linan.barezen_drive.files.fileContentRoutes
@@ -62,6 +63,11 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     // Connect + schema DDL inside module() so testApplication exercises it too.
     // Guarded so repeated testApplication entry reuses the Exposed connection.
     connectDatabaseOnce(cfg)
+    // Install-wizard bootstrap: seed the owner account from env on a fresh
+    // instance, so a headless deploy is signed up before the first open.
+    runCatching {
+        AuthService.bootstrapAdmin(System.getenv("BOOTSTRAP_ADMIN_USER"), System.getenv("BOOTSTRAP_ADMIN_PASSWORD"))
+    }
     // encodeDefaults=true keeps the public API shape stable: fields with
     // default values (updateAvailable, assets, hasThumbnail...) are always
     // present in responses instead of silently omitted.

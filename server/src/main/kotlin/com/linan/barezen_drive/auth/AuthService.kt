@@ -64,6 +64,19 @@ object AuthService {
         }
     }
 
+    /**
+     * Creates the owner account from the BOOTSTRAP_ADMIN_USER/PASSWORD env
+     * pair when the install wizard pre-configured one and no user exists yet.
+     * The first account owns the instance, so this seed becomes it. Returns
+     * null when users already exist or the pair is unset or invalid.
+     */
+    fun bootstrapAdmin(user: String?, password: String?): UserDto? {
+        if (user.isNullOrBlank() || password.isNullOrBlank()) return null
+        val hasUsers = transaction(DatabaseFactory.db) { UsersTable.selectAll().limit(1).any() }
+        if (hasUsers) return null
+        return runCatching { register(user, password) }.getOrNull()
+    }
+
     fun login(username: String, password: String): LoginResponse = transaction(DatabaseFactory.db) {
         val row = UsersTable.selectAll().where { UsersTable.username eq username }.singleOrNull()
             ?: throw ApiException.unauthorized("用户名或密码错误")

@@ -245,6 +245,19 @@ fun App() {
             enabled = isWebPlatform() && files.baseUrl.isNotBlank(),
             checkUpdate = { com.linan.barezen_drive.data.update.UpdateChecker.check(files) },
         )
+        // Silent one-shot startup probe (non-web channels; web has the prompt
+        // above): lights the update dot on the settings tab when the server
+        // reports a newer release.
+        LaunchedEffect(files.baseUrl) {
+            if (!isWebPlatform() && files.baseUrl.isNotBlank()) {
+                runCatching { com.linan.barezen_drive.data.update.UpdateChecker.check(files) }
+                    .onSuccess { outcome ->
+                        com.linan.barezen_drive.data.update.UpdateBadge.set(
+                            outcome is com.linan.barezen_drive.data.update.UpdateStatus.Available,
+                        )
+                    }
+            }
+        }
 
         when (current) {
             is Screen.Login -> LoginScreen(

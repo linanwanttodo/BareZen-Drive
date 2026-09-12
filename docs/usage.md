@@ -59,7 +59,7 @@ docker compose down                           # 停止（数据保留）
 ## 二、安装 Android 客户端
 
 1. 在 [Releases](https://github.com/linanwanttodo/BareZen-Drive/releases) 下载
-   `BareZen-Drive-<版本>-android-arm64-v8a.apk`（主流手机；老设备选 armeabi-v7a，模拟器选 x86_64）。
+   `BareZen-Drive-<版本>-android-arm64-v8a.apk`（主流手机）。
 2. 手机上打开安装，允许「未知来源应用」。
 3. 打开 App，登录页填 `http://<服务器地址>:8080` 和账号密码。
 

@@ -69,7 +69,7 @@ your own PostgreSQL 16.
 
 1. From [Releases](https://github.com/linanwanttodo/BareZen-Drive/releases)
    download `BareZen-Drive-<version>-android-arm64-v8a.apk` for modern phones
-   (armeabi-v7a / x86_64 variants sit next to it).
+  .
 2. Open the APK on the phone and allow installation from an unknown source.
 3. Enter `http://<server address>:8080` plus the account on the login screen.
 

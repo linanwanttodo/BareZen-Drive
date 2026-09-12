@@ -20,7 +20,6 @@ Packages are attached to the GitHub Releases (names carry the version):
 | Server distribution (with the Web client embedded) | `BareZen-Drive-<version>-server.tar.gz` | Deploy on your own machine with JDK 21 |
 | Web client bundle | `BareZen-Drive-<version>-web.zip` | Static hosting, or copy into the server |
 | Android arm64-v8a | `BareZen-Drive-<version>-android-arm64-v8a.apk` | Most modern phones |
-| Android armeabi-v7a / x86_64 | `BareZen-Drive-<version>-android-<abi>.apk` | Older / emulator devices |
 | Update manifest | `update.json` + `checksums.txt` | Read by the server for the in-app update check |
 | Container image | `ghcr.io/linanwanttodo/barezen-drive:latest` | Docker / Docker Compose, linux/amd64 + linux/arm64 |
 

@@ -1,7 +1,10 @@
 package com.linan.barezen_drive.ui.screens.settings
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,8 +24,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.linan.barezen_drive.data.update.UpdateBadge
 import com.linan.barezen_drive.data.update.UpdateStatus
 import com.linan.barezen_drive.i18n.LocalStrings
+import com.linan.barezen_drive.platform.downloadAndInstallUpdate
+import com.linan.barezen_drive.platform.installChannel
+import com.linan.barezen_drive.platform.InstallChannel
 import com.linan.barezen_drive.platform.openInBrowser
 import com.linan.barezen_drive.platform.reloadApp
 import kotlinx.coroutines.launch
@@ -40,16 +49,20 @@ internal fun UpdateCheckRow(
     checkUpdate: suspend () -> UpdateStatus,
 ) {
     var busy by remember { mutableStateOf(false) }
+    var downloading by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<UpdateStatus?>(null) }
     val scope = rememberCoroutineScope()
+    val badgeAvailable by UpdateBadge.available.collectAsState()
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = !busy) {
+            .clickable(enabled = !busy && !downloading) {
                 busy = true
                 scope.launch {
-                    status = runCatching { checkUpdate() }.getOrDefault(UpdateStatus.Failed)
+                    val outcome = runCatching { checkUpdate() }.getOrDefault(UpdateStatus.Failed)
+                    status = outcome
+                    UpdateBadge.set(outcome is UpdateStatus.Available)
                     busy = false
                 }
             }
@@ -59,23 +72,51 @@ internal fun UpdateCheckRow(
         Column(Modifier.weight(1f)) {
             Text(LocalStrings.current.checkForUpdates, style = MaterialTheme.typography.bodyLarge)
             Text(
-                LocalStrings.current.currentVersion(currentVersion),
+                if (downloading) {
+                    LocalStrings.current.updateDownloading
+                } else {
+                    LocalStrings.current.currentVersion(currentVersion)
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (busy) {
+        if (busy || downloading) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        } else if (badgeAvailable) {
+            // Red dot mirrors the settings-tab badge until handled.
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .background(MaterialTheme.colorScheme.error, CircleShape),
+            )
         }
     }
 
     status?.let { outcome ->
-        UpdateResultDialog(outcome = outcome, onDismiss = { status = null })
+        UpdateResultDialog(outcome = outcome, onDismiss = { status = null }, onDownload = {
+            downloading = true
+            scope.launch {
+                val url = (outcome as? UpdateStatus.Available)
+                val target = url?.downloadUrl ?: return@launch
+                val ok = runCatching { downloadAndInstallUpdate(target) }.getOrDefault(false)
+                downloading = false
+                if (ok) {
+                    UpdateBadge.set(false)
+                } else {
+                    openInBrowser(url.releaseUrl ?: target)
+                }
+            }
+        })
     }
 }
 
 @Composable
-private fun UpdateResultDialog(outcome: UpdateStatus, onDismiss: () -> Unit) {
+private fun UpdateResultDialog(
+    outcome: UpdateStatus,
+    onDismiss: () -> Unit,
+    onDownload: () -> Unit,
+) {
     when (outcome) {
         is UpdateStatus.UpToDate -> AlertDialog(
             onDismissRequest = onDismiss,
@@ -92,7 +133,7 @@ private fun UpdateResultDialog(outcome: UpdateStatus, onDismiss: () -> Unit) {
             text = {
                 Text(
                     when {
-                        outcome.reloadOnly -> LocalStrings.current.reloadToUpdate(outcome.version)
+                        outcome.reloadOnly -> LocalStrings.current.webUpdateViaServer(outcome.version)
                         outcome.downloadUrl != null -> LocalStrings.current.downloadUpdateHint(outcome.version)
                         else -> LocalStrings.current.updateAvailableVersion(outcome.version)
                     },
@@ -103,8 +144,10 @@ private fun UpdateResultDialog(outcome: UpdateStatus, onDismiss: () -> Unit) {
                     onDismiss()
                     when {
                         outcome.reloadOnly -> reloadApp()
-                        // A manifest package lets the client fetch the right
-                        // build directly; otherwise fall back to the release page.
+                        // The manifest carries this platform's package: download
+                        // in place and hand it to the installer. Failure falls
+                        // back to the release page.
+                        outcome.downloadUrl != null && installChannel == InstallChannel.ANDROID -> onDownload()
                         outcome.downloadUrl != null -> openInBrowser(outcome.downloadUrl)
                         else -> outcome.releaseUrl?.let(::openInBrowser)
                     }
