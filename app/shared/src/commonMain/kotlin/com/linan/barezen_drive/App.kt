@@ -154,7 +154,9 @@ fun App() {
     var currentUserId by remember { mutableStateOf<String?>(null) }
     // Browse-first: the app opens on the main page even signed out; a
     // centered prompt links to login. TokenStorage stays the source of truth.
-    var signedIn by remember { mutableStateOf(TokenStorage.accessToken != null) }
+    var signedIn by remember {
+        mutableStateOf(TokenStorage.accessToken != null || TokenStorage.refreshToken != null)
+    }
     var syncWifiOnly by remember { mutableStateOf(prefs.syncWifiOnly) }
     var glassAlpha by remember { mutableStateOf(prefs.glassAlphaPercent) }
     AppTheme(themeMode = themeMode, seed = accentColor) {
@@ -300,7 +302,7 @@ fun App() {
                                     list.forEach { f -> files.deleteFile(f.id) }
                                 }
                             },
-                            avatar = { AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
+                            avatar = { if (signedIn) AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else AlbumScreen(
                             repo = files,
@@ -309,7 +311,7 @@ fun App() {
                             onBack = null,
                             onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
                             onOpenTransfers = { push(Screen.Transfers) },
-                            avatar = { AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
+                            avatar = { if (signedIn) AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(                            path = filesPath,
                             repo = files,
@@ -404,8 +406,6 @@ fun App() {
                 stack = listOf(Screen.Login)
                 },
                 onBack = { pop() },
-                files = files,
-                currentUserId = currentUserId,
             )
             is Screen.Preview -> PreviewScreen(
                 files = current.files,

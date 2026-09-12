@@ -18,8 +18,14 @@ actual fun deviceName(): String {
         )
     }.getOrNull()?.trim().orEmpty()
     val model = Build.MODEL?.trim().orEmpty()
-    val name = if (friendly.isNotEmpty()) friendly else model
-    if (name.isEmpty()) return "Android"
+    val brand = Build.BRAND?.trim().orEmpty()
+    // No user-set name: brand + model reads better than the bare factory code.
+    val name = when {
+        friendly.isNotEmpty() -> friendly
+        model.isNotEmpty() && brand.isNotEmpty() && !model.equals(brand, true) -> "$brand $model"
+        model.isNotEmpty() -> model
+        else -> "Android"
+    }
     val safe = name.replace(Regex("[/\\\\:*.?\"<>|]"), "-").trim('-', ' ', '.')
     return safe.ifEmpty { "Android" }
 }

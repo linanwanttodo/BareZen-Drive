@@ -121,11 +121,11 @@ fun HomeScreen(
                 title = { Text(LocalStrings.current.tabHome) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 actions = {
-                    avatar()
                     IconButton(onClick = onOpenTransfers) {
                         Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
                     }
                     themeToggle?.invoke()
+                    avatar()
                 },
             )
         },

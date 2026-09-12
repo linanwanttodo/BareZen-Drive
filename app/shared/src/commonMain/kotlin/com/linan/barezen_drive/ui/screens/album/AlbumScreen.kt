@@ -371,7 +371,6 @@ fun AlbumScreen(
                     }
                 },
                 actions = {
-                    avatar()
                     if (selectionMode) {
                         // Selection mode keeps the bar clean; actions live in
                         // the bottom bar.
@@ -403,6 +402,7 @@ fun AlbumScreen(
                     IconButton(onClick = onOpenTransfers) {
                         Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
                     }
+                    avatar()
                 },
             )
         },
