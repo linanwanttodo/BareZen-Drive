@@ -170,6 +170,7 @@ object StringsEn : Strings {
     override val actionDownloadUpdate: String = "Download update"
     override fun reloadToUpdate(version: String): String =
         "The server has been updated to $version. Reload to load the new version"
+    override fun selectedCount(n: Int): String = n.toString() + " selected"
     override val updateDownloading: String = "Downloading the update package…"
     override fun webUpdateViaServer(version: String): String =
         "Version $version is available. The web client updates with the server: update BareZen-Drive on your server first, then press reload."

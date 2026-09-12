@@ -170,6 +170,7 @@ object StringsZh : Strings {
     override val actionDownloadUpdate: String = "下载更新"
     override fun reloadToUpdate(version: String): String =
         "服务器已更新到 $version，重新加载即可使用新版本"
+    override fun selectedCount(n: Int): String = "已选 %d 项".replace("%d", n.toString())
     override val updateDownloading: String = "正在下载更新包…"
     override fun webUpdateViaServer(version: String): String =
         "检测到新版本 $version。Web 随服务器一同更新：请先在服务器上更新 BareZen-Drive，然后点击重新加载。"

@@ -179,6 +179,7 @@ interface Strings {
     val actionDownloadUpdate: String
     fun reloadToUpdate(version: String): String
     fun downloadUpdateHint(version: String): String
+    fun selectedCount(n: Int): String
     val updateDownloading: String
     fun webUpdateViaServer(version: String): String
     val networkTimeout: String

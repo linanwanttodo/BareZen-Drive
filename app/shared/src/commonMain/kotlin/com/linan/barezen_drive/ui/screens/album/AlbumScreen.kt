@@ -1,19 +1,28 @@
 package com.linan.barezen_drive.ui.screens.album
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
@@ -24,6 +33,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.CalendarViewDay
 import androidx.compose.material.icons.filled.GridOn
@@ -37,6 +51,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -44,11 +59,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
@@ -73,6 +90,8 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
+import com.linan.barezen_drive.platform.copyToClipboard
+import com.linan.barezen_drive.platform.rememberFileSaver
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.material3.AlertDialog
@@ -144,6 +163,10 @@ fun AlbumScreen(
     var timelineMode by remember { mutableStateOf(false) }
     val prefs = com.linan.barezen_drive.data.local.AppPreferences.get()
     var viewMode by remember { mutableStateOf(prefs.albumViewMode) }
+    // Google-Photos selection: long-press a tile to enter, tap toggles, a
+    // bottom bar carries the actions until the selection is cleared.
+    val selected = remember { mutableStateMapOf<String, FileDto>() }
+    val selectionMode = selected.isNotEmpty()
     var collections by remember { mutableStateOf<List<CollectionTile>>(emptyList()) }
     var collectionsLoading by remember { mutableStateOf(false) }
     val allPhotosLabel = LocalStrings.current.allPhotos
@@ -253,11 +276,63 @@ fun AlbumScreen(
     }
 
 
+    val saver = rememberFileSaver { }
+    var shareUrl by remember { mutableStateOf<String?>(null) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
+        bottomBar = {
+            if (selectionMode) {
+                // Google-Photos action bar: share / download / delete for the
+                // whole selection; the tiles themselves carry the checkmarks.
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 3.dp,
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.safeDrawing)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                    ) {
+                        BarAction(Icons.Default.Share, LocalStrings.current.actionShare) {
+                            scope.launch {
+                                selected.values.firstOrNull()?.let { first ->
+                                    repo.createShare(fileId = first.id).onSuccess { shareUrl = it.url }
+                                }
+                            }
+                        }
+                        BarAction(Icons.Default.Download, LocalStrings.current.actionDownload) {
+                            selected.values.forEach { file ->
+                                saver(file.name, file.mimeType) {
+                                    repo.download(file.id)
+                                }
+                            }
+                            selected.clear()
+                        }
+                        BarAction(Icons.Default.Delete, LocalStrings.current.actionDelete, tint = MaterialTheme.colorScheme.error) {
+                            scope.launch {
+                                selected.values.forEach { file -> repo.deleteFile(file.id) }
+                                val count = selected.size
+                                selected.clear()
+                                groups = emptyList(); cursor = null; exhausted = false
+                                loadMore()
+                            }
+                        }
+                    }
+                }
+            }
+        },
         topBar = {
             TopAppBar(
                 title = {
+                    if (selectionMode) {
+                        Text(
+                            LocalStrings.current.selectedCount(selected.size),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        return@TopAppBar
+                    }
                     // Device switcher: defaults to this device; lists every
                     // device that has actually uploaded, plus an all-devices
                     // view over the whole album tree.
@@ -283,14 +358,21 @@ fun AlbumScreen(
                     }
                 },
                 navigationIcon = {
-                    if (onBack != null) {
+                    if (selectionMode) {
+                        IconButton(onClick = { selected.clear() }) {
+                            Icon(Icons.Default.Close, contentDescription = LocalStrings.current.actionCancel)
+                        }
+                    } else if (onBack != null) {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = LocalStrings.current.actionBack)
                         }
                     }
                 },
                 actions = {
-                    if (timelineMode) {
+                    if (selectionMode) {
+                        // Selection mode keeps the bar clean; actions live in
+                        // the bottom bar.
+                    } else if (timelineMode) {
                         // Cycle waterfall -> uniform -> by date; persisted.
                         IconButton(onClick = {
                             viewMode = (viewMode + 1) % 3
@@ -375,9 +457,18 @@ fun AlbumScreen(
                                         file = file,
                                         thumbs = thumbs,
                                         square = true,
+                                        inSelection = selectionMode,
+                                        isSelected = file.id in selected,
                                         onClick = {
-                                            val index = flat.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
-                                            onPreview(flat, index, true)
+                                            if (selectionMode) {
+                                                if (file.id in selected) selected.remove(file.id) else selected[file.id] = file
+                                            } else {
+                                                val index = flat.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
+                                                onPreview(flat, index, true)
+                                            }
+                                        },
+                                        onLongClick = {
+                                            selected[file.id] = file
                                         },
                                     )
                                 }
@@ -410,7 +501,16 @@ fun AlbumScreen(
                             file = flat[i],
                             thumbs = thumbs,
                             square = true,
-                            onClick = { onPreview(flat, i, true) },
+                            inSelection = selectionMode,
+                            isSelected = flat[i].id in selected,
+                            onClick = {
+                                if (selectionMode) {
+                                    if (flat[i].id in selected) selected.remove(flat[i].id) else selected[flat[i].id] = flat[i]
+                                } else {
+                                    onPreview(flat, i, true)
+                                }
+                            },
+                            onLongClick = { selected[flat[i].id] = flat[i] },
                         )
                     }
                 }
@@ -455,10 +555,17 @@ fun AlbumScreen(
                         AlbumTile(
                             file = file,
                             thumbs = thumbs,
+                            inSelection = selectionMode,
+                            isSelected = file.id in selected,
                             onClick = {
-                                val index = flat.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
-                                onPreview(flat, index, true)
+                                if (selectionMode) {
+                                    if (file.id in selected) selected.remove(file.id) else selected[file.id] = file
+                                } else {
+                                    val index = flat.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
+                                    onPreview(flat, index, true)
+                                }
                             },
+                            onLongClick = { selected[file.id] = file },
                         )
                     }
                 }
@@ -475,6 +582,25 @@ fun AlbumScreen(
                     }
                 }
             }
+        }
+
+        shareUrl?.let { url ->
+            AlertDialog(
+                onDismissRequest = { shareUrl = null },
+                title = { Text(LocalStrings.current.actionShare) },
+                text = { Text(url) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        scope.launch {
+                            copyToClipboard(url)
+                            shareUrl = null
+                        }
+                    }) { Text(LocalStrings.current.copied) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { shareUrl = null }) { Text(LocalStrings.current.actionCancel) }
+                },
+            )
         }
 
         // Upload progress dialog: progress, speed and cancel.
@@ -520,12 +646,16 @@ private fun Centered(pad: PaddingValues, content: @Composable () -> Unit) {
 }
 
 /** Waterfall tile: loads the cover, then occupies its intrinsic aspect ratio. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AlbumTile(
     file: FileDto,
     thumbs: ThumbnailLoader,
     onClick: () -> Unit,
     square: Boolean = false,
+    inSelection: Boolean = false,
+    isSelected: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
 ) {
     var bitmap by remember(file.id) { mutableStateOf<ImageBitmap?>(null) }
     // Decoupled from bitmap: load() returning null means "no cover" (not still
@@ -536,7 +666,14 @@ private fun AlbumTile(
         bitmap = thumbs.load(file.id)
         loaded = true
     }
-    Box(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
+    ) {
         val bmp = bitmap
         when {
             bmp != null && bmp.width > 0 && bmp.height > 0 -> Image(
@@ -561,6 +698,31 @@ private fun AlbumTile(
                         fileIcon(file.mimeType),
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        if (inSelection) {
+            // Google-Photos checkmark: filled when picked, hollow circle when
+            // selection mode is on but this tile is not picked.
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp)
+                    .size(24.dp)
+                    .background(
+                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                        CircleShape,
+                    )
+                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (isSelected) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(16.dp),
                     )
                 }
             }
@@ -620,5 +782,26 @@ private fun BackToCollectionsChip(onClick: () -> Unit) {
         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
         Spacer(Modifier.width(4.dp))
         Text(LocalStrings.current.backToCollections)
+    }
+}
+
+/** Icon + label action used by the album selection bar. */
+@Composable
+private fun RowScope.BarAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+    ) {
+        Icon(icon, contentDescription = label, tint = tint)
+        Spacer(Modifier.height(2.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = tint)
     }
 }
