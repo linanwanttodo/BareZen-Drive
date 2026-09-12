@@ -180,6 +180,9 @@ interface Strings {
     fun reloadToUpdate(version: String): String
     fun downloadUpdateHint(version: String): String
     fun selectedCount(n: Int): String
+    val appTagline: String
+    val notSignedInPrompt: String
+    val notSignedInLogin: String
     val tabSearch: String
     val searchHint: String
     val searchEmpty: String

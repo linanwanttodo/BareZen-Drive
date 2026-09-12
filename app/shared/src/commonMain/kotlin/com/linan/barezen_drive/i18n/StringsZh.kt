@@ -171,6 +171,9 @@ object StringsZh : Strings {
     override fun reloadToUpdate(version: String): String =
         "服务器已更新到 $version，重新加载即可使用新版本"
     override fun selectedCount(n: Int): String = "已选 %d 项".replace("%d", n.toString())
+override val appTagline: String = "你的个人云盘"
+override val notSignedInPrompt: String = "登录后开始使用你的云盘"
+override val notSignedInLogin: String = "登录 / 注册"
 override val tabSearch: String = "搜索"
 override val searchHint: String = "搜索文件名"
 override val searchEmpty: String = "没有匹配的文件"

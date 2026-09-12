@@ -79,6 +79,7 @@ import com.linan.barezen_drive.platform.PickedFile
 import com.linan.barezen_drive.platform.rememberImagePicker
 import com.linan.barezen_drive.platform.monotonicNowMs
 import com.linan.barezen_drive.platform.deviceName
+import com.linan.barezen_drive.platform.legacyDeviceName
 import com.linan.barezen_drive.data.repo.AlbumFolder
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.media.fileIcon
@@ -173,7 +174,7 @@ fun AlbumScreen(
     val allPhotosLabel = LocalStrings.current.allPhotos
 
     LaunchedEffect(Unit) {
-        albumFolderId = AlbumFolder.resolve(repo, device)
+        albumFolderId = AlbumFolder.resolve(repo, device, legacyDeviceName())
         deviceOptions = AlbumFolder.listDevices(repo)
         albumFolderId?.let { categories = repo.contents(it).getOrNull()?.folders?.map { f -> f.name to f.id } ?: emptyList() }
     }
@@ -255,7 +256,7 @@ fun AlbumScreen(
     // cancelling the current one aborts its session and moves to the next.
     LaunchedEffect(pendingUploads) {
         if (pendingUploads.isEmpty()) return@LaunchedEffect
-        val target = albumFolderId ?: AlbumFolder.resolve(repo, device)
+        val target = albumFolderId ?: AlbumFolder.resolve(repo, device, legacyDeviceName())
         albumFolderId = target
         val picks = pendingUploads
         picks.forEachIndexed { i, picked ->

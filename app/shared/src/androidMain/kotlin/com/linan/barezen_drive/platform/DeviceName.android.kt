@@ -23,3 +23,9 @@ actual fun deviceName(): String {
     val safe = name.replace(Regex("[/\\\\:*.?\"<>|]"), "-").trim('-', ' ', '.')
     return safe.ifEmpty { "Android" }
 }
+
+actual fun legacyDeviceName(): String? {
+    val model = Build.MODEL?.trim().orEmpty()
+    val current = deviceName()
+    return model.takeIf { it.isNotEmpty() && it != current }
+}

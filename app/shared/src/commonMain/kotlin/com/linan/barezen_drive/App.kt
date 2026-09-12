@@ -3,8 +3,18 @@ package com.linan.barezen_drive
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -140,6 +150,9 @@ fun App() {
     var glassBlur by remember { mutableStateOf(prefs.glassBlurEnabled) }
     var albumAutoSync by remember { mutableStateOf(prefs.albumAutoSync) }
     var currentUserId by remember { mutableStateOf<String?>(null) }
+    // Browse-first: the app opens on the main page even signed out; a
+    // centered prompt links to login. TokenStorage stays the source of truth.
+    var signedIn by remember { mutableStateOf(TokenStorage.accessToken != null) }
     var syncWifiOnly by remember { mutableStateOf(prefs.syncWifiOnly) }
     var glassAlpha by remember { mutableStateOf(prefs.glassAlphaPercent) }
     val accentSeed = when {
@@ -191,9 +204,9 @@ fun App() {
         }
 
         var stack by remember {
-            mutableStateOf(
+            mutableStateOf<List<Screen>>(
                 listOf(
-                    if (TokenStorage.accessToken != null) Screen.Main else Screen.Login,
+                    Screen.Main,
                 ),
             )
         }
@@ -270,7 +283,8 @@ fun App() {
                 auth = auth,
                 onLoggedIn = {
                     username = prefs.username
-                    stack = listOf(Screen.Main)
+                    signedIn = true
+                pop()
                 },
                 themeToggle = themeToggle,
             )
@@ -283,7 +297,7 @@ fun App() {
                 ) {
                     val wallpaperBehind = wallpaperEnabled && wallpaperBitmap != null
                     when (tab) {
-                        MainTab.HOME -> HomeScreen(
+                        MainTab.HOME -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else HomeScreen(
                             repo = files,
                             thumbs = thumbs,
                             onOpenAlbum = { tab = MainTab.ALBUM },
@@ -298,7 +312,7 @@ fun App() {
                             },
                             avatar = { AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
                         )
-                        MainTab.ALBUM -> AlbumScreen(
+                        MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else AlbumScreen(
                             repo = files,
                             thumbs = thumbs,
                             uploader = uploader,
@@ -307,7 +321,7 @@ fun App() {
                             onOpenTransfers = { push(Screen.Transfers) },
                             avatar = { AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
                         )
-                        MainTab.FILES -> FilesScreen(                            path = filesPath,
+                        MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(                            path = filesPath,
                             repo = files,
                             uploader = uploader,
                             auth = auth,
@@ -325,7 +339,7 @@ fun App() {
                             },
                             themeToggle = themeToggle,
                         )
-                        MainTab.SEARCH -> SearchScreen(
+                        MainTab.SEARCH -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else SearchScreen(
                             files = files,
                             currentUserId = currentUserId,
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
@@ -449,5 +463,30 @@ fun App() {
         }
         }
     }
+    }
+}
+
+/** Signed-out state for the main tabs: a calm prompt instead of error walls. */
+@Composable
+private fun NotSignedInPane(onLogin: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                androidx.compose.material.icons.Icons.Default.Cloud,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(56.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                LocalStrings.current.notSignedInPrompt,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onLogin, colors = com.linan.barezen_drive.ui.theme.filledButtonColors()) {
+                Text(LocalStrings.current.notSignedInLogin)
+            }
+        }
     }
 }

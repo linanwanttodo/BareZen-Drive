@@ -21,8 +21,19 @@ object AlbumFolder {
      * album>; photos land only at the device level, never on the platform
      * level. Returns null when the server is unreachable.
      */
-    suspend fun resolve(repo: FilesRepository, deviceName: String): String? {
+    suspend fun resolve(repo: FilesRepository, deviceName: String, legacyName: String? = null): String? {
         val platform = resolvePlatform(repo) ?: return null
+        // Name migration: early builds used the raw factory model code as the
+        // folder name ("2210132C"). When a friendly name is set and the legacy
+        // folder still exists, rename it instead of forking a second tree.
+        if (!legacyName.isNullOrBlank() && legacyName != deviceName) {
+            val platformContents = repo.contents(platform).getOrNull() ?: return findOrCreateChild(repo, platform, deviceName)
+            val friendly = platformContents.folders.firstOrNull { it.name == deviceName }
+            val legacy = platformContents.folders.firstOrNull { it.name == legacyName }
+            if (friendly == null && legacy != null) {
+                repo.renameFolder(legacy.id, deviceName).getOrThrow()
+            }
+        }
         return findOrCreateChild(repo, platform, deviceName)
     }
 

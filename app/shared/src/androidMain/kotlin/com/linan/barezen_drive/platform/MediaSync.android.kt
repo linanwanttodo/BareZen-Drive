@@ -86,7 +86,7 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
 
         val repo = FilesRepository(ApiClient())
         val uploader = UploadManager(repo)
-        val deviceFolder = AlbumFolder.resolve(repo, deviceName()) ?: return@runBlocking Result.retry()
+        val deviceFolder = AlbumFolder.resolve(repo, deviceName(), legacyDeviceName()) ?: return@runBlocking Result.retry()
         val synced = MediaSync.syncedSet()
         val ctx = applicationContext
 
