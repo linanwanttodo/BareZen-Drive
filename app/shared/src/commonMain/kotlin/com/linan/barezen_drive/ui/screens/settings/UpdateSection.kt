@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -50,6 +51,7 @@ internal fun UpdateCheckRow(
 ) {
     var busy by remember { mutableStateOf(false) }
     var downloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0f) }
     var status by remember { mutableStateOf<UpdateStatus?>(null) }
     val scope = rememberCoroutineScope()
     val badgeAvailable by UpdateBadge.available.collectAsState()
@@ -81,7 +83,18 @@ internal fun UpdateCheckRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (busy || downloading) {
+        if (downloading) {
+            // Live download progress; indeterminate only before the first byte.
+            if (downloadProgress > 0f) {
+                Text(
+                    "${(downloadProgress * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        } else if (busy) {
             CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         } else if (badgeAvailable) {
             // Red dot mirrors the settings-tab badge until handled.

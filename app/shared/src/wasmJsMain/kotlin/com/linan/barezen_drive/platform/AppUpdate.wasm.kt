@@ -21,4 +21,4 @@ actual fun reloadApp() {
  * Browser client: updates arrive with the server bundle, so there is nothing
  * to download in-process. The caller falls back to the server-update guidance.
  */
-actual suspend fun downloadAndInstallUpdate(url: String): Boolean = false
+actual suspend fun downloadAndInstallUpdate(url: String, onProgress: (Float) -> Unit): Boolean = false

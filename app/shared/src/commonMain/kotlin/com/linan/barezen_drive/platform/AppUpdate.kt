@@ -10,12 +10,15 @@ expect val installChannel: InstallChannel
 expect fun openInBrowser(url: String)
 
 /**
- * Downloads the package at [url] through the platform and hands it to the OS
- * installer. Returns true when the hand-off started; false means this platform
- * cannot update in-process and the caller should fall back to the release
- * page in the browser.
+ * Downloads the package at [url] inside the app (progress 0..1 reported to
+ * [onProgress]) and hands the finished file to the OS installer. Returns true
+ * when the hand-off started; false means this platform cannot update
+ * in-process and the caller should fall back to the release page.
  */
-expect suspend fun downloadAndInstallUpdate(url: String): Boolean
+expect suspend fun downloadAndInstallUpdate(
+    url: String,
+    onProgress: (Float) -> Unit = {},
+): Boolean
 
 /**
  * Reloads the running app so it picks up a newer build served by the same

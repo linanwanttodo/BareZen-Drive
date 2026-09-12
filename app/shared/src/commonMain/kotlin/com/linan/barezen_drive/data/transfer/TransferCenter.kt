@@ -38,6 +38,17 @@ object TransferCenter {
 
     private var seq = 0L
 
+    // Batch cancellations requested from the UI; workers poll this between
+    // files and stop the queue.
+    private val cancelledIds = mutableSetOf<String>()
+
+    /** UI stop button: asks a running batch to finish after the current file. */
+    fun cancel(id: String) {
+        cancelledIds.add(id)
+    }
+
+    fun isCancelled(id: String): Boolean = id in cancelledIds
+
     fun start(name: String, kind: TransferKind, total: Long): String {
         val id = "t${++seq}"
         push(TransferItem(id, name, kind, TransferPhase.RUNNING, 0, total, atMs = nowMs()))
@@ -67,12 +78,21 @@ object TransferCenter {
     }
 
     fun done(id: String) {
-        val name = _items.value.firstOrNull { it.id == id }?.name ?: return
+        val item = _items.value.firstOrNull { it.id == id } ?: return
         update(id) { it.copy(phase = TransferPhase.DONE, atMs = nowMs()) }
-        runCatching { com.linan.barezen_drive.platform.TransferNotifier.showFinished(id, name, "Done", ok = true) }
+        runCatching {
+            if (item.kind == TransferKind.SYNC) {
+                // A finished backup is not news: dismiss the progress entry
+                // instead of stacking a result notification on top of it.
+                com.linan.barezen_drive.platform.TransferNotifier.dismiss(id)
+            } else {
+                com.linan.barezen_drive.platform.TransferNotifier.showFinished(id, item.name, "Done", ok = true)
+            }
+        }
     }
 
     fun fail(id: String, error: String) {
+        cancelledIds.remove(id)
         val name = _items.value.firstOrNull { it.id == id }?.name ?: return
         update(id) { it.copy(phase = TransferPhase.FAILED, error = error, atMs = nowMs()) }
         runCatching { com.linan.barezen_drive.platform.TransferNotifier.showFinished(id, name, error, ok = false) }

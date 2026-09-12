@@ -107,6 +107,13 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : Worker(appCont
         var doneCount = 0
         var failed = 0
         for ((item, fingerprint) in pending) {
+            // The stop button marks the batch cancelled between files; the
+            // in-flight upload finishes, the rest of the queue is dropped.
+            if (TransferCenter.isCancelled(batchId)) {
+                TransferCenter.fail(batchId, if (java.util.Locale.getDefault().language == "zh") "已停止" else "stopped")
+                MediaSync.saveSynced(synced)
+                return@runBlocking Result.success()
+            }
             try {
                 val picked = AndroidPickedFile(ctx, item.uri)
                 // Category folder created on demand from the phone-album name.

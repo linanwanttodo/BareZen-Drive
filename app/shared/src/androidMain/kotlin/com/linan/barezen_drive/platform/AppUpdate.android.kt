@@ -1,21 +1,15 @@
 package com.linan.barezen_drive.platform
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
-import android.os.Environment
-import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.linan.barezen_drive.AndroidContext
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.coroutines.resume
+import java.net.HttpURLConnection
+import java.net.URL
 
 actual val installChannel: InstallChannel = InstallChannel.ANDROID
 
@@ -34,64 +28,53 @@ actual fun openInBrowser(url: String) {
 actual fun reloadApp() = Unit
 
 /**
- * Downloads the APK with the system DownloadManager (visible in the shade),
- * then hands the finished file to the package installer. Android 8+ asks the
- * user to allow installs from this app once (REQUEST_INSTALL_PACKAGES).
+ * Streams the APK into the app's own download directory with live progress,
+ * then hands the finished file to the package installer. No system
+ * DownloadManager, no completion broadcasts, no OEM quirks: the progress the
+ * UI shows is the bytes this process actually wrote. Android 8+ asks the user
+ * to allow installs from this app once (REQUEST_INSTALL_PACKAGES).
  */
-actual suspend fun downloadAndInstallUpdate(url: String): Boolean = withContext(Dispatchers.IO) {
+actual suspend fun downloadAndInstallUpdate(
+    url: String,
+    onProgress: (Float) -> Unit,
+): Boolean = withContext(Dispatchers.IO) {
     runCatching {
         val context = AndroidContext.app
         val name = url.substringBefore('?').substringAfterLast('/')
-        val destination = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), name)
+        val destination = File(context.getExternalFilesDir(null), "updates/$name")
+        destination.parentFile?.mkdirs()
 
-        val downloader = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        var downloadId = -1L
-
-        // The completion receiver MUST be live before enqueue: on a fast
-        // network the broadcast can otherwise land before registration, the
-        // wait would time out, and the flow would fall back to the browser.
-        lateinit var receiver: BroadcastReceiver
-        val completed = suspendCancellableCoroutine { continuation ->
-            receiver = object : BroadcastReceiver() {
-                override fun onReceive(receiverContext: Context, intent: Intent) {
-                    if (intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != downloadId) return
-                    val query = DownloadManager.Query().setFilterById(downloadId)
-                    val ok = downloader.query(query).use { cursor ->
-                        cursor.moveToFirst() &&
-                            cursor.getInt(
-                                cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS),
-                            ) == DownloadManager.STATUS_SUCCESSFUL
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 60_000
+            instanceFollowRedirects = true
+        }
+        try {
+            if (connection.responseCode !in 200..299) return@runCatching false
+            val total = connection.contentLengthLong
+            destination.outputStream().use { out ->
+                connection.inputStream.use { input ->
+                    val buffer = ByteArray(128 * 1024)
+                    var written = 0L
+                    var lastPercent = -1
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n == -1) break
+                        out.write(buffer, 0, n)
+                        written += n
+                        if (total > 0) {
+                            val percent = (written * 100 / total).toInt()
+                            if (percent != lastPercent) {
+                                lastPercent = percent
+                                onProgress(percent.coerceIn(0, 100) / 100f)
+                            }
+                        }
                     }
-                    context.unregisterReceiver(this)
-                    if (continuation.isActive) continuation.resume(ok)
                 }
             }
-            ContextCompat.registerReceiver(
-                context,
-                receiver,
-                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-                ContextCompat.RECEIVER_NOT_EXPORTED,
-            )
-
-            val request = DownloadManager.Request(Uri.parse(url))
-                .setTitle(name)
-                .setMimeType("application/vnd.android.package-archive")
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationUri(Uri.fromFile(destination))
-            downloadId = downloader.enqueue(request)
+        } finally {
+            connection.disconnect()
         }
-
-        val ok = withTimeout(15 * 60 * 1000L) { completed } || run {
-            // The broadcast may already have fired before this line; the queue
-            // is the source of truth either way.
-            val query = DownloadManager.Query().setFilterById(downloadId)
-            downloader.query(query).use { cursor ->
-                cursor.moveToFirst() &&
-                    cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) ==
-                        DownloadManager.STATUS_SUCCESSFUL
-            }
-        }
-        if (!ok) return@withContext false
 
         installApk(context, destination)
         true

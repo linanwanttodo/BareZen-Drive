@@ -146,7 +146,14 @@ fun TransferCenterScreen(
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
-                    items(rows, key = { it.id }) { item -> TransferRow(item) }
+                    items(rows, key = { it.id }) { item ->
+                        TransferRow(
+                            item,
+                            onStop = {
+                                TransferCenter.cancel(item.id)
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -154,7 +161,7 @@ fun TransferCenterScreen(
 }
 
 @Composable
-private fun TransferRow(item: TransferItem) {
+private fun TransferRow(item: TransferItem, onStop: () -> Unit = {}) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -167,12 +174,22 @@ private fun TransferRow(item: TransferItem) {
                 when (item.phase) {
                     TransferPhase.DONE -> LocalStrings.current.transferDone
                     TransferPhase.FAILED -> LocalStrings.current.transferFailed
-                    else -> "${formatFileSize(item.bytesDone)} / ${formatFileSize(item.bytesTotal)}"
+                    else -> when {
+                        // Batch syncs count files, byte uploads count bytes.
+                        item.kind == TransferKind.SYNC && item.bytesTotal > 0 ->
+                            "\${item.bytesDone.toInt()} / \${item.bytesTotal.toInt()}"
+                        else -> "\${formatFileSize(item.bytesDone)} / \${formatFileSize(item.bytesTotal)}"
+                    }
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = if (item.phase == TransferPhase.FAILED) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Stop button for running batches: flags the worker, which drops
+            // the rest of the queue after the in-flight file.
+            if (item.phase == TransferPhase.RUNNING && item.kind == TransferKind.SYNC) {
+                TextButton(onClick = onStop) { Text(LocalStrings.current.actionCancel) }
+            }
         }
         item.statusText?.let {
             Spacer(Modifier.height(2.dp))
