@@ -23,6 +23,15 @@ import java.util.UUID
 // ISO-8601 strings only at DTO boundaries.
 object AuthService {
     private val REFRESH_TTL_MS = Duration.ofDays(30).toMillis()
+
+    /**
+     * Short reuse window for a just-rotated refresh token. Rotation is one-shot,
+     * but the rotation response can die in transit (mobile link flaps mid-handshake):
+     * the server has revoked the old token while the phone still holds it, and the
+     * retry would otherwise read as a stolen token and force a re-login. Within this
+     * window a revoked token may rotate once more; past it, replay is rejected.
+     */
+    private const val REFRESH_REUSE_GRACE_MS = 120_000L
     private val rnd = SecureRandom()
     private val USERNAME_RE = Regex("^[a-zA-Z0-9_]{3,32}$")
 
@@ -112,21 +121,34 @@ object AuthService {
 
     fun refresh(raw: String): RefreshResponse = transaction(DatabaseFactory.db) {
         val h = hashToken(raw)
+        val now = System.currentTimeMillis()
         val row = RefreshTokensTable.selectAll().where { RefreshTokensTable.tokenHash eq h }.singleOrNull()
             ?: throw ApiException.unauthorized("refresh token 无效", ErrorCodes.TOKEN_INVALID)
-        if (row[RefreshTokensTable.revokedAt] != null) {
+        val prevRevokedAt = row[RefreshTokensTable.revokedAt]
+        if (prevRevokedAt != null && now - prevRevokedAt >= REFRESH_REUSE_GRACE_MS) {
+            // Revoked and past the reuse grace window: a replay this late is
+            // not a retried refresh, it is a stolen token.
             throw ApiException.unauthorized("refresh token 已失效", ErrorCodes.TOKEN_INVALID)
         }
-        if (row[RefreshTokensTable.expiresAt] < System.currentTimeMillis()) {
+        if (row[RefreshTokensTable.expiresAt] < now) {
             throw ApiException.unauthorized("refresh token 已过期", ErrorCodes.TOKEN_EXPIRED)
         }
         val uid = row[RefreshTokensTable.user]
         // Conditional revoke: if a concurrent refresh already took this token,
-        // the update matches zero rows and we reject instead of issuing a second pair.
-        val revoked = RefreshTokensTable.update({
-            (RefreshTokensTable.tokenHash eq h) and (RefreshTokensTable.revokedAt eq null)
-        }) { it[revokedAt] = System.currentTimeMillis() }
-        if (revoked == 0) throw ApiException.unauthorized("refresh token 已失效", ErrorCodes.TOKEN_INVALID)
+        // the update matches zero rows and we re-check against the grace window
+        // below instead of failing outright.
+        if (prevRevokedAt == null) {
+            val revoked = RefreshTokensTable.update({
+                (RefreshTokensTable.tokenHash eq h) and (RefreshTokensTable.revokedAt eq null)
+            }) { it[RefreshTokensTable.revokedAt] = now }
+            if (revoked == 0) {
+                val again = RefreshTokensTable.selectAll().where { RefreshTokensTable.tokenHash eq h }.single()
+                val at = again[RefreshTokensTable.revokedAt]
+                if (at == null || now - at >= REFRESH_REUSE_GRACE_MS) {
+                    throw ApiException.unauthorized("refresh token 已失效", ErrorCodes.TOKEN_INVALID)
+                }
+            }
+        }
         val (newRaw, expMs) = newRefreshToken()
         RefreshTokensTable.insert {
             it[id] = UUID.randomUUID()

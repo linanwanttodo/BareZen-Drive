@@ -130,6 +130,10 @@ class ApiClient(
                     store.accessToken?.let { BearerTokens(it, store.refreshToken ?: "") }
                 }
                 refreshTokens {
+                    // Access token as this request observed it, BEFORE the lock:
+                    // the comparison below distinguishes "I am the first 401 to
+                    // arrive" from "another waiter already refreshed for me".
+                    val seenAccess = store.accessToken
                     // The JSON client and the streaming client share the token
                     // store but not the ktor Auth plugin, so both can hit a 401
                     // at the same moment. Refreshes are serialized here and the
@@ -139,15 +143,21 @@ class ApiClient(
                     // rotates refresh tokens one-shot, so a loser would get a
                     // 401 that looks exactly like a dead session).
                     refreshMutex.withLock {
+                        // A waiter that finds the access token already changed
+                        // reuses that result instead of rotating again. One
+                        // burst of 401s used to churn one server-side rotation
+                        // per waiter, which burned one-shot tokens and could
+                        // hit the refresh rate limit.
+                        val current = store.accessToken
                         val rt = store.refreshToken
-                        if (rt == null) {
-                            null
-                        } else {
-                            runCatching {
+                        when {
+                            current == null && rt == null -> null
+                            current != null && current != seenAccess -> BearerTokens(current, rt ?: "")
+                            else -> runCatching {
                                 client.post("$baseUrl/api/auth/refresh") {
                                     markAsRefreshTokenRequest()
                                     contentType(ContentType.Application.Json)
-                                    setBody(RefreshRequest(rt))
+                                    setBody(RefreshRequest(rt ?: ""))
                                 }.body<RefreshResponse>()
                             }.fold(
                                 onSuccess = { r ->

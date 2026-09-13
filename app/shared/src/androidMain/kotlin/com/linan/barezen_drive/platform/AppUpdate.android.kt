@@ -92,6 +92,9 @@ private fun downloadOne(url: String, onProgress: (Float) -> Unit): Boolean {
         connection.disconnect()
     }
 
+    // Download is complete; report the last percent before handing the file
+    // to the installer so the UI never ends on 99.
+    onProgress(1f)
     installApk(context, destination)
     return true
 }

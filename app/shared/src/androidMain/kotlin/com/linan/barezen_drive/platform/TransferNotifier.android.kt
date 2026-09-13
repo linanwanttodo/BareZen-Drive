@@ -23,8 +23,23 @@ actual object TransferNotifier {
     /** Brand silhouette; the app module injects its drawable at startup. */
     private var smallIconRes: Int = android.R.drawable.stat_sys_upload
 
+    /**
+     * App-branded icons injected at startup: the small icon is the launcher
+     * icon rendered as a white alpha silhouette (the shade only ever draws a
+     * flat tint from the small icon's alpha channel - a coloured bitmap there
+     * would just read as a block), the large icon is the launcher icon in
+     * full colour on the right of the notification.
+     */
+    private var smallIconIcon: androidx.core.graphics.drawable.IconCompat? = null
+    private var largeIconBitmap: android.graphics.Bitmap? = null
+
     fun setSmallIcon(resId: Int) {
         smallIconRes = resId
+    }
+
+    fun setAppIcons(small: androidx.core.graphics.drawable.IconCompat, large: android.graphics.Bitmap) {
+        smallIconIcon = small
+        largeIconBitmap = large
     }
 
     /**
@@ -71,11 +86,16 @@ actual object TransferNotifier {
 
     private fun builder(channel: String, title: String, text: String?): NotificationCompat.Builder {
         val b = NotificationCompat.Builder(AndroidContext.app, channel)
-            .setSmallIcon(smallIconRes)
-            .setContentTitle(title)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+        // The app-branded pair wins when injected: coloured launcher artwork in
+        // the large-icon slot, white alpha silhouette of the same artwork as
+        // the small icon. The res fallback only covers a startup that somehow
+        // skipped the injection.
+        smallIconIcon?.let { b.setSmallIcon(it) } ?: b.setSmallIcon(smallIconRes)
+        largeIconBitmap?.let { b.setLargeIcon(it) }
+        b.setContentTitle(title)
         text?.let { b.setContentText(it) }
         return b
     }
@@ -99,12 +119,13 @@ actual object TransferNotifier {
             ensureChannels()
             val nm = manager()?.takeIf { canNotify() } ?: return
             val b = NotificationCompat.Builder(AndroidContext.app, CHANNEL_DONE)
-                .setSmallIcon(smallIconRes)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setAutoCancel(true)
                 .setOngoing(false)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setContentTitle(title)
+                .setContentText(text)
+            smallIconIcon?.let { b.setSmallIcon(it) } ?: b.setSmallIcon(smallIconRes)
+            largeIconBitmap?.let { b.setLargeIcon(it) }
             nm.notify(idFor(tag), b.build())
         }
     }
