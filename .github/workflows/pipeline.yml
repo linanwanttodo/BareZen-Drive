@@ -9,12 +9,15 @@ name: Pipeline
 # push master             -> one build: tests, packaging, :latest image; when the
 #                            pushed commit carries a v* tag this same run also
 #                            publishes the GitHub Release and versioned image
+# push v* tag             -> same as a tagged master push: builds and publishes
+#                            the release for that tag
 # workflow_dispatch       -> same as a tagged master push; optionally pass a version
 on:
   pull_request:
     branches: [ master ]
   push:
     branches: [ master ]
+    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       version:
