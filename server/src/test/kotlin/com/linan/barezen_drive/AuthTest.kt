@@ -83,7 +83,20 @@ class AuthTest {
             contentType(ContentType.Application.Json)
             setBody(Json.encodeToString(RefreshRequest(tokens.refreshToken)))
         }
-        assertEquals(HttpStatusCode.Unauthorized, refresh2.status) // rotation invalidates old token
+        // Rotation invalidates the old token, but a replay inside the reuse
+        // grace window must recover: the rotation response itself can die in
+        // transit, and hard-failing that retry is what kept signing users out.
+        assertEquals(HttpStatusCode.OK, refresh2.status)
+        val recovered = Json.decodeFromString<RefreshResponse>(refresh2.bodyAsText())
+        assertNotEquals(rotated.refreshToken, recovered.refreshToken)
+
+        // A fabricated token never existed and is rejected outright.
+        val refresh3 = c.post("/api/auth/refresh") {
+            contentType(ContentType.Application.Json)
+            setBody(Json.encodeToString(RefreshRequest("not-a-real-token")))
+        }
+        assertEquals(HttpStatusCode.Unauthorized, refresh3.status)
+        assertTrue(refresh3.bodyAsText().contains("TOKEN_INVALID"))
     }
 
     @Test
