@@ -10,13 +10,14 @@ expect val installChannel: InstallChannel
 expect fun openInBrowser(url: String)
 
 /**
- * Downloads the package at [url] inside the app (progress 0..1 reported to
- * [onProgress]) and hands the finished file to the OS installer. Returns true
- * when the hand-off started; false means this platform cannot update
- * in-process and the caller should fall back to the release page.
+ * Downloads the package inside the app (progress 0..1 reported to
+ * [onProgress]) and hands the finished file to the OS installer. The URLs are
+ * mirrors of the same package, tried in order: the first one that yields a
+ * complete download wins. Returns true when the hand-off started; false means
+ * every source failed and the caller should fall back to the release page.
  */
 expect suspend fun downloadAndInstallUpdate(
-    url: String,
+    urls: List<String>,
     onProgress: (Float) -> Unit = {},
 ): Boolean
 

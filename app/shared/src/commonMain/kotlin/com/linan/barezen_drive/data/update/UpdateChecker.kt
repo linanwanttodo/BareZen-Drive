@@ -14,8 +14,9 @@ sealed interface UpdateStatus {
 
     /**
      * A newer version exists. [downloadUrl] and [sha256] are set when the
-     * release manifest listed a package for this platform; [releaseUrl] is the
-     * human-facing release page (always a safe fallback).
+     * release manifest listed a package for this platform; [fallbackUrl] is a
+     * mirror of the same package (server proxy first, upstream link second);
+     * [releaseUrl] is the human-facing release page (always a safe fallback).
      */
     data class Available(
         val version: String,
@@ -23,6 +24,7 @@ sealed interface UpdateStatus {
         /** True when the client needs a reload rather than a new install. */
         val reloadOnly: Boolean,
         val downloadUrl: String? = null,
+        val fallbackUrl: String? = null,
         val sha256: String? = null,
     ) : UpdateStatus
 
@@ -71,6 +73,7 @@ object UpdateChecker {
             releaseUrl = info.releaseUrl,
             reloadOnly = reloadOnly,
             downloadUrl = asset?.url,
+            fallbackUrl = asset?.fallbackUrl,
             sha256 = asset?.sha256,
         )
     }

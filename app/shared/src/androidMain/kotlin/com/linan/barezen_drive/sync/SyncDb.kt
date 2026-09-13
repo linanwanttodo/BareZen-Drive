@@ -118,7 +118,11 @@ object SyncDb {
      * - a brand-new Uri becomes PENDING;
      * - a DONE row whose size or date_modified changed (an edited photo) goes
      *   back to PENDING and drops its cached hash;
-     * - rows already PENDING/UPLOADING/FAILED keep their state (we only refresh
+     * - a FAILED row whose retry budget is exhausted goes back to PENDING: a
+     *   fresh scan is the one heartbeat this queue has, and without this the
+     *   photo would sit in FAILED forever - invisible to the due queries,
+     *   uncounted, never retried even after the network that failed it healed;
+     * - rows already PENDING/UPLOADING keep their state (we only refresh
      *   the descriptive columns), so an in-flight or backoff-delayed item is
      *   never resurrected by a concurrent scan.
      */
@@ -133,6 +137,8 @@ object SyncDb {
                     if (isBucketExcluded(m.bucket)) continue
                     d.insert(TABLE, null, valuesOf(m, SyncState.PENDING, 0))
                 } else {
+                    val budgetOver = existing.state == SyncState.FAILED &&
+                        existing.attempts >= SyncPolicy.MAX_ATTEMPTS
                     val stale = SyncPolicy.isStale(
                         state = existing.state,
                         storedSize = existing.size,
@@ -140,9 +146,10 @@ object SyncDb {
                         scannedSize = m.size,
                         scannedDateModified = m.dateModified,
                     )
-                    val newState = if (stale) SyncState.PENDING else existing.state
-                    val cv = valuesOf(m, newState, if (stale) 0 else existing.attempts)
-                    if (stale) {
+                    val retry = stale || budgetOver
+                    val newState = if (retry) SyncState.PENDING else existing.state
+                    val cv = valuesOf(m, newState, if (retry) 0 else existing.attempts)
+                    if (retry) {
                         cv.putNull("hash_cache")
                         cv.putNull("server_file_id")
                     } else {
@@ -190,10 +197,13 @@ object SyncDb {
         arrayOf(SyncState.PENDING.key, SyncState.FAILED.key, maxAttempts.toString()),
     )
 
-    /** FAILED rows that will still be retried (under the ceiling, eligible album). */
-    fun failedCount(maxAttempts: Int = SyncPolicy.MAX_ATTEMPTS): Int = countQuery(
-        "SELECT COUNT(*) FROM $TABLE WHERE $NOT_EXCLUDED AND ${TABLE}.state=? AND ${TABLE}.attempts < ?",
-        arrayOf(SyncState.FAILED.key, maxAttempts.toString()),
+    /** FAILED rows in eligible albums, whatever their retry budget says. The
+     *  status card shows this as a subset of the pending count, so a failure
+     *  must never make the number silently vanish once attempts run out - the
+     *  photo is still there, still un-backed-up, and the count must say so. */
+    fun failedCount(): Int = countQuery(
+        "SELECT COUNT(*) FROM $TABLE WHERE $NOT_EXCLUDED AND ${TABLE}.state=?",
+        arrayOf(SyncState.FAILED.key),
     )
 
     /** Rows a lane has claimed right now. Read by the status card so "N uploading"

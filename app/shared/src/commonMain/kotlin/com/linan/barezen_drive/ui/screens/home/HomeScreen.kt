@@ -26,12 +26,9 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -58,9 +55,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.linan.barezen_drive.data.transfer.TransferCenter
-import com.linan.barezen_drive.data.transfer.TransferKind
-import com.linan.barezen_drive.data.transfer.TransferPhase
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
@@ -71,6 +65,8 @@ import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.ui.screens.preview.PreviewKind
 import io.ktor.utils.io.ByteReadChannel
 import com.linan.barezen_drive.i18n.I18n
+import com.linan.barezen_drive.ui.component.TransferEntryIcon
+import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.i18n.LocalStrings
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.PaddingValues
@@ -105,12 +101,6 @@ fun HomeScreen(
     var latency by remember { mutableStateOf<Long?>(null) }
     val snackbar = SnackbarHostState()
     val scope = rememberCoroutineScope()
-    // Live upload counter for the transfer icon badge.
-    val transferItems by TransferCenter.items.collectAsState()
-    val activeUploads = transferItems.count {
-        (it.phase == TransferPhase.RUNNING || it.phase == TransferPhase.QUEUED) &&
-            (it.kind == TransferKind.UPLOAD || it.parent != null)
-    }
     // Pending batch delete from the selection bar; confirmed through a dialog
     // like the files screen does - a bare tap must never destroy data.
     var confirmDelete by remember { mutableStateOf<List<FileDto>?>(null) }
@@ -152,24 +142,16 @@ fun HomeScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
-        snackbarHost = { SnackbarHost(snackbar) },
+        // Lift the snackbar above the floating bottom bar: at scaffold
+        // bottom it sits behind the translucent glass and reads as a
+        // second, stacked navigation bar (seen on connection errors).
+        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = BottomBarClearance)) },
         topBar = {
             TopAppBar(
                 title = { Text(LocalStrings.current.tabHome) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 actions = {
-                    IconButton(onClick = onOpenTransfers) {
-                        // Live upload count: every file in flight or queued
-                        // (batch children included, batch aggregates excluded),
-                        // so the icon doubles as an upload progress hint.
-                        BadgedBox(badge = {
-                            if (activeUploads > 0) {
-                                Badge { Text("$activeUploads") }
-                            }
-                        }) {
-                            Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
-                        }
-                    }
+                    TransferEntryIcon(onClick = onOpenTransfers)
                     themeToggle?.invoke()
                     avatar()
                 },
@@ -222,7 +204,7 @@ fun HomeScreen(
         // glass bar while content still flows behind it for the refraction.
         LazyColumn(
             Modifier.fillMaxSize().padding(pad),
-            contentPadding = PaddingValues(bottom = 112.dp),
+            contentPadding = PaddingValues(bottom = BottomBarClearance),
         ) {
             // ---- Server status section ----
             item(key = "server_status") {

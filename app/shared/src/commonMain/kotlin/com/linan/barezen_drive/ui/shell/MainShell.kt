@@ -81,6 +81,15 @@ private fun rememberSelectedIndexProvider(ordinal: Int): () -> Int {
 }
 
 /**
+ * Vertical room every tab screen must keep clear for the floating bottom
+ * bar (glass lens or plain bar): bar height plus its 12 dp margins and the
+ * safe-drawing inset allowance. Used both for scroll content padding and
+ * for lifting snackbars above the bar - an unpadded snackbar hosts behind
+ * the translucent glass and reads as a second, stacked navigation bar.
+ */
+val BottomBarClearance = 112.dp
+
+/**
  * App shell: NavigationSuiteScaffold renders a navigation rail on wide
  * windows; on compact widths the stock bar is replaced by the
  * LiquidBottomTabs glass bar from Kyant0/AndroidLiquidGlass (ported under

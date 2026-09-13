@@ -306,4 +306,6 @@ override val avatarChange: String = "Change avatar"
     override val backupAlbumItem: String = "items"
     override val backupOn: String = "On"
     override val backupOff: String = "Off"
+    override val backupFailedRetryHint: String = "retries automatically"
+    override val showBackupSettings: String = "Backup settings"
 }

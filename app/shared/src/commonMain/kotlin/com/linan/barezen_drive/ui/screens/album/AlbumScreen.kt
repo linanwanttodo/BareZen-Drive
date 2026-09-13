@@ -49,7 +49,7 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.CalendarViewDay
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.ViewAgenda
-import androidx.compose.material.icons.filled.SwapVert
+import com.linan.barezen_drive.ui.component.TransferEntryIcon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -102,6 +102,7 @@ import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import kotlin.time.Clock
 import com.linan.barezen_drive.i18n.I18n
+import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.platform.copyToClipboard
 import com.linan.barezen_drive.platform.rememberFileSaver
@@ -390,7 +391,10 @@ fun AlbumScreen(
     val loadedFiles = loaded
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
-        snackbarHost = { SnackbarHost(snackbar) },
+        // Lift the snackbar above the floating bottom bar: at scaffold
+        // bottom it sits behind the translucent glass and reads as a
+        // second, stacked navigation bar (seen on connection errors).
+        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = BottomBarClearance)) },
         bottomBar = {
             if (selectionMode) {
                 // Google-Photos action bar: favorite / archive / share / download /
@@ -590,9 +594,7 @@ fun AlbumScreen(
                     }
                     // Double arrow: manual upload sits beside the auto-sync /
                     // transfer centre entry, mirroring a netdisk app.
-                    IconButton(onClick = onOpenTransfers) {
-                        Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
-                    }
+                    TransferEntryIcon(onClick = onOpenTransfers)
                     avatar()
                 },
             )

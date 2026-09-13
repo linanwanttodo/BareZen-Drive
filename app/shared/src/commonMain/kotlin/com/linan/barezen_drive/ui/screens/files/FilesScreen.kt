@@ -40,7 +40,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.SwapVert
+import com.linan.barezen_drive.ui.component.TransferEntryIcon
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -87,6 +87,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.core.dto.ErrorCodes
+import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.core.dto.FileVersionDto
 import com.linan.barezen_drive.core.dto.FolderDto
@@ -398,7 +399,10 @@ fun FilesScreen(
     val progress by uploader.progress.collectAsState()
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
+        // Lift the snackbar above the floating bottom bar: at scaffold
+        // bottom it sits behind the translucent glass and reads as a
+        // second, stacked navigation bar (seen on connection errors).
+        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = BottomBarClearance)) },
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         topBar = {
             Column {
@@ -418,9 +422,7 @@ fun FilesScreen(
                         IconButton(onClick = { showNewFolder = true }) {
                             Icon(Icons.Default.CreateNewFolder, contentDescription = LocalStrings.current.newFolder)
                         }
-                        IconButton(onClick = onOpenTransfers) {
-                            Icon(Icons.Default.SwapVert, contentDescription = LocalStrings.current.transfers)
-                        }
+                        TransferEntryIcon(onClick = onOpenTransfers)
                         themeToggle?.invoke()
                         IconButton(onClick = { setGridView(!gridView) }) {
                             Icon(
@@ -592,7 +594,7 @@ fun FilesScreen(
                 // floating glass bar (content still flows behind it).
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 112.dp),
+                    contentPadding = PaddingValues(bottom = BottomBarClearance),
                 ) {
                     items(ui.folders, key = { "f_${it.id}" }) { folder ->
                         FolderRow(
@@ -895,7 +897,7 @@ private fun FilesGrid(
         columns = GridCells.Adaptive(minSize = 104.dp),
         modifier = Modifier.fillMaxSize(),
         // Bottom clearance for the floating glass bar (content flows behind).
-        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 112.dp),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = BottomBarClearance),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

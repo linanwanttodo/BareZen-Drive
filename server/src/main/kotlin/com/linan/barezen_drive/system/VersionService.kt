@@ -5,6 +5,7 @@ import com.linan.barezen_drive.core.dto.UpdateAssetDto
 import com.linan.barezen_drive.core.dto.UpdateDockerDto
 import com.linan.barezen_drive.core.dto.UpdateManifestDto
 import com.linan.barezen_drive.core.dto.VersionInfoResponse
+import io.ktor.http.RequestConnectionPoint
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -154,6 +155,51 @@ object VersionService {
         if (parts.size < 2) return null
         return "https://api.github.com/repos/${parts[0]}/${parts[1]}/releases/latest"
     }
+}
+
+/**
+ * Rewrites GitHub release asset links onto this server's own download proxy
+ * ([proxyRoutes]), keeping the original link as [fallbackUrl][com.linan.barezen_drive.core.dto.UpdateAssetDto.fallbackUrl].
+ * Which source actually works depends on two hops the server cannot know -
+ * phone-to-server and server-to-GitHub - so the client gets both and tries
+ * them in order instead of one side silently depending on the other's route.
+ * Non-GitHub links (already proxied, custom mirrors) pass through untouched.
+ */
+fun rewriteAssetsToProxy(origin: RequestConnectionPoint, info: VersionInfoResponse): VersionInfoResponse {
+    // serverHost/serverPort derive from the client's Host header: the address
+    // the phone actually used to reach this server, exactly what a proxy URL
+    // handed back to that client must be built on.
+    val base = buildString {
+        append(origin.scheme)
+        append("://")
+        append(origin.serverHost)
+        val port = origin.serverPort
+        if (port != 80 && port != 443) {
+            append(':')
+            append(port)
+        }
+    }
+    var changed = false
+    val assets = info.assets.map { asset ->
+        val parts = githubDownloadParts(asset.url)
+        if (parts == null) {
+            asset
+        } else {
+            changed = true
+            asset.copy(
+                url = "$base/api/updates/download/${parts.first}/${parts.second}",
+                fallbackUrl = asset.url,
+            )
+        }
+    }
+    return if (changed) info.copy(assets = assets) else info
+}
+
+/** (tag, file) of a GitHub release download link, or null for any other URL. */
+private fun githubDownloadParts(url: String): Pair<String, String>? {
+    val match = Regex("^https://github\\.com/[^/]+/[^/]+/releases/download/([^/]+)/([^/?#]+)$").find(url.trim())
+        ?: return null
+    return match.groupValues[1] to match.groupValues[2]
 }
 
 private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? =

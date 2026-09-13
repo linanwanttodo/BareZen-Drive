@@ -67,6 +67,7 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import com.linan.barezen_drive.i18n.I18n
@@ -193,22 +194,50 @@ class ApiClient(
         ?.let { engine -> HttpClient(engine) { commonConfig(streaming = true) } }
         ?: HttpClient { commonConfig(streaming = true) }
 
-    private suspend fun <T> runApi(block: suspend () -> T): Result<T> =
-        try {
-            Result.success(block())
-        } catch (e: ResponseException) {
-            Result.failure(e.toApiFailure())
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            val msg = when {
-                e is ConnectTimeoutException || e is SocketTimeoutException || e::class.simpleName == "HttpRequestTimeoutException" ->
-                    I18n.strings.networkTimeout
-                e.message?.contains("Failed to connect", ignoreCase = true) == true ->
-                    I18n.strings.networkCannotConnect
-                else -> e.message ?: e::class.simpleName ?: "Network error"
+    /**
+     * Connect-level transient failures (server blip, mobile link handover)
+     * are retried with backoff before surfacing. Only failures where the
+     * connection itself never opened are replayed: the request cannot have
+     * reached the server, so a retry is safe for every method, POST included.
+     * A timeout after the exchange started is NOT retried - its outcome is
+     * ambiguous and a replayed POST could duplicate a folder.
+     */
+    private val maxConnectAttempts = 3
+    private val retryBackoffMs = longArrayOf(600, 1_500)
+
+    private suspend fun <T> runApi(block: suspend () -> T): Result<T> {
+        var attempt = 0
+        while (true) {
+            var failure: Exception? = null
+            val result = try {
+                Result.success(block())
+            } catch (e: ResponseException) {
+                failure = e
+                Result.failure(e.toApiFailure())
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                failure = e
+                Result.failure(e.toNetworkFailure())
             }
-            Result.failure(ApiFailure.Network(msg))
+            if (result.isSuccess) return result
+            val retryable = failure is ConnectTimeoutException ||
+                failure?.message?.contains("Failed to connect", ignoreCase = true) == true
+            if (!retryable || attempt == maxConnectAttempts - 1) return result
+            delay(retryBackoffMs[attempt])
+            attempt++
         }
+    }
+
+    private fun Exception.toNetworkFailure(): ApiFailure {
+        val msg = when {
+            this is ConnectTimeoutException || this is SocketTimeoutException || this::class.simpleName == "HttpRequestTimeoutException" ->
+                I18n.strings.networkTimeout
+            message?.contains("Failed to connect", ignoreCase = true) == true ->
+                I18n.strings.networkCannotConnect
+            else -> message ?: this::class.simpleName ?: "Network error"
+        }
+        return ApiFailure.Network(msg)
+    }
 
     private suspend fun ResponseException.toApiFailure(): ApiFailure {
         val status = response.status

@@ -2,6 +2,7 @@ package com.linan.barezen_drive.ui.screens.transfer
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import com.linan.barezen_drive.platform.MediaSync
@@ -19,6 +20,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
@@ -36,6 +39,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -47,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
@@ -319,9 +324,11 @@ private fun TransferTile(item: TransferItem) {
 }
 
 /**
- * Album backup card, always visible on Android: the switch, the network
- * policy, the live counters and the three actions that belong to it (pick
- * albums, sync now, and stop while a pass is running).
+ * Album backup entry, collapsed to one compact row so the transfer list stays
+ * the main body of the page: the transfers here are not only album work, and a
+ * settings panel used to squat the whole top of the screen. Expanded on tap -
+ * switches, counters, pause reasons and actions live one tap below. The live
+ * numbers and the stop button stay visible even while collapsed.
  */
 @Composable
 private fun BackupSettingsCard(
@@ -337,82 +344,130 @@ private fun BackupSettingsCard(
     onStop: () -> Unit,
 ) {
     val strings = LocalStrings.current
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(strings.backupCardTitle, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            if (status.active > 0) {
-                TextButton(onClick = onStop) { Text(strings.stopSync) }
-            }
-            TextButton(onClick = onOpenAlbums) { Text(strings.backupAlbumsTitle) }
-            TextButton(onClick = onSyncNow) { Text(strings.backupSyncNow) }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    var expanded by remember { mutableStateOf(false) }
+    val chevron by animateFloatAsState(targetValue = if (expanded) 180f else 0f, label = "backup-chevron")
+
+    Column(Modifier.fillMaxWidth()) {
+        // Collapsed header: title, live counters, stop, and the expander.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Default.CloudUpload,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(strings.albumAutoSync, style = MaterialTheme.typography.bodyLarge)
+                Text(strings.backupCardTitle, style = MaterialTheme.typography.titleSmall)
                 Text(
-                    strings.albumAutoSyncHint,
+                    buildString {
+                        append(strings.backupPending); append(" "); append(status.pending)
+                        if (status.failed > 0) {
+                            append("   "); append(strings.backupFailed); append(" "); append(status.failed)
+                        }
+                        if (status.active > 0) {
+                            append("   "); append(strings.backupUploading); append(" "); append(status.active)
+                        }
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Switch(checked = autoSync, onCheckedChange = onAutoSyncChange)
-        }
-        if (autoSync) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(strings.syncWifiOnly, style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        strings.syncWifiOnlyHint,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = wifiOnly, onCheckedChange = onWifiOnlyChange)
+            if (status.active > 0) {
+                TextButton(onClick = onStop) { Text(strings.stopSync) }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(strings.syncChargingOnly, style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        strings.syncChargingOnlyHint,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(checked = chargingOnly, onCheckedChange = onChargingOnlyChange)
-            }
-        }
-        // Live counters, always: they are the point of the card.
-        Text(
-            buildString {
-                append(strings.backupPending); append(": "); append(status.pending)
-                if (status.active > 0) { append("   "); append(strings.backupUploading); append(": "); append(status.active) }
-                if (status.failed > 0) { append("   "); append(strings.backupFailed); append(": "); append(status.failed) }
-                if (status.excludedBuckets > 0) { append("   "); append(strings.backupExcluded); append(": "); append(status.excludedBuckets) }
-            },
-            style = MaterialTheme.typography.bodySmall,
-        )
-        // Why nothing is moving even though the switch is on.
-        status.pausedReason?.let { reason ->
-            Text(
-                when (reason) {
-                    BackupPauseReason.SIGNED_OUT -> strings.backupPausedSignedOut
-                    BackupPauseReason.NETWORK -> strings.backupPausedNoNetwork
-                    BackupPauseReason.CHARGING -> strings.backupPausedCharging
-                    BackupPauseReason.BATTERY_LOW -> strings.backupPausedBatteryLow
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.tertiary,
+            Icon(
+                Icons.Default.ExpandMore,
+                contentDescription = strings.showBackupSettings,
+                modifier = Modifier.graphicsLayer { rotationZ = chevron },
             )
         }
-        val last = if (status.lastSyncAt > 0L) {
-            com.linan.barezen_drive.ui.media.formatDateTime(kotlinx.datetime.Instant.fromEpochMilliseconds(status.lastSyncAt).toString())
-        } else {
-            strings.backupNever
+
+        // Expanded panel: the full settings, exactly as before.
+        if (expanded) {
+            Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(strings.albumAutoSync, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            strings.albumAutoSyncHint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = autoSync, onCheckedChange = onAutoSyncChange)
+                }
+                if (autoSync) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(strings.syncWifiOnly, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                strings.syncWifiOnlyHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = wifiOnly, onCheckedChange = onWifiOnlyChange)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(strings.syncChargingOnly, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                strings.syncChargingOnlyHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = chargingOnly, onCheckedChange = onChargingOnlyChange)
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onOpenAlbums) { Text(strings.backupAlbumsTitle) }
+                    TextButton(onClick = onSyncNow) { Text(strings.backupSyncNow) }
+                }
+                // The failed count is a subset of the pending one, not work that
+                // vanished from it: every failed photo still waits to back up and
+                // retries by itself, so the two numbers always add up honestly.
+                if (status.failed > 0) {
+                    Text(
+                        "${strings.backupFailed}: ${status.failed} (${strings.backupFailedRetryHint})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                // Why nothing is moving even though the switch is on.
+                status.pausedReason?.let { reason ->
+                    Text(
+                        when (reason) {
+                            BackupPauseReason.SIGNED_OUT -> strings.backupPausedSignedOut
+                            BackupPauseReason.NETWORK -> strings.backupPausedNoNetwork
+                            BackupPauseReason.CHARGING -> strings.backupPausedCharging
+                            BackupPauseReason.BATTERY_LOW -> strings.backupPausedBatteryLow
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                val last = if (status.lastSyncAt > 0L) {
+                    com.linan.barezen_drive.ui.media.formatDateTime(kotlinx.datetime.Instant.fromEpochMilliseconds(status.lastSyncAt).toString())
+                } else {
+                    strings.backupNever
+                }
+                Text(
+                    "${strings.backupLastSync}: $last",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        Text(
-            "${strings.backupLastSync}: $last",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }

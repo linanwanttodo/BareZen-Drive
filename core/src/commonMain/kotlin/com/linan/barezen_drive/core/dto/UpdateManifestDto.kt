@@ -18,6 +18,14 @@ import kotlinx.serialization.Serializable
     val url: String,
     val sha256: String,
     val size: Long,
+    /**
+     * Alternate download source for the same package. The server fills this
+     * with the upstream (GitHub) link when [url] has been rewritten to its own
+     * proxy: clients then pick whichever source is reachable - a phone in the
+     * same region as an upstream-blocked server uses the proxy, and vice versa
+     * a server behind a bad upstream route still leaves the direct link usable.
+     */
+    val fallbackUrl: String? = null,
 )
 
 /** Container image metadata in the manifest (multi-arch). */

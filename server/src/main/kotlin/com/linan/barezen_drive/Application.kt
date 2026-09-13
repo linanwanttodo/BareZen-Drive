@@ -22,6 +22,7 @@ import com.linan.barezen_drive.files.versionRoutes
 import com.linan.barezen_drive.files.UploadService
 import com.linan.barezen_drive.system.adminUserRoutes
 import com.linan.barezen_drive.system.avatarRoutes
+import com.linan.barezen_drive.system.proxyRoutes
 import com.linan.barezen_drive.system.settingsRoutes
 import com.linan.barezen_drive.system.systemRoutes
 import com.linan.barezen_drive.system.versionRoutes
@@ -146,6 +147,9 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         get("/health") { call.respondText("""{"status":"ok"}""", ContentType.Application.Json) }
         // Public: clients and the web bundle compare versions before login.
         versionRoutes(cfg)
+        // Public update-package proxy: streams GitHub release assets so the
+        // phone never depends on its own route to GitHub (see versionRoutes).
+        proxyRoutes(cfg)
         // Registration status is public (login screen hides the register tab);
         // the toggle itself lives behind authentication inside settingsRoutes.
         settingsRoutes()

@@ -313,4 +313,6 @@ interface Strings {
     val backupAlbumItem: String
     val backupOn: String
     val backupOff: String
+    val backupFailedRetryHint: String
+    val showBackupSettings: String
 }

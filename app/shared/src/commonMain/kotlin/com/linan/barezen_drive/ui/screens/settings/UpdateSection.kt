@@ -53,8 +53,30 @@ internal fun UpdateCheckRow(
     var downloading by remember { mutableStateOf(false) }
     var downloadProgress by remember { mutableStateOf(0f) }
     var status by remember { mutableStateOf<UpdateStatus?>(null) }
+    var downloadFailed by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val badgeAvailable by UpdateBadge.available.collectAsState()
+
+    // Mirrors of the same package, tried in order: the server proxy rides the
+    // connection the app already depends on, the upstream link covers the case
+    // where the server's own route is the bad hop. Failure surfaces as a retry
+    // prompt - no more silent detour to the browser.
+    fun startDownload(available: UpdateStatus.Available) {
+        downloading = true
+        downloadProgress = 0f
+        scope.launch {
+            val mirrors = listOfNotNull(available.downloadUrl, available.fallbackUrl).distinct()
+            val ok = mirrors.isNotEmpty() && runCatching {
+                downloadAndInstallUpdate(mirrors) { p -> downloadProgress = p }
+            }.getOrDefault(false)
+            downloading = false
+            if (ok) {
+                UpdateBadge.set(false)
+            } else {
+                downloadFailed = true
+            }
+        }
+    }
 
     Row(
         modifier = Modifier
@@ -108,24 +130,25 @@ internal fun UpdateCheckRow(
 
     status?.let { outcome ->
         UpdateResultDialog(outcome = outcome, onDismiss = { status = null }, onDownload = {
-            downloading = true
-            downloadProgress = 0f
-            scope.launch {
-                val url = (outcome as? UpdateStatus.Available)
-                val target = url?.downloadUrl ?: return@launch
-                // Wire the platform progress callback into the row: without it
-                // the percentage label never moves off zero.
-                val ok = runCatching {
-                    downloadAndInstallUpdate(target) { p -> downloadProgress = p }
-                }.getOrDefault(false)
-                downloading = false
-                if (ok) {
-                    UpdateBadge.set(false)
-                } else {
-                    openInBrowser(url.releaseUrl ?: target)
-                }
-            }
+            (outcome as? UpdateStatus.Available)?.let(::startDownload)
         })
+    }
+
+    if (downloadFailed) {
+        AlertDialog(
+            onDismissRequest = { downloadFailed = false },
+            title = { Text(LocalStrings.current.downloadFailed) },
+            text = { Text(LocalStrings.current.checkFailedRetry) },
+            confirmButton = {
+                TextButton(onClick = {
+                    downloadFailed = false
+                    (status as? UpdateStatus.Available)?.let(::startDownload)
+                }) { Text(LocalStrings.current.actionRetry) }
+            },
+            dismissButton = {
+                TextButton(onClick = { downloadFailed = false }) { Text(LocalStrings.current.actionClose) }
+            },
+        )
     }
 }
 

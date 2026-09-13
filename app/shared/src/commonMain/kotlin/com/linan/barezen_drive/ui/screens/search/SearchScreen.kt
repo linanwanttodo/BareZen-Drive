@@ -39,6 +39,9 @@ import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.AvatarButton
 import com.linan.barezen_drive.ui.media.formatDateTime
+import com.linan.barezen_drive.ui.shell.BottomBarClearance
+import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
+import androidx.compose.foundation.layout.PaddingValues
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import kotlinx.coroutines.delay
 
@@ -80,7 +83,9 @@ fun SearchScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.surface,
+        // Translucent panel like the other tabs: an opaque surface here
+        // painted over the wallpaper layer MainShell draws behind content.
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         topBar = {
             TopAppBar(
                 title = { Text(LocalStrings.current.tabSearch) },
@@ -120,7 +125,7 @@ fun SearchScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                else -> LazyColumn(Modifier.fillMaxSize()) {
+                else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = BottomBarClearance)) {
                     itemsIndexed(shown, key = { _, f -> f.id }) { i, file ->
                         Row(
                             Modifier
