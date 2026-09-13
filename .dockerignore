@@ -1,0 +1,18 @@
+.git
+.github
+.gradle
+.idea
+build/
+**/build/
+data/
+docs/
+*.md
+!README.md
+*.apk
+.kotlin
+# Deployment secrets must never enter the build context (the compose file reads
+# them from the host, the image never needs them).
+.env
+.env.*
+*.pem
+*.key

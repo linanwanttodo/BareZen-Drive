@@ -1,0 +1,30 @@
+# Runtime-only image for prebuilt server distributions, used by the release
+# pipeline to build linux/amd64 and linux/arm64 in one multi-arch manifest.
+#
+# It deliberately runs NO Gradle: cross-building the wasm client or the server
+# under QEMU would be prohibitively slow. The pipeline builds the server
+# distribution once on the native runner (architecture-independent JVM output,
+# with the Web client embedded) and this image just layers a JRE onto it.
+#
+# The top-level Dockerfile remains the self-contained, from-source build for
+# users who clone the repository.
+FROM eclipse-temurin:21-jre-alpine
+
+# ffmpeg powers server-side thumbnail fallback (video frames + exotic image
+# formats). The alpine repo version moves with releases; pinning blocks builds.
+# hadolint ignore=DL3018
+RUN apk add --no-cache ffmpeg \
+    && addgroup -g 10001 -S app \
+    && adduser -u 10001 -S app -G app
+WORKDIR /app
+# Build context is the docker/ directory: the pipeline stages the prebuilt
+# distribution into docker/server-dist/ before this build runs.
+COPY server-dist/ ./
+RUN chown -R 10001:10001 /app
+USER 10001:10001
+ENV JAVA_TOOL_OPTIONS="-Xms64m -Xmx256m"
+EXPOSE 8080
+# A fresh DB-backed /health response proves the process actually serves.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD ["wget", "-qO-", "http://127.0.0.1:8080/health"]
+ENTRYPOINT ["./bin/server"]

@@ -1,0 +1,461 @@
+name: Pipeline
+
+# One pipeline for every target. Build each artifact once and reuse it downstream
+# (web is compiled a single time and feeds both the server bundle and the
+# container image), so nothing is rebuilt for one broken package - re-run just
+# the failed job and its consumers pick the cached artifacts back up.
+#
+# pull_request            -> tests only (fast feedback)
+# push master             -> one build: tests, packaging, :latest image; when the
+#                            pushed commit carries a v* tag this same run also
+#                            publishes the GitHub Release and versioned image
+# workflow_dispatch       -> same as a tagged master push; optionally pass a version
+on:
+  pull_request:
+    branches: [ master ]
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example 0.0.2); defaults to the tag or gradle.properties"
+        required: false
+        type: string
+
+# No concurrency group on purpose: every push builds and nothing ever cancels
+# or queues another run. Duplicate publishes are impossible anyway - the
+# release job skips a version that is already out.
+permissions:
+  contents: write
+  packages: write
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8"
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  # Resolves the single version used by every job and decides whether this run
+  # publishes a release: a v* tag on the pushed commit or a manual input makes
+  # it a release; otherwise gradle.properties drives the build only. The
+  # release job below is the single place that deduplicates an
+  # already-published version.
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      is_release: ${{ steps.resolve.outputs.is_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: resolve
+        # Pass the workflow_dispatch input through the environment: interpolating
+        # ${{ inputs.version }} straight into the shell lets whoever can run the
+        # workflow inject commands (semgrep run-shell-injection).
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            v="$INPUT_VERSION"; release=true
+          elif git describe --tags --exact-match HEAD 2>/dev/null | grep -q '^v'; then
+            v="$(git describe --tags --exact-match HEAD | sed 's/^v//')"; release=true
+          else
+            v=$(grep -E '^version=' gradle.properties | head -1 | cut -d= -f2 | tr -d '[:space:]')
+            release=false
+          fi
+          # Downstream jobs interpolate this output directly into shell commands,
+          # so the value must be restricted to version-safe characters here.
+          if ! printf '%s' "$v" | grep -Eq '^[0-9][0-9A-Za-z.+-]*$'; then
+            echo "invalid version: $v" >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "is_release=$release" >> "$GITHUB_OUTPUT"
+          echo "Using version $v (release: $release)"
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Server tests
+        run: ./gradlew :server:test --console=plain
+      - name: Core tests
+        run: ./gradlew :core:allTests --console=plain
+      - name: Shared tests (Android host)
+        run: ./gradlew :app:shared:testAndroidHostTest --console=plain
+      - name: Web compile gate
+        run: ./gradlew :app:shared:compileKotlinWasmJs --console=plain
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            server/build/reports/tests/**
+            core/build/reports/tests/**
+            app/shared/build/reports/tests/**
+          if-no-files-found: ignore
+
+  web:
+    name: Web bundle
+    runs-on: ubuntu-latest
+    needs: [ version, test ]
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build wasm distribution
+        run: ./gradlew :app:webApp:wasmJsBrowserDistribution -Pversion=${{ needs.version.outputs.version }} --console=plain
+      - name: Zip the bundle
+        run: |
+          mkdir -p dist
+          (cd app/webApp/build/dist/wasmJs/productionExecutable && zip -qr "$GITHUB_WORKSPACE/dist/BareZen-Drive-${{ needs.version.outputs.version }}-web.zip" .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: |
+            app/webApp/build/dist/wasmJs/productionExecutable/**
+            dist/BareZen-Drive-${{ needs.version.outputs.version }}-web.zip
+          if-no-files-found: error
+
+  android:
+    name: Android APKs
+    runs-on: ubuntu-latest
+    needs: [ version, test ]
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Decode the release keystore when configured
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "path=$RUNNER_TEMP/release.jks" >> "$GITHUB_OUTPUT"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "No keystore secret configured; building an unsigned release APK."
+          fi
+      - name: Build APKs
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # Debug installs standalone; the release build is signed when the
+          # keystore secrets exist and becomes the update manifest's package.
+          ./gradlew :app:androidApp:assembleDebug :app:androidApp:assembleRelease \
+            -Pversion=${{ needs.version.outputs.version }} --console=plain
+      - name: Stage APKs with versioned ABI names
+        run: |
+          mkdir -p dist
+          V="${{ needs.version.outputs.version }}"
+          apkdir=app/androidApp/build/outputs/apk/release
+          shipped=0
+          for abi in arm64-v8a; do
+            f=$(ls "$apkdir"/*-"$abi"-release.apk 2>/dev/null | head -1)
+            if [ -n "$f" ] && [[ "$f" != *unsigned* ]]; then
+              cp "$f" "dist/BareZen-Drive-${V}-android-$abi.apk"
+              shipped=$((shipped+1))
+            fi
+          done
+          if [ "$shipped" -eq 0 ]; then
+            echo "No signed ABI APKs found; failing so the release stays clean." >&2
+            exit 1
+          fi
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apks
+          path: dist/*
+          if-no-files-found: error
+
+  # Builds the server distribution once, with the already-built web bundle
+  # embedded, and emits the architecture-independent tarball that both the
+  # release and the container image consume.
+  server:
+    name: Server distribution
+    runs-on: ubuntu-latest
+    needs: [ version, test, web ]
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v5
+        with:
+          name: web-dist
+          path: web-dist
+      - name: Embed the web bundle and build installDist
+        run: |
+          # download-artifact preserves the uploaded paths (app/webApp/...),
+          # so locate the bundle instead of assuming a fixed prefix.
+          webdir=$(dirname "$(find web-dist -name index.html -path '*productionExecutable*' | head -1)")
+          echo "Web bundle at: $webdir"
+          rm -rf server/src/main/resources/web
+          mkdir -p server/src/main/resources/web
+          cp -r "$webdir"/. server/src/main/resources/web/
+          ./gradlew :server:installDist -Pversion=${{ needs.version.outputs.version }} --console=plain
+      - name: Tar the distribution
+        run: |
+          mkdir -p dist
+          tar -C server/build/install -czf "dist/BareZen-Drive-${{ needs.version.outputs.version }}-server.tar.gz" server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-dist
+          path: |
+            dist/BareZen-Drive-${{ needs.version.outputs.version }}-server.tar.gz
+            server/build/install/server/**
+          if-no-files-found: error
+
+  # Multi-arch image (amd64 + arm64) assembled from the prebuilt distribution:
+  # the runtime Dockerfile runs no Gradle, so cross-building is safe. Only
+  # pushes on master/tag; PRs never publish.
+  docker:
+    name: Container image (amd64, arm64)
+    runs-on: ubuntu-latest
+    needs: [ version, server ]
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v5
+        with:
+          name: server-dist
+          path: server-dist
+      - name: Stage the distribution for the runtime image
+        run: |
+          rm -rf docker/server-dist
+          mkdir -p docker/server-dist /tmp/bz-server
+          tar -xzf server-dist/dist/BareZen-Drive-${{ needs.version.outputs.version }}-server.tar.gz -C /tmp/bz-server
+          cp -r /tmp/bz-server/server/. docker/server-dist/
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/master' }}
+            type=raw,value=${{ needs.version.outputs.version }},enable=${{ needs.version.outputs.is_release == 'true' }}
+            type=sha,format=short,prefix=sha-
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker
+          file: docker/Dockerfile.runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Desktop (JVM) is not enabled yet: the target needs its full jvm actual set.
+  # The job probes for it and skips cleanly until then; it never blocks a
+  # release. When enabled, add it to the release `needs` to ship its packages.
+  desktop:
+    name: Desktop packages (reserved)
+    runs-on: ubuntu-latest
+    needs: [ version, test ]
+    if: github.event_name != 'pull_request'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Package when the desktop target is enabled
+        run: |
+          if ./gradlew :app:desktopApp:tasks --all --console=plain 2>/dev/null | grep -q "packageDeb"; then
+            ./gradlew :app:desktopApp:packageDeb :app:desktopApp:packageRpm \
+              -Pversion=${{ needs.version.outputs.version }} --console=plain
+            mkdir -p dist
+            find app/desktopApp/build/compose/binaries -type f \( -name '*.deb' -o -name '*.rpm' \) -exec cp {} dist/ \;
+          else
+            echo "Desktop target not enabled; no desktop package produced."
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-dist
+          path: dist/*
+          if-no-files-found: ignore
+
+  # iOS builds only on macOS and needs the Apple targets plus a Darwin engine.
+  # Reserved and non-blocking for the same reason as desktop.
+  ios:
+    name: iOS app (macOS, reserved)
+    runs-on: macos-latest
+    needs: [ version, test ]
+    if: github.event_name != 'pull_request'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Write the version into the Xcode config
+        run: |
+          sed -i.bak -E "s/^MARKETING_VERSION=.*/MARKETING_VERSION=${{ needs.version.outputs.version }}/" \
+            app/iosApp/Configuration/Config.xcconfig
+      - name: Build the simulator app when Apple targets are enabled
+        run: |
+          if ./gradlew :app:shared:tasks --all --console=plain 2>/dev/null | grep -q "linkDebugFrameworkIosSimulatorArm64"; then
+            ./gradlew :app:shared:linkDebugFrameworkIosSimulatorArm64 \
+              -Pversion=${{ needs.version.outputs.version }} --console=plain
+            xcodebuild -project app/iosApp/iosApp.xcodeproj -scheme iosApp \
+              -configuration Release -sdk iphonesimulator \
+              -destination 'generic/platform=iOS Simulator' \
+              -derivedDataPath build/ios-dd CODE_SIGNING_ALLOWED=NO build
+            mkdir -p dist
+            (cd build/ios-dd/Build/Products/Release-iphonesimulator && zip -qr "$GITHUB_WORKSPACE/dist/BareZen-Drive-ios-simulator.zip" *.app)
+          else
+            echo "Apple targets not enabled; no iOS app produced."
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-dist
+          path: dist/*
+          if-no-files-found: ignore
+
+  # Collects the packages and writes the update manifest (update.json) plus
+  # checksums.txt. This is the single place the release metadata is produced, so
+  # the client update check and the GitHub Release always agree.
+  manifest:
+    name: Update manifest
+    runs-on: ubuntu-latest
+    needs: [ version, web, android, server ]
+    if: needs.version.outputs.is_release == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v5
+        with:
+          path: staged
+      - name: Assemble the bundle and write update.json
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          find staged -type f \( -name '*.apk' -o -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
+          ls -la dist
+
+          repo="${GITHUB_REPOSITORY}"
+          base="https://github.com/${repo}/releases/download/v${VERSION}"
+          notes="https://github.com/${repo}/releases/tag/v${VERSION}"
+
+          asset() { # platform arch kind filename (path relative to the repo root)
+            local f="$4"
+            local sha size
+            sha=$(sha256sum "$f" | cut -d' ' -f1)
+            size=$(stat -c%s "$f")
+            printf '    {"platform":"%s","arch":"%s","kind":"%s","url":"%s/%s","sha256":"%s","size":%s}' \
+              "$1" "$2" "$3" "$base" "${f##*/}" "$sha" "$size"
+          }
+
+          {
+            echo "{"
+            echo "  \"name\": \"BareZen-Drive\","
+            echo "  \"version\": \"${VERSION}\","
+            echo "  \"apiVersion\": 1,"
+            echo "  \"releasedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+            echo "  \"releaseNotesUrl\": \"${notes}\","
+            echo "  \"assets\": ["
+            first=true
+            for f in dist/BareZen-Drive-${VERSION}-android-*.apk; do
+              case "$f" in
+                *arm64-v8a*) arch=arm64-v8a ;;
+                *armeabi-v7a*) arch=armeabi-v7a ;;
+                *x86_64*) arch=x86_64 ;;
+                *) arch=any ;;
+              esac
+              $first || echo ","
+              first=false
+              asset android "$arch" apk "$f"
+            done
+            echo ","
+            asset web any zip "dist/BareZen-Drive-${VERSION}-web.zip"; echo ","
+            asset server any tar.gz "dist/BareZen-Drive-${VERSION}-server.tar.gz"; echo ""
+            echo "  ],"
+            echo "  \"docker\": {"
+            echo "    \"image\": \"ghcr.io/${repo}\","
+            echo "    \"tags\": [\"${VERSION}\", \"latest\"],"
+            echo "    \"platforms\": [\"linux/amd64\", \"linux/arm64\"]"
+            echo "  }"
+            echo "}"
+          } > dist/update.json
+
+          (cd dist && sha256sum * > checksums.txt)
+          echo "--- update.json ---"
+          cat dist/update.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [ version, manifest, docker ]
+    if: needs.version.outputs.is_release == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-bundle
+          path: dist
+      - name: Skip when this version is already published
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ needs.version.outputs.version }}" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release v${{ needs.version.outputs.version }} already exists; skipping publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish
+        if: steps.published.outputs.exists != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: BareZen-Drive v${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: dist/*
+          fail_on_unmatched_files: true
