@@ -63,7 +63,6 @@ fun SyncAlbumsScreen(
     offerAlbumReview: Boolean = false,
     onAlbumReviewHandled: () -> Unit = {},
     onSyncNow: () -> Unit,
-    onOpenTransfers: () -> Unit = {},
 ) {
     val strings = LocalStrings.current
     var buckets by remember { mutableStateOf<List<BackupBucket>?>(null) }
@@ -109,9 +108,6 @@ fun SyncAlbumsScreen(
                     }
                 },
                 actions = {
-                    // The plain transfer queue: uploads and downloads of every
-                    // kind, no backup controls mixed in.
-                    TextButton(onClick = onOpenTransfers) { Text(strings.transfers) }
                     // Bulk restore: the mirror is replaced in one assignment (not
                     // per row) so the list recomposes once, and the queue re-drive
                     // collapses into a single enqueue server-side (unique work

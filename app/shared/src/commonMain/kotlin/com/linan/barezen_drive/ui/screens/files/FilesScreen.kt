@@ -40,7 +40,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CreateNewFolder
-import com.linan.barezen_drive.ui.component.UploadProgressIcon
+import com.linan.barezen_drive.ui.component.FileTransferEntryIcon
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -422,7 +422,7 @@ fun FilesScreen(
                         IconButton(onClick = { showNewFolder = true }) {
                             Icon(Icons.Default.CreateNewFolder, contentDescription = LocalStrings.current.newFolder)
                         }
-                        UploadProgressIcon(onClick = onOpenUploads)
+                        FileTransferEntryIcon(onClick = onOpenUploads)
                         themeToggle?.invoke()
                         IconButton(onClick = { setGridView(!gridView) }) {
                             Icon(

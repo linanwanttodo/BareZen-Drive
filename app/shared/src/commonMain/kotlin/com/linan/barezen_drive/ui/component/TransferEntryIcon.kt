@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -16,25 +17,37 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.data.transfer.TransferCenter
 import com.linan.barezen_drive.data.transfer.TransferKind
+import com.linan.barezen_drive.data.transfer.TransferLane
 import com.linan.barezen_drive.data.transfer.TransferPhase
 import com.linan.barezen_drive.i18n.LocalStrings
 
 /**
- * Top-bar upload entry, modelled on the Google Photos backup pill: a single
- * upward arrow wrapped in a circle, where the circle doubles as the progress
- * ring. With nothing in flight it is a quiet outlined arrow; while uploads run
- * the ring fills with the aggregate byte progress across every in-flight or
- * queued file (batch children included, batch aggregates excluded) and turns
- * indeterminate only when no size is known yet.
+ * Top-bar transfer entry, modelled on the Google Photos backup pill: a glyph
+ * wrapped in a circle, where the circle doubles as the progress ring. With
+ * nothing in flight it is a quiet outlined glyph; while transfers of [lane]
+ * run, the ring fills with the aggregate byte progress across that lane's
+ * in-flight or queued files (batch children included, batch aggregates
+ * excluded) and turns indeterminate only when no size is known yet.
+ *
+ * The two lanes carry different glyphs on purpose: the album page keeps the
+ * upward "backup" arrow, home/files use the up-down double arrow of a
+ * netdisk transfer list - so the entry itself says which page it opens.
  */
 @Composable
-fun UploadProgressIcon(onClick: () -> Unit) {
+fun TransferEntryIcon(
+    lane: TransferLane,
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
     val items by TransferCenter.items.collectAsState()
     val active = items.filter {
-        (it.phase == TransferPhase.RUNNING || it.phase == TransferPhase.QUEUED) &&
+        it.lane == lane &&
+            (it.phase == TransferPhase.RUNNING || it.phase == TransferPhase.QUEUED) &&
             (it.kind == TransferKind.UPLOAD || it.parent != null)
     }
     val totalBytes = active.filter { it.bytesTotal > 0 }.sumOf { it.bytesTotal }
@@ -56,7 +69,7 @@ fun UploadProgressIcon(onClick: () -> Unit) {
                     )
                 }
             } else {
-                // Idle: a quiet ring so the arrow never floats unanchored.
+                // Idle: a quiet ring so the glyph never floats unanchored.
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -64,10 +77,32 @@ fun UploadProgressIcon(onClick: () -> Unit) {
                 )
             }
             Icon(
-                Icons.Default.ArrowUpward,
-                contentDescription = LocalStrings.current.transfers,
+                icon,
+                contentDescription = contentDescription,
                 modifier = Modifier.size(16.dp),
             )
         }
     }
+}
+
+/** Album lane entry: the upward backup arrow. */
+@Composable
+fun AlbumTransferEntryIcon(onClick: () -> Unit) {
+    TransferEntryIcon(
+        lane = TransferLane.ALBUM,
+        icon = Icons.Default.ArrowUpward,
+        contentDescription = LocalStrings.current.albumTransfersTitle,
+        onClick = onClick,
+    )
+}
+
+/** File lane entry: the up-down double arrow of a netdisk transfer list. */
+@Composable
+fun FileTransferEntryIcon(onClick: () -> Unit) {
+    TransferEntryIcon(
+        lane = TransferLane.FILE,
+        icon = Icons.Default.SwapVert,
+        contentDescription = LocalStrings.current.fileTransfersTitle,
+        onClick = onClick,
+    )
 }

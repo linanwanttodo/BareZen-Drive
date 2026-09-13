@@ -65,7 +65,7 @@ import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.ui.screens.preview.PreviewKind
 import io.ktor.utils.io.ByteReadChannel
 import com.linan.barezen_drive.i18n.I18n
-import com.linan.barezen_drive.ui.component.UploadProgressIcon
+import com.linan.barezen_drive.ui.component.FileTransferEntryIcon
 import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.i18n.LocalStrings
 import androidx.compose.foundation.Canvas
@@ -151,7 +151,7 @@ fun HomeScreen(
                 title = { Text(LocalStrings.current.tabHome) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 actions = {
-                    UploadProgressIcon(onClick = onOpenUploads)
+                    FileTransferEntryIcon(onClick = onOpenUploads)
                     themeToggle?.invoke()
                     avatar()
                 },

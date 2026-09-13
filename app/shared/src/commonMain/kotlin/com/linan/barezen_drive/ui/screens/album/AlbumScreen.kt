@@ -48,7 +48,7 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.CalendarViewDay
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.ViewAgenda
-import com.linan.barezen_drive.ui.component.UploadProgressIcon
+import com.linan.barezen_drive.ui.component.AlbumTransferEntryIcon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -61,6 +61,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
@@ -366,7 +367,11 @@ fun AlbumScreen(
             val perFile = picked.originAlbum?.takeIf { it.isNotBlank() }
                 ?.let { cat -> AlbumFolder.resolveCategory(repo, target, cat) }
                 ?: target
-            uploadJob = launch { uploader.upload(picked, perFile) }
+            // Album-initiated uploads list on the album transfer page, not
+            // the file one: the lane split is by where the work belongs.
+            uploadJob = launch {
+                uploader.upload(picked, perFile, lane = com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)
+            }
             uploadJob?.join()
         }
         uploadJob = null
@@ -490,6 +495,9 @@ fun AlbumScreen(
         },
         topBar = {
             TopAppBar(
+                // Transparent like the home tab: the default opaque bar is a
+                // white strip over the wallpaper.
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 title = {
                     if (selectionMode) {
                         Text(
@@ -597,9 +605,9 @@ fun AlbumScreen(
                     IconButton(onClick = { imagePicker() }) {
                         Icon(Icons.Default.AddPhotoAlternate, contentDescription = LocalStrings.current.pickFromGallery)
                     }
-                    // Double arrow: manual upload sits beside the auto-sync /
-                    // transfer centre entry, mirroring a netdisk app.
-                    UploadProgressIcon(onClick = onOpenUploads)
+                    // Album transfer entry: sync batches and album picks,
+                    // kept apart from the file transfer page.
+                    AlbumTransferEntryIcon(onClick = onOpenUploads)
                     avatar()
                 },
             )
@@ -637,7 +645,8 @@ fun AlbumScreen(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        contentPadding = PaddingValues(16.dp),
+                        // Bottom clears the floating glass bar, like files/home.
+                        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = BottomBarClearance),
                     ) {
                         items(collections.size, key = { collections[it].folderId }) { i ->
                             val tile = collections[i]
@@ -683,7 +692,7 @@ fun AlbumScreen(
                         onPinchStart = { zoomAccum = 1f },
                         onScale = { onPinch(it) },
                     ),
-                contentPadding = PaddingValues(bottom = 16.dp),
+                contentPadding = PaddingValues(bottom = BottomBarClearance),
             ) {
                 item(key = "back") { BackToCollectionsChip { timelineMode = false } }
                 sections.forEach { section ->
@@ -693,7 +702,10 @@ fun AlbumScreen(
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surface)
+                                // Same translucency as the screen panel: an
+                                // opaque strip here reads as a white bar over
+                                // the wallpaper.
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current))
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
                         )
                     }
@@ -757,7 +769,7 @@ fun AlbumScreen(
                         ),
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp),
+                    contentPadding = PaddingValues(bottom = BottomBarClearance),
                 ) {
                     items(flat.size, key = { flat[it].id }) { i ->
                         AlbumTile(
@@ -804,7 +816,7 @@ fun AlbumScreen(
                         ),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalItemSpacing = 4.dp,
-                    contentPadding = PaddingValues(bottom = 16.dp),
+                    contentPadding = PaddingValues(bottom = BottomBarClearance),
                 ) {
                     sections.forEach { section ->
                         item(key = "h_${section.day}", span = StaggeredGridItemSpan.FullLine) {
@@ -877,7 +889,9 @@ fun AlbumScreen(
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface)
+                            // Track the panel alpha, or the floating day label
+                            // is a white bar over the wallpaper.
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current))
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }

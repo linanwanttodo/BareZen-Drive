@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -50,24 +51,32 @@ import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.data.transfer.TransferCenter
 import com.linan.barezen_drive.data.transfer.TransferItem
 import com.linan.barezen_drive.data.transfer.TransferKind
+import com.linan.barezen_drive.data.transfer.TransferLane
 import com.linan.barezen_drive.data.transfer.TransferPhase
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.media.ThumbnailHub
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 
 /**
- * Transfer centre: everything that flows in and out of the device on one page,
- * and nothing else - album backup lives on its own screen, so this stays a
- * plain task list no matter what kind of work the rows represent. Two tabs:
- * active work with a live count in the tab, finished work beneath it. Sync
- * batches live in the active tab while they run; their per-file rows split by
- * phase, so finished photos are visible without leaving the page. Every row
- * carries a media tile: the real cover once the server file id exists, a type
- * icon before that.
+ * One lane of the transfer centre: album work (sync batches plus manual
+ * photo picks) is listed on the album page's screen, file work (uploads and
+ * downloads from the files tab) on the file screen reached from home and
+ * files. The two never mix, and neither carries sync settings - those live
+ * behind the album screen's settings entry, keeping both tabs a plain task
+ * list. Two tabs: active work with a live count, finished work beneath it.
+ * Sync batches keep their queued children inline while they run; settled
+ * children drop to the finished tab so photos complete in view. Every row
+ * carries a media tile: the real cover once the server file id exists, a
+ * type icon before that.
+ *
+ * [actions] lets the album lane offer its sync-settings entry in the top
+ * bar; the file lane passes nothing.
  */
 @Composable
 fun TransferCenterScreen(
+    lane: TransferLane,
     onBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
 ) {
     var tab by remember { mutableIntStateOf(0) }
     val all by TransferCenter.items.collectAsState()
@@ -75,7 +84,8 @@ fun TransferCenterScreen(
     // in-flight file first, so the row must acknowledge the request.
     var stopRequested by remember { mutableStateOf(setOf<String>()) }
 
-    val active = all.filter { it.phase == TransferPhase.RUNNING || it.phase == TransferPhase.QUEUED }
+    val mine = all.filter { it.lane == lane }
+    val active = mine.filter { it.phase == TransferPhase.RUNNING || it.phase == TransferPhase.QUEUED }
     // Active batches keep their queued children inline; settled children drop
     // to the finished tab so the user sees photos complete without switching.
     val activeRows = buildList {
@@ -86,21 +96,32 @@ fun TransferCenterScreen(
             }
         }
     }
-    val finished = all.filter { it.phase != TransferPhase.RUNNING && it.phase != TransferPhase.QUEUED }
+    val finished = mine.filter { it.phase != TransferPhase.RUNNING && it.phase != TransferPhase.QUEUED }
 
+    val strings = LocalStrings.current
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(LocalStrings.current.transfers) },
+                title = {
+                    Text(
+                        if (lane == TransferLane.ALBUM) strings.albumTransfersTitle
+                        else strings.fileTransfersTitle,
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = LocalStrings.current.actionBack)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = strings.actionBack)
                     }
                 },
                 actions = {
-                    TextButton(onClick = { TransferCenter.clearFinished() }) {
-                        Text(LocalStrings.current.clearFinished)
+                    // Clearing only makes sense on the finished tab, and it
+                    // only touches this lane's rows.
+                    if (tab == 1 && finished.isNotEmpty()) {
+                        TextButton(onClick = { TransferCenter.clearFinished(lane) }) {
+                            Text(strings.clearFinished)
+                        }
                     }
+                    actions()
                 },
             )
         },
@@ -109,13 +130,13 @@ fun TransferCenterScreen(
             TabRow(selectedTabIndex = tab) {
                 Tab(tab == 0, { tab = 0 }) {
                     Text(
-                        "${LocalStrings.current.tabActive} (${activeRows.size})",
+                        "${strings.tabActive} (${activeRows.size})",
                         Modifier.padding(12.dp),
                     )
                 }
                 Tab(tab == 1, { tab = 1 }) {
                     Text(
-                        "${LocalStrings.current.tabDone} (${finished.size})",
+                        "${strings.tabDone} (${finished.size})",
                         Modifier.padding(12.dp),
                     )
                 }
@@ -125,7 +146,7 @@ fun TransferCenterScreen(
             if (rows.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        LocalStrings.current.noTransfers,
+                        if (lane == TransferLane.ALBUM) strings.noAlbumTransfers else strings.noFileTransfers,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -157,10 +178,14 @@ private fun TransferRow(
     onStop: () -> Unit = {},
 ) {
     Row(
-        Modifier.fillMaxWidth().padding(start = if (indent) 16.dp else 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+        Modifier
+            .fillMaxWidth()
+            // Batch children tuck under their parent: extra lead padding and a
+            // smaller tile read as "part of the batch above" at a glance.
+            .padding(start = if (indent) 32.dp else 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TransferTile(item)
+        TransferTile(item, size = if (indent) 36 else 44)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -219,15 +244,15 @@ private fun TransferRow(
     }
 }
 
-/** 44 dp media tile: the real cover when known, a type icon before that. */
+/** Media tile: the real cover when known, a type icon before that. */
 @Composable
-private fun TransferTile(item: TransferItem) {
+private fun TransferTile(item: TransferItem, size: Int) {
     val fileId = item.fileId
     var bmp by remember(fileId) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(fileId) { bmp = if (fileId != null) ThumbnailHub.load(fileId) else null }
     Box(
         Modifier
-            .size(44.dp)
+            .size(size.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
@@ -238,7 +263,7 @@ private fun TransferTile(item: TransferItem) {
                 bitmap = image,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(44.dp),
+                modifier = Modifier.size(size.dp),
             )
         } else {
             val icon = when {
@@ -251,7 +276,7 @@ private fun TransferTile(item: TransferItem) {
                 icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size((size * 6 / 11).dp),
             )
         }
     }

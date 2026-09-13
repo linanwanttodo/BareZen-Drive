@@ -7,6 +7,14 @@ import kotlinx.coroutines.flow.update
 /** What a transfer row represents. */
 enum class TransferKind { UPLOAD, DOWNLOAD, SYNC }
 
+/**
+ * Which transfer page a row belongs to. Album work (sync batches and manual
+ * photo picks from the album tab) is listed on the album page's transfer
+ * screen; everything else (file uploads, downloads) belongs to the file
+ * transfer screen reached from home and files. The two never mix.
+ */
+enum class TransferLane { ALBUM, FILE }
+
 enum class TransferPhase { QUEUED, RUNNING, DONE, FAILED }
 
 data class TransferItem(
@@ -26,6 +34,8 @@ data class TransferItem(
     val mediaHint: Boolean = false,
     val error: String? = null,
     val atMs: Long = 0,
+    /** Owning transfer page; sync work is always album-side. */
+    val lane: TransferLane = if (kind == TransferKind.SYNC) TransferLane.ALBUM else TransferLane.FILE,
 )
 
 /**
@@ -93,9 +103,14 @@ object TransferCenter {
         }
     }
 
-    fun start(name: String, kind: TransferKind, total: Long): String {
+    fun start(
+        name: String,
+        kind: TransferKind,
+        total: Long,
+        lane: TransferLane = if (kind == TransferKind.SYNC) TransferLane.ALBUM else TransferLane.FILE,
+    ): String {
         val id = "t${++seq}"
-        push(TransferItem(id, name, kind, TransferPhase.RUNNING, 0, total, atMs = nowMs()))
+        push(TransferItem(id, name, kind, TransferPhase.RUNNING, 0, total, atMs = nowMs(), lane = lane))
         // System notification too: netdisks show progress in the shade so the
         // user can leave the app. Sync batches are the exception - the album
         // backup already owns a foreground-service notification while it runs,
@@ -164,13 +179,16 @@ object TransferCenter {
         }
     }
 
-    /** Removes finished rows (the "clear" action on the done tab). */
-    fun clearFinished() {
+    /** Removes finished rows of one lane (the "clear" action on the done tab). */
+    fun clearFinished(lane: TransferLane? = null) {
         // Only settled rows: queued children of a still-running batch must
         // stay visible. A cancel flag whose batch has left the list is also
         // dropped, keeping cancelledIds bounded to live work.
-        val finished = _items.value.filter { it.phase == TransferPhase.DONE || it.phase == TransferPhase.FAILED }
-        _items.update { list -> list.filter { it.phase != TransferPhase.DONE && it.phase != TransferPhase.FAILED } }
+        fun settled(it: TransferItem) =
+            (it.phase == TransferPhase.DONE || it.phase == TransferPhase.FAILED) &&
+                (lane == null || it.lane == lane)
+        val finished = _items.value.filter(::settled)
+        _items.update { list -> list.filterNot(::settled) }
         finished.forEach {
             cancelledIds.remove(it.id)
             runCatching { com.linan.barezen_drive.platform.TransferNotifier.dismiss(it.id) }

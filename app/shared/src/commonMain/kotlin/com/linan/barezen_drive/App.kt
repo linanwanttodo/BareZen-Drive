@@ -68,6 +68,7 @@ import com.linan.barezen_drive.ui.wallpaper.rememberWallpaperPicker
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -101,7 +102,7 @@ private sealed interface Screen {
     data class Preview(val files: List<FileDto>, val index: Int, val showActions: Boolean = false) : Screen
     data object OpenSource : Screen
     data object ShareManager : Screen
-    data object Transfers : Screen
+    data class Transfers(val lane: com.linan.barezen_drive.data.transfer.TransferLane) : Screen
     data object Users : Screen
     data object Settings : Screen
     data object Trash : Screen
@@ -316,7 +317,7 @@ fun App() {
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
                             saver = recentSaver,
                             themeToggle = themeToggle,
-                            onOpenUploads = { push(if (com.linan.barezen_drive.platform.MediaSync.supported) Screen.BackupAlbums else Screen.Transfers) },
+                            onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.FILE)) },
                             avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else AlbumScreen(
@@ -325,7 +326,7 @@ fun App() {
                             uploader = uploader,
                             onBack = null,
                             onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
-                            onOpenUploads = { push(if (com.linan.barezen_drive.platform.MediaSync.supported) Screen.BackupAlbums else Screen.Transfers) },
+                            onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)) },
                             avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(
@@ -334,7 +335,7 @@ fun App() {
                             uploader = uploader,
                             thumbs = thumbs,
                             wallpaperBehind = wallpaperBehind,
-                            onOpenUploads = { push(if (com.linan.barezen_drive.platform.MediaSync.supported) Screen.BackupAlbums else Screen.Transfers) },
+                            onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.FILE)) },
                             onOpenFolder = { filesPath = filesPath + it },
                             onJumpTo = { idx -> filesPath = filesPath.take(idx + 1) },
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
@@ -456,7 +457,23 @@ fun App() {
                 onBack = pop,
             )
             is Screen.Transfers -> TransferCenterScreen(
+                lane = current.lane,
                 onBack = pop,
+                actions = {
+                    // The album lane owns the sync settings: master switch,
+                    // WiFi/charging conditions and the per-album list all live
+                    // behind this gear, never on the transfer tabs themselves.
+                    if (current.lane == com.linan.barezen_drive.data.transfer.TransferLane.ALBUM &&
+                        com.linan.barezen_drive.platform.MediaSync.supported
+                    ) {
+                        IconButton(onClick = { push(Screen.BackupAlbums) }) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = LocalStrings.current.albumSyncSettings,
+                            )
+                        }
+                    }
+                },
             )
             is Screen.BackupAlbums -> SyncAlbumsScreen(
                 onBack = pop,
@@ -476,7 +493,6 @@ fun App() {
                 offerAlbumReview = !albumBucketsReviewed,
                 onAlbumReviewHandled = { albumBucketsReviewed = true; prefs.albumBucketsReviewed = true },
                 onSyncNow = { com.linan.barezen_drive.platform.MediaSync.syncNow(syncWifiOnly) },
-                onOpenTransfers = { push(Screen.Transfers) },
             )
         }
         }

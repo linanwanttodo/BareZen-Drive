@@ -82,6 +82,10 @@ class UploadManager(
         /** Replace a same-named file instead of failing with NAME_CONFLICT; the
          *  server keeps the previous content as a restorable version. */
         overwrite: Boolean = false,
+        /** Which transfer page lists this upload: album picks report to the
+         *  album lane, everything else lands on the file transfer page. */
+        lane: com.linan.barezen_drive.data.transfer.TransferLane =
+            com.linan.barezen_drive.data.transfer.TransferLane.FILE,
     ): Result<FileDto> {
         // Mirror every upload into the transfer centre so the UI can show
         // progress and history instead of a modal. Album-sync batches pass
@@ -89,7 +93,7 @@ class UploadManager(
         // hundred-photo backup does not spam a hundred rows/notifications.
         val transferId = if (reportTransfer) {
             com.linan.barezen_drive.data.transfer.TransferCenter
-                .start(file.name, com.linan.barezen_drive.data.transfer.TransferKind.UPLOAD, file.size)
+                .start(file.name, com.linan.barezen_drive.data.transfer.TransferKind.UPLOAD, file.size, lane)
         } else {
             null
         }

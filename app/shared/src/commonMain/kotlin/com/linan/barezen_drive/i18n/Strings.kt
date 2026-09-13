@@ -227,6 +227,11 @@ interface Strings {
     val allPhotos: String
     val backToCollections: String
     val transfers: String
+    val albumTransfersTitle: String
+    val fileTransfersTitle: String
+    val albumSyncSettings: String
+    val noAlbumTransfers: String
+    val noFileTransfers: String
     val tabActive: String
     val tabUploading: String
     val tabDownloading: String
