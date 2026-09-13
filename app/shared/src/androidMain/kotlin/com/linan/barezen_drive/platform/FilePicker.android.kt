@@ -36,8 +36,12 @@ internal class AndroidPickedFile(internal val ctx: Context, internal val uri: Ur
                 if (iName >= 0) c.getString(iName)?.let { n = it }
                 if (iSize >= 0) s = c.getLong(iSize)
                 if (iTaken >= 0) {
-                    val sec = c.getLong(iTaken)
-                    if (sec > 0) dateMs = sec * 1000
+                    // DATE_TAKEN is already MILLISECONDS since the epoch; the
+                    // old *1000 here turned every capture time into the year
+                    // ~57000 and poisoned the album grouping. DATE_MODIFIED
+                    // (the fallback below) IS in seconds.
+                    val ms = c.getLong(iTaken)
+                    if (ms > 0) dateMs = ms
                 }
                 if (dateMs == null && iMod >= 0) {
                     val sec = c.getLong(iMod)
