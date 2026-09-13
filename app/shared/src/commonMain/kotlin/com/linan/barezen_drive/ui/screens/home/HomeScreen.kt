@@ -65,7 +65,7 @@ import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.ui.screens.preview.PreviewKind
 import io.ktor.utils.io.ByteReadChannel
 import com.linan.barezen_drive.i18n.I18n
-import com.linan.barezen_drive.ui.component.TransferEntryIcon
+import com.linan.barezen_drive.ui.component.UploadProgressIcon
 import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.i18n.LocalStrings
 import androidx.compose.foundation.Canvas
@@ -90,7 +90,7 @@ fun HomeScreen(
     onPreview: (List<FileDto>, Int) -> Unit,
     saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit,
     themeToggle: (@Composable () -> Unit)? = null,
-    onOpenTransfers: () -> Unit = {},
+    onOpenUploads: () -> Unit = {},
     avatar: @Composable () -> Unit = {},
 ) {
     var recent by remember { mutableStateOf<List<FileDto>?>(null) }
@@ -151,7 +151,7 @@ fun HomeScreen(
                 title = { Text(LocalStrings.current.tabHome) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 actions = {
-                    TransferEntryIcon(onClick = onOpenTransfers)
+                    UploadProgressIcon(onClick = onOpenUploads)
                     themeToggle?.invoke()
                     avatar()
                 },

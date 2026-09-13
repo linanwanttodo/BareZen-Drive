@@ -9,12 +9,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
@@ -49,7 +48,7 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.CalendarViewDay
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.ViewAgenda
-import com.linan.barezen_drive.ui.component.TransferEntryIcon
+import com.linan.barezen_drive.ui.component.UploadProgressIcon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -153,7 +152,7 @@ fun AlbumScreen(
     uploader: UploadManager,
     onBack: (() -> Unit)?,
     onPreview: (List<FileDto>, Int, Boolean) -> Unit,
-    onOpenTransfers: () -> Unit = {},
+    onOpenUploads: () -> Unit = {},
     avatar: @Composable () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
@@ -399,14 +398,20 @@ fun AlbumScreen(
             if (selectionMode) {
                 // Google-Photos action bar: favorite / archive / share / download /
                 // delete for the whole selection; the tiles carry the checkmarks.
+                // A floating pill lifted above the glass bottom bar: docked at the
+                // scaffold bottom it landed exactly under that bar, untappable.
                 Surface(
+                    shape = RoundedCornerShape(24.dp),
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 3.dp,
+                    shadowElevation = 6.dp,
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = BottomBarClearance),
                 ) {
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .windowInsetsPadding(WindowInsets.safeDrawing)
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                     ) {
@@ -594,7 +599,7 @@ fun AlbumScreen(
                     }
                     // Double arrow: manual upload sits beside the auto-sync /
                     // transfer centre entry, mirroring a netdisk app.
-                    TransferEntryIcon(onClick = onOpenTransfers)
+                    UploadProgressIcon(onClick = onOpenUploads)
                     avatar()
                 },
             )

@@ -316,7 +316,7 @@ fun App() {
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
                             saver = recentSaver,
                             themeToggle = themeToggle,
-                            onOpenTransfers = { push(Screen.Transfers) },
+                            onOpenUploads = { push(if (com.linan.barezen_drive.platform.MediaSync.supported) Screen.BackupAlbums else Screen.Transfers) },
                             avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else AlbumScreen(
@@ -325,7 +325,7 @@ fun App() {
                             uploader = uploader,
                             onBack = null,
                             onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
-                            onOpenTransfers = { push(Screen.Transfers) },
+                            onOpenUploads = { push(if (com.linan.barezen_drive.platform.MediaSync.supported) Screen.BackupAlbums else Screen.Transfers) },
                             avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(
@@ -334,7 +334,7 @@ fun App() {
                             uploader = uploader,
                             thumbs = thumbs,
                             wallpaperBehind = wallpaperBehind,
-                            onOpenTransfers = { push(Screen.Transfers) },
+                            onOpenUploads = { push(if (com.linan.barezen_drive.platform.MediaSync.supported) Screen.BackupAlbums else Screen.Transfers) },
                             onOpenFolder = { filesPath = filesPath + it },
                             onJumpTo = { idx -> filesPath = filesPath.take(idx + 1) },
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
@@ -457,21 +457,26 @@ fun App() {
             )
             is Screen.Transfers -> TransferCenterScreen(
                 onBack = pop,
+            )
+            is Screen.BackupAlbums -> SyncAlbumsScreen(
+                onBack = pop,
                 autoSync = albumAutoSync,
-                onAutoSyncChange = { on -> albumAutoSync = on; prefs.albumAutoSync = on },
+                onAutoSyncChange = { on ->
+                    albumAutoSync = on
+                    prefs.albumAutoSync = on
+                    // Turning the switch off is also "stop what you are
+                    // doing": the schedule goes away and a running pass
+                    // winds down after the in-flight file.
+                    if (!on) com.linan.barezen_drive.platform.MediaSync.stop()
+                },
                 wifiOnly = syncWifiOnly,
                 onWifiOnlyChange = { on -> syncWifiOnly = on; prefs.syncWifiOnly = on },
                 chargingOnly = syncChargingOnly,
                 onChargingOnlyChange = { on -> syncChargingOnly = on; prefs.albumSyncChargingOnly = on },
                 offerAlbumReview = !albumBucketsReviewed,
                 onAlbumReviewHandled = { albumBucketsReviewed = true; prefs.albumBucketsReviewed = true },
-                syncSupported = com.linan.barezen_drive.platform.MediaSync.supported,
                 onSyncNow = { com.linan.barezen_drive.platform.MediaSync.syncNow(syncWifiOnly) },
-                onOpenBackupAlbums = { push(Screen.BackupAlbums) },
-            )
-            is Screen.BackupAlbums -> SyncAlbumsScreen(
-                onBack = pop,
-                onSyncNow = { com.linan.barezen_drive.platform.MediaSync.syncNow(syncWifiOnly) },
+                onOpenTransfers = { push(Screen.Transfers) },
             )
         }
         }

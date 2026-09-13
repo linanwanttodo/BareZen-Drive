@@ -22,11 +22,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,17 +38,32 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.platform.BackupBucket
+import com.linan.barezen_drive.platform.BackupPauseReason
 import com.linan.barezen_drive.platform.MediaSync
 
 /**
- * Per-album backup picker (feature 6). Lists every device album with its item
- * count and a checkbox; unchecking a bucket excludes it from the sync queue on
- * the next pass. Android-only - other targets never surface the entry.
+ * Album backup hub - the single home of everything album-sync related, kept
+ * out of the transfer centre on purpose: that page lists every transfer of
+ * every kind, and a backup control block on top of it kept squatting the
+ * screen. Settings mirror the old transfer-centre card (master switch, WiFi,
+ * charging, live counters, pause reason, last sync), then the per-album list
+ * where each album carries its own inclusion toggle.
  */
 @Composable
 fun SyncAlbumsScreen(
     onBack: () -> Unit,
+    autoSync: Boolean,
+    onAutoSyncChange: (Boolean) -> Unit,
+    wifiOnly: Boolean,
+    onWifiOnlyChange: (Boolean) -> Unit,
+    chargingOnly: Boolean = false,
+    onChargingOnlyChange: (Boolean) -> Unit = {},
+    /** True until the user has answered the first-run album review, offered
+     *  the moment automatic backup is switched on. */
+    offerAlbumReview: Boolean = false,
+    onAlbumReviewHandled: () -> Unit = {},
     onSyncNow: () -> Unit,
+    onOpenTransfers: () -> Unit = {},
 ) {
     val strings = LocalStrings.current
     var buckets by remember { mutableStateOf<List<BackupBucket>?>(null) }
@@ -60,6 +77,14 @@ fun SyncAlbumsScreen(
     // (denied media permission) from "the scan worked and found nothing", which
     // need opposite treatments: one is a retry, the other is genuinely empty.
     var loadFailed by remember { mutableStateOf(false) }
+    // First-run album review: flipping the switch on is the moment the list
+    // gets read. Once answered, [offerAlbumReview] goes false for good.
+    var showReview by remember { mutableStateOf(false) }
+
+    LaunchedEffect(autoSync, offerAlbumReview) {
+        if (autoSync && offerAlbumReview) showReview = true
+    }
+    val backupStatus by MediaSync.status.collectAsState()
 
     LaunchedEffect(Unit) {
         loadFailed = false
@@ -84,6 +109,9 @@ fun SyncAlbumsScreen(
                     }
                 },
                 actions = {
+                    // The plain transfer queue: uploads and downloads of every
+                    // kind, no backup controls mixed in.
+                    TextButton(onClick = onOpenTransfers) { Text(strings.transfers) }
                     // Bulk restore: the mirror is replaced in one assignment (not
                     // per row) so the list recomposes once, and the queue re-drive
                     // collapses into a single enqueue server-side (unique work
@@ -102,6 +130,86 @@ fun SyncAlbumsScreen(
         },
     ) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
+            // Backup settings, mirroring the switch card the transfer centre
+            // used to carry: one master switch plus its conditions, and the
+            // live queue numbers so "why is nothing moving" answers itself.
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(strings.albumAutoSync, style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            strings.albumAutoSyncHint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = autoSync, onCheckedChange = onAutoSyncChange)
+                }
+                if (autoSync) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(strings.syncWifiOnly, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                strings.syncWifiOnlyHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = wifiOnly, onCheckedChange = onWifiOnlyChange)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(strings.syncChargingOnly, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                strings.syncChargingOnlyHint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = chargingOnly, onCheckedChange = onChargingOnlyChange)
+                    }
+                }
+                // One static summary line instead of three jittering counters:
+                // every number in one place, growing only when it changes.
+                Text(
+                    buildString {
+                        append(strings.backupPending); append(" "); append(backupStatus.pending)
+                        if (backupStatus.failed > 0) {
+                            append("   "); append(strings.backupFailed); append(" "); append(backupStatus.failed)
+                        }
+                        if (backupStatus.active > 0) {
+                            append("   "); append(strings.backupUploading); append(" "); append(backupStatus.active)
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+                backupStatus.pausedReason?.let { reason ->
+                    Text(
+                        when (reason) {
+                            BackupPauseReason.SIGNED_OUT -> strings.backupPausedSignedOut
+                            BackupPauseReason.NETWORK -> strings.backupPausedNoNetwork
+                            BackupPauseReason.CHARGING -> strings.backupPausedCharging
+                            BackupPauseReason.BATTERY_LOW -> strings.backupPausedBatteryLow
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                    )
+                }
+                val last = if (backupStatus.lastSyncAt > 0L) {
+                    com.linan.barezen_drive.ui.media.formatDateTime(kotlinx.datetime.Instant.fromEpochMilliseconds(backupStatus.lastSyncAt).toString())
+                } else {
+                    strings.backupNever
+                }
+                Text(
+                    "${strings.backupLastSync}: $last",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
+            HorizontalDivider()
             Text(
                 strings.backupAlbumsHint,
                 style = MaterialTheme.typography.bodySmall,
@@ -159,5 +267,16 @@ fun SyncAlbumsScreen(
                 }
             }
         }
+    }
+    // Outside the Scaffold: a dialog is its own window, so it must not be laid
+    // out inside the content column. Only a review that actually showed albums
+    // counts as answered; a failed scan closes without burning the one-shot.
+    if (showReview) {
+        AlbumReviewDialog(
+            onDone = { reviewed ->
+                showReview = false
+                if (reviewed) onAlbumReviewHandled()
+            },
+        )
     }
 }
