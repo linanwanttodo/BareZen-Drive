@@ -96,19 +96,40 @@ fun Route.proxyRoutes(cfg: AppConfig) {
                 val request = HttpRequest.newBuilder(URI.create(upstream))
                     .timeout(Duration.ofSeconds(30))
                     .header("User-Agent", "BareZen-Drive")
+                    .apply {
+                        // Byte-range requests pass through: a resumable
+                        // download needs a 206 over the exact span it asked
+                        // for, not a silent full-body 200 from the relay.
+                        call.request.header(HttpHeaders.Range)?.let { header(HttpHeaders.Range, it) }
+                    }
                     .GET()
                     .build()
                 val response = proxyClient.send(request, HttpResponse.BodyHandlers.ofInputStream())
-                if (response.statusCode() !in 200..299) {
-                    response.body().close()
-                    call.respond(HttpStatusCode.BadGateway, "upstream ${response.statusCode()}")
-                    return@runCatching
+                val status = response.statusCode()
+                when (status) {
+                    200, 206 -> {}
+                    416 -> {
+                        response.body().close()
+                        call.respond(HttpStatusCode.RequestedRangeNotSatisfiable, "range not satisfiable")
+                        return@runCatching
+                    }
+                    else -> {
+                        response.body().close()
+                        call.respond(HttpStatusCode.BadGateway, "upstream $status")
+                        return@runCatching
+                    }
                 }
                 response.headers().firstValue(HttpHeaders.ContentLength).ifPresent {
                     call.response.header(HttpHeaders.ContentLength, it)
                 }
+                if (status == 206) {
+                    response.headers().firstValue(HttpHeaders.ContentRange).ifPresent {
+                        call.response.header(HttpHeaders.ContentRange, it)
+                    }
+                }
                 val contentType = response.headers().firstValue(HttpHeaders.ContentType).orElse("application/octet-stream")
-                call.respondBytesWriter(contentType = ContentType.parse(contentType)) {
+                val respondStatus = if (status == 206) HttpStatusCode.PartialContent else HttpStatusCode.OK
+                call.respondBytesWriter(status = respondStatus, contentType = ContentType.parse(contentType)) {
                     response.body().toByteReadChannel().copyTo(this)
                 }
             }.onFailure {
