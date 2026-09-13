@@ -26,8 +26,8 @@ actual object TokenStorage : TokenStore {
         set(v) = set(KEY_REFRESH_TOKEN, v)
 
     actual override fun clear() {
+        // Tokens only: the server address survives so re-login is one step.
         accessToken = null
         refreshToken = null
-        baseUrl = ""
     }
 }

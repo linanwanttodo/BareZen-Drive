@@ -30,6 +30,9 @@ actual object TokenStorage : TokenStore {
         set(v) = prefs.edit().putString("refresh_token", v).apply()
 
     actual override fun clear() {
-        prefs.edit().clear().apply()
+        // Tokens only: the server address survives so re-login is one step
+        // instead of a full re-setup of the URL.
+        val base = baseUrl
+        prefs.edit().clear().putString("base_url", base).apply()
     }
 }

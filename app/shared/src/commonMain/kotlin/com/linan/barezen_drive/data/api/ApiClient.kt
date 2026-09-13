@@ -67,6 +67,7 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import com.linan.barezen_drive.i18n.I18n
 
@@ -101,6 +102,9 @@ class ApiClient(
         encodeDefaults = false
     }
 
+    /** Serializes refresh attempts across both HTTP clients (see refreshTokens). */
+    private val refreshMutex = kotlinx.coroutines.sync.Mutex()
+
     val baseUrl: String get() = store.baseUrl.trimEnd('/')
 
     private fun HttpClientConfig<*>.commonConfig(streaming: Boolean = false) {
@@ -125,35 +129,52 @@ class ApiClient(
                     store.accessToken?.let { BearerTokens(it, store.refreshToken ?: "") }
                 }
                 refreshTokens {
-                    val rt = store.refreshToken
-                    if (rt == null) {
-                        null
-                    } else {
-                        runCatching {
-                            client.post("$baseUrl/api/auth/refresh") {
-                                markAsRefreshTokenRequest()
-                                contentType(ContentType.Application.Json)
-                                setBody(RefreshRequest(rt))
-                            }.body<RefreshResponse>()
-                        }.fold(
-                            onSuccess = { r ->
-                                store.accessToken = r.accessToken
-                                store.refreshToken = r.refreshToken
-                                BearerTokens(r.accessToken, r.refreshToken)
-                            },
-                            onFailure = { e ->
-                                if (e is CancellationException) throw e
-                                // A rejection from the refresh endpoint is
-                                // definitive: the session is gone. A NETWORK
-                                // failure (server offline mid-session) must
-                                // keep the stored tokens - the refresh token
-                                // outlives outages, so the session heals by
-                                // itself once connectivity returns. Clearing
-                                // here used to force a logout+login round trip.
-                                if (e is ResponseException) store.clear()
-                                null
-                            },
-                        )
+                    // The JSON client and the streaming client share the token
+                    // store but not the ktor Auth plugin, so both can hit a 401
+                    // at the same moment. Refreshes are serialized here and the
+                    // token is re-read under the lock: whoever comes second
+                    // uses the freshly rolled token instead of racing the
+                    // server with one that was already revoked (the server
+                    // rotates refresh tokens one-shot, so a loser would get a
+                    // 401 that looks exactly like a dead session).
+                    refreshMutex.withLock {
+                        val rt = store.refreshToken
+                        if (rt == null) {
+                            null
+                        } else {
+                            runCatching {
+                                client.post("$baseUrl/api/auth/refresh") {
+                                    markAsRefreshTokenRequest()
+                                    contentType(ContentType.Application.Json)
+                                    setBody(RefreshRequest(rt))
+                                }.body<RefreshResponse>()
+                            }.fold(
+                                onSuccess = { r ->
+                                    store.accessToken = r.accessToken
+                                    store.refreshToken = r.refreshToken
+                                    BearerTokens(r.accessToken, r.refreshToken)
+                                },
+                                onFailure = { e ->
+                                    if (e is CancellationException) throw e
+                                    // Only an explicit rejection from the refresh
+                                    // endpoint ends the session. A 5xx or a
+                                    // network failure (server restarting, mobile
+                                    // link flapping) must keep the stored tokens:
+                                    // the refresh token outlives the outage and
+                                    // the session heals by itself once the server
+                                    // answers again. Clearing on any HTTP error
+                                    // used to sign the user out whenever the
+                                    // server blipped. The server address is kept
+                                    // either way so re-login is one step.
+                                    val status = (e as? ResponseException)?.response?.status?.value
+                                    if (status == 401 || status == 403) {
+                                        store.accessToken = null
+                                        store.refreshToken = null
+                                    }
+                                    null
+                                },
+                            )
+                        }
                     }
                 }
             }
