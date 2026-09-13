@@ -6,18 +6,17 @@ name: Pipeline
 # the failed job and its consumers pick the cached artifacts back up.
 #
 # pull_request            -> tests only (fast feedback)
-# push master             -> one build: tests, packaging, :latest image; when the
-#                            pushed commit carries a v* tag this same run also
-#                            publishes the GitHub Release and versioned image
-# push v* tag             -> same as a tagged master push: builds and publishes
-#                            the release for that tag
+# push master             -> exactly one run per push: tests, packaging, :latest
+#                            image; when the pushed commit carries a v* tag this
+#                            same run also publishes the GitHub Release and
+#                            versioned image. Tagging before pushing keeps it
+#                            to a single run - no separate tag trigger.
 # workflow_dispatch       -> same as a tagged master push; optionally pass a version
 on:
   pull_request:
     branches: [ master ]
   push:
     branches: [ master ]
-    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       version:
