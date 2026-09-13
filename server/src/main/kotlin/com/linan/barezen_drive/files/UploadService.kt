@@ -19,7 +19,10 @@ import com.linan.barezen_drive.storage.thumbKey
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.jvm.javaio.toByteReadChannel
 import io.ktor.utils.io.readAvailable
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder
@@ -40,6 +43,9 @@ object UploadService {
     const val MIN_CHUNK = MIB
     const val MAX_CHUNK = 20L * MIB
     private const val SESSION_TTL_MILLIS = 24L * 3600 * 1000
+
+    /** Fire-and-forget cover generation after a complete; never fails the upload. */
+    private val bgScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     /** MAX_FILE_SIZE from the environment; wired once at module startup. */
     @Volatile
@@ -352,6 +358,18 @@ object UploadService {
             }
             cleanupSessionDir(storage, sessionId)
             if (orphanKeys.isNotEmpty()) deleteStoredBlobs(storage, orphanKeys)
+            // When the client sent no cover (instant upload, the web client,
+            // third-party API callers), generate one in the background now: by
+            // the time the user opens a list, the tile shows a real cover
+            // instead of waiting for a first GET to trigger lazy generation.
+            if (!hasThumb) {
+                val meta = FileMeta(
+                    id = UUID.fromString(fileDto.id), userId = userId, folderId = parent, name = name,
+                    size = total, mimeType = mime, sha256 = sha, storageKey = key,
+                    hasThumbnail = false,
+                )
+                bgScope.launch { runCatching { ThumbnailService.ensureThumbnail(storage, meta) } }
+            }
             UploadCompleteResponse(fileDto, replacedVersion)
         } finally {
             mergeFile.delete()

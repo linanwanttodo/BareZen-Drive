@@ -9,6 +9,7 @@ actual object MediaSync {
     actual val status = unsupportedBackupStatus()
     actual fun apply(enabled: Boolean, wifiOnly: Boolean, chargingOnly: Boolean) = Unit
     actual fun syncNow(wifiOnly: Boolean) = Unit
+    actual fun stop() = Unit
     actual suspend fun listBuckets(): List<BackupBucket> = emptyList()
     actual fun setBucketIncluded(bucket: String, included: Boolean) = Unit
 }

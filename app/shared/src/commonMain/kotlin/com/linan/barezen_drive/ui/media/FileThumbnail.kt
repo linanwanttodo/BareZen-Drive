@@ -19,11 +19,17 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
+import com.linan.barezen_drive.ui.screens.preview.PreviewKind
 
 /**
  * Cover image for a file row/tile: shows the server-stored client-generated
  * thumbnail when one exists (and falls back to the type icon while loading,
  * when there is none, or when loading fails), so tiles never look broken.
+ *
+ * Media rows attempt a load even when the row flag says no cover yet: the
+ * server generates one lazily on first GET, so the request both returns the
+ * fresh cover and makes every later tile load instant. Non-media rows skip
+ * the fetch entirely - there is nothing to generate for them.
  */
 @Composable
 fun FileThumbnail(
@@ -32,9 +38,10 @@ fun FileThumbnail(
     modifier: Modifier = Modifier,
     edge: Dp = 40.dp,
 ) {
-    var bitmap by remember(file.id, file.hasThumbnail) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(file.id, file.hasThumbnail) {
-        if (file.hasThumbnail) {
+    var bitmap by remember(file.id) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(file.id) {
+        val kind = PreviewKind.of(file)
+        if (file.hasThumbnail || kind == PreviewKind.IMAGE || kind == PreviewKind.VIDEO) {
             bitmap = loader.load(file.id)
         }
     }

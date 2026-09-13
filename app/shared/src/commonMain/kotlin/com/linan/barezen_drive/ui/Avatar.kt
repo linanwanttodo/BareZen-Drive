@@ -7,15 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,10 +20,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.decodeToImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.update.UpdateBadge
+import com.linan.barezen_drive.ui.theme.avatarColor
+import com.linan.barezen_drive.ui.theme.avatarLetter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,12 +59,16 @@ object AvatarStore {
 
 /**
  * Top-bar avatar: opens Settings, shows the update-available dot (settings is
- * where the update check lives, Google-Photos style).
+ * where the update check lives, Google-Photos style). Without a custom photo
+ * it renders the account letter on a stable per-username color - the same
+ * Google-style circle the settings account card uses, so the top bar never
+ * falls back to a gray generic person icon.
  */
 @Composable
 fun AvatarButton(
     repo: FilesRepository,
     userId: String?,
+    username: String? = null,
     size: Dp = 34.dp,
     onOpenSettings: () -> Unit,
 ) {
@@ -90,14 +94,14 @@ fun AvatarButton(
             Box(
                 Modifier
                     .size(size)
-                    .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                    .background(avatarColor(username.orEmpty()), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    Icons.Default.Person,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.size(size - 12.dp),
+                Text(
+                    avatarLetter(username.orEmpty()),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }

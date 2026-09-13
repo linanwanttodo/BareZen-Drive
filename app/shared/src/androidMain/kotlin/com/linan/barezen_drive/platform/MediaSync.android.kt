@@ -122,6 +122,21 @@ actual object MediaSync {
             .enqueueUniqueWork(NOW_WORK, ExistingWorkPolicy.REPLACE, request)
     }
 
+    actual fun stop() {
+        // Kill the one-shot entries (manual sync-now, content-change trigger).
+        // The periodic schedule stays: apply() owns it, and "stop syncing" must
+        // not silently un-book the next scheduled tick.
+        runCatching {
+            val wm = WorkManager.getInstance(AndroidContext.app)
+            wm.cancelUniqueWork(NOW_WORK)
+            wm.cancelUniqueWork(TRIGGER_WORK)
+        }
+        // Ask running batches to wind down: the in-flight file completes, the
+        // rest of the queue keeps its PENDING rows for the next trigger.
+        com.linan.barezen_drive.data.transfer.TransferCenter.cancelSyncBatches()
+        refreshStatus()
+    }
+
     actual suspend fun listBuckets(): List<BackupBucket> =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             // Scan first so the screen reflects albums taken after the last

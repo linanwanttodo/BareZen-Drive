@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
+import com.linan.barezen_drive.ui.media.ThumbnailHub
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.linan.barezen_drive.i18n.LocalStrings
@@ -74,6 +75,10 @@ private fun ZoomableImage(file: FileDto, repo: FilesRepository) {
     var bitmap by remember(file.id) { mutableStateOf<ImageBitmap?>(null) }
     var error by remember(file.id) { mutableStateOf(false) }
     LaunchedEffect(file.id) {
+        // Thumbnail first: the list cover is usually already in the thumbnail
+        // cache, so the page paints immediately while the full image streams
+        // in. The full-resolution bitmap replaces it on arrival.
+        bitmap = ThumbnailHub.load(file.id)
         val result = withContext(Dispatchers.Default) {
             runCatching { repo.previewBytes(file.id).decodeToImageBitmap() }
         }

@@ -227,6 +227,7 @@ interface Strings {
     val allPhotos: String
     val backToCollections: String
     val transfers: String
+    val tabActive: String
     val tabUploading: String
     val tabDownloading: String
     val tabDone: String
@@ -242,6 +243,7 @@ interface Strings {
     val syncChargingOnly: String
     val syncChargingOnlyHint: String
     val syncStarted: String
+    val stopSync: String
     val openRegistration: String
     val openRegistrationOnHint: String
     val openRegistrationOffHint: String

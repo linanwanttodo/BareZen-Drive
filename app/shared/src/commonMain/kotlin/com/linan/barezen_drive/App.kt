@@ -313,11 +313,11 @@ fun App() {
                             repo = files,
                             thumbs = thumbs,
                             onOpenAlbum = { tab = MainTab.ALBUM },
-                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
+                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
                             saver = recentSaver,
                             themeToggle = themeToggle,
                             onOpenTransfers = { push(Screen.Transfers) },
-                            avatar = { if (signedIn) AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
+                            avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else AlbumScreen(
                             repo = files,
@@ -326,7 +326,7 @@ fun App() {
                             onBack = null,
                             onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
                             onOpenTransfers = { push(Screen.Transfers) },
-                            avatar = { if (signedIn) AvatarButton(files, currentUserId, onOpenSettings = { push(Screen.Settings) }) },
+                            avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(
                             path = filesPath,
@@ -337,13 +337,13 @@ fun App() {
                             onOpenTransfers = { push(Screen.Transfers) },
                             onOpenFolder = { filesPath = filesPath + it },
                             onJumpTo = { idx -> filesPath = filesPath.take(idx + 1) },
-                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
+                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
                             themeToggle = themeToggle,
                         )
                         MainTab.SEARCH -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else SearchScreen(
                             files = files,
                             currentUserId = currentUserId,
-                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx)) },
+                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
                             onOpenSettings = { push(Screen.Settings) },
                         )
                     }

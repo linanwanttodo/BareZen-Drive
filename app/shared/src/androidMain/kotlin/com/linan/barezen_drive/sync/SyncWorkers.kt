@@ -39,7 +39,9 @@ internal object BackupNotification {
         val title = if (java.util.Locale.getDefault().language == "zh") "正在备份相册" else "Backing up photos"
         val text = if (total > 0) "$done / $total" else null
         return NotificationCompat.Builder(AndroidContext.app, CHANNEL)
-            .setSmallIcon(android.R.drawable.stat_sys_upload)
+            // Same brand silhouette the transfer notifications use; the
+            // platform stat_sys_upload drawable reads as the stock robot.
+            .setSmallIcon(com.linan.barezen_drive.platform.TransferNotifier.iconRes())
             .setContentTitle(title)
             .apply { text?.let { setContentText(it) } }
             .setOngoing(true)

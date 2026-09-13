@@ -10,9 +10,54 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
+
+/**
+ * Process-wide handle to the active [ThumbnailLoader], so layers that never see
+ * the composition tree (transfer registry, upload pipeline) can invalidate or
+ * read covers. Registered once from the app shell next to the loader instance.
+ */
+object ThumbnailHub {
+    @Volatile
+    private var loader: ThumbnailLoader? = null
+
+    fun register(instance: ThumbnailLoader) {
+        loader = instance
+    }
+
+    /** Clears the file's cached/negative thumbnail state (no-op before register). */
+    fun invalidate(fileId: String) {
+        val l = loader ?: return
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default).launch {
+            l.invalidate(fileId)
+        }
+    }
+
+    /** Drops only the negative entry: the cover may exist server-side now, so
+     *  tiles should refetch. Any already-cached bitmap is kept. */
+    fun markAvailable(fileId: String) {
+        val l = loader ?: return
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default).launch {
+            l.markAvailable(fileId)
+        }
+    }
+
+    /** Feeds freshly generated cover bytes straight into the cache: a file that
+     *  just finished uploading shows its cover on the next frame, with no list
+     *  round-trip back to the server. No-op before register. */
+    fun put(fileId: String, bytes: ByteArray) {
+        val l = loader ?: return
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default).launch {
+            l.put(fileId, bytes)
+        }
+    }
+
+    suspend fun load(fileId: String): ImageBitmap? = loader?.load(fileId)
+}
 
 /**
  * In-memory thumbnail cache shared by all list/grid surfaces. Thumbnails are
@@ -52,6 +97,37 @@ class ThumbnailLoader(private val repo: FilesRepository) {
         }
     }
 
+    /**
+     * Drops one file's bitmap and negative entry so the next [load] refetches.
+     * Called on logout-level resets; for the upload-complete path see
+     * [markAvailable] and [put], which keep whatever is already on screen.
+     */
+    suspend fun invalidate(fileId: String) {
+        mutex.withLock {
+            totalBytes -= cacheBytes.remove(fileId) ?: 0
+            cache.remove(fileId)
+            missingAt.remove(fileId)
+            inFlight.remove(fileId)?.cancel()
+        }
+    }
+
+    /** Clears the negative entry so the next [load] retries the fetch. */
+    suspend fun markAvailable(fileId: String) {
+        mutex.withLock { missingAt.remove(fileId) }
+    }
+
+    /**
+     * Inserts a freshly generated cover (the upload pipeline just made one)
+     * without a network fetch. Decoding failure is silently dropped - the
+     * tiles then fall back to the normal fetch path.
+     */
+    suspend fun put(fileId: String, bytes: ByteArray) {
+        val bitmap = withContext(Dispatchers.Default) {
+            runCatching { bytes.decodeToImageBitmap() }.getOrNull()
+        } ?: return
+        insert(fileId, bitmap)
+    }
+
     suspend fun load(fileId: String): ImageBitmap? {
         mutex.withLock {
             cache.remove(fileId)?.let { bmp ->
@@ -84,22 +160,29 @@ class ThumbnailLoader(private val repo: FilesRepository) {
                 mutex.withLock { missingAt[fileId] = monotonicNowMs() }
                 return null
             }
-            val bytesCost = bitmap.width * bitmap.height * 4
-            mutex.withLock {
-                cache[fileId] = bitmap
-                cacheBytes[fileId] = bytesCost
-                totalBytes += bytesCost
-                while (totalBytes > MAX_BYTES && cache.size > 1) {
-                    val eldestKey = cache.keys.first()
-                    totalBytes -= cacheBytes.remove(eldestKey) ?: 0
-                    cache.remove(eldestKey)
-                }
-            }
+            insert(fileId, bitmap)
             return bitmap
         } finally {
             mutex.withLock {
                 inFlight.remove(fileId)
                 Unit
+            }
+        }
+    }
+
+    /** Puts a decoded bitmap under [fileId] (LRU-bounded) and lifts any
+     *  negative mark: the cover demonstrably exists now. */
+    private suspend fun insert(fileId: String, bitmap: ImageBitmap) {
+        val bytesCost = bitmap.width * bitmap.height * 4
+        mutex.withLock {
+            cache[fileId] = bitmap
+            cacheBytes[fileId] = bytesCost
+            totalBytes += bytesCost
+            missingAt.remove(fileId)
+            while (totalBytes > MAX_BYTES && cache.size > 1) {
+                val eldestKey = cache.keys.first()
+                totalBytes -= cacheBytes.remove(eldestKey) ?: 0
+                cache.remove(eldestKey)
             }
         }
     }
@@ -114,7 +197,12 @@ class ThumbnailLoader(private val repo: FilesRepository) {
          */
         val MAX_BYTES = if (isWebPlatform()) 16 * 1024 * 1024 else 48 * 1024 * 1024
 
-        /** How long a failed thumbnail fetch stays negatively cached. */
-        const val MISSING_TTL_MS = 5 * 60 * 1000L
+        /**
+         * How long a failed thumbnail fetch stays negatively cached. Short by
+         * design: the server generates covers lazily, so a fetch that missed
+         * because the cover was still being made must retry soon, or a photo
+         * uploaded seconds ago would keep its placeholder icon for minutes.
+         */
+        const val MISSING_TTL_MS = 60 * 1000L
     }
 }

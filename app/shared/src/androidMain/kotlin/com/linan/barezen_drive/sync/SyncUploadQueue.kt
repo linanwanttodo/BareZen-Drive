@@ -19,6 +19,13 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
+/** Image/video by extension: drives the media tile on transfer rows whose
+ *  server file id (and therefore real cover) only exists after the upload. */
+internal fun isMediaName(name: String): Boolean {
+    val lower = name.substringAfterLast('.', "").lowercase()
+    return lower in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif", "mp4", "mov", "webm", "m4v", "3gp", "avi", "mkv")
+}
+
 /** Outcome of one concurrent sync pass, reported up to the worker and the
  *  foreground notification. */
 data class SyncPass(val done: Int, val failed: Int, val stoppedEarly: Boolean)
@@ -64,7 +71,9 @@ object SyncUploadQueue {
 
         val batchTitle = if (java.util.Locale.getDefault().language == "zh") "相册同步" else "Album sync"
         val batchId = TransferCenter.start(batchTitle, TransferKind.SYNC, total.toLong())
-        val childIds = pending.associate { it.uri to TransferCenter.queueFile(batchId, it.name, it.size) }
+        val childIds = pending.associate {
+            it.uri to TransferCenter.queueFile(batchId, it.name, it.size, mediaHint = isMediaName(it.name))
+        }
 
         repeat(lanes.coerceAtLeast(1)) {
             launch(Dispatchers.IO) {
@@ -124,7 +133,7 @@ object SyncUploadQueue {
                                     SyncDb.markDone(item.uri, dto.id, cachedHash ?: dto.sha256)
                                     consecutiveNet.set(0)
                                     doneCount.incrementAndGet()
-                                    childId?.let { TransferCenter.done(it) }
+                                    childId?.let { TransferCenter.done(it, dto.id) }
                                 },
                                 onFailure = { err ->
                                     recordFailure(item, err, cachedHash, childId, consecutiveNet, failCount, stop)
@@ -154,8 +163,7 @@ object SyncUploadQueue {
         SyncPass(done, failed, stoppedEarly = stop.get())
     }
 
-    private fun recordFailure(
-        item: SyncItem,
+    private fun recordFailure(        item: SyncItem,
         err: Throwable,
         cachedHash: String?,
         childId: String?,

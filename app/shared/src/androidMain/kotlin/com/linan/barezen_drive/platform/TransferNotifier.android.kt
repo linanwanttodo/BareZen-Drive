@@ -27,6 +27,13 @@ actual object TransferNotifier {
         smallIconRes = resId
     }
 
+    /**
+     * The app-injected small icon, for the other notification builders in the
+     * app (the backup foreground notification hard-coding a system drawable is
+     * how the shade ended up showing the platform robot mid-backup).
+     */
+    fun iconRes(): Int = smallIconRes
+
     private fun manager(): NotificationManagerCompat? =
         runCatching { NotificationManagerCompat.from(AndroidContext.app) }.getOrNull()
 

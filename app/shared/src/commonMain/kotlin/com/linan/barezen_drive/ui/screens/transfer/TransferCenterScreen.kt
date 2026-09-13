@@ -1,5 +1,7 @@
 package com.linan.barezen_drive.ui.screens.transfer
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import com.linan.barezen_drive.platform.MediaSync
@@ -10,10 +12,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -37,6 +46,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.data.transfer.TransferCenter
 import com.linan.barezen_drive.data.transfer.TransferItem
@@ -44,13 +56,21 @@ import com.linan.barezen_drive.data.transfer.TransferKind
 import com.linan.barezen_drive.data.transfer.TransferPhase
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.platform.BackupPauseReason
+import com.linan.barezen_drive.ui.media.ThumbnailHub
 import com.linan.barezen_drive.ui.screens.backup.AlbumReviewDialog
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 
 /**
- * Transfer centre: the flow of files in and out, like a netdisk app.
- * Uploading / downloading / finished tabs, plus the album auto-sync switch and
- * its network policy. Replaces the old modal progress popups.
+ * Transfer centre: everything that flows in and out of the device on one page.
+ *
+ * Layout, after the 0.0.x redesign: the album-backup card sits at the top and
+ * is always there while the platform supports it (the switches used to hide
+ * behind the sync tab, which read like "the options vanished"), then two tabs
+ * - active work with a live count in the tab, finished work beneath it. Sync
+ * batches live in the active tab while they run; their per-file rows split by
+ * phase, so finished photos are visible without leaving the page. Every row
+ * carries a media tile: the real cover once the server file id exists, a type
+ * icon before that.
  */
 @Composable
 fun TransferCenterScreen(
@@ -71,14 +91,10 @@ fun TransferCenterScreen(
 ) {
     var tab by remember { mutableIntStateOf(0) }
     var showReview by remember { mutableStateOf(false) }
-    // First-run album review, one prompt with two ways in: flipping the switch on
-    // (the user is saying "start backing up", so it is the moment the list gets
-    // read) and opening the sync tab with backup already on (covers anyone who
-    // enabled it before the review existed). Both require the switch to be on -
-    // reviewing albums for backup that is off would be noise. Once answered,
-    // [offerAlbumReview] goes false for good and this never fires again.
-    LaunchedEffect(tab, autoSync, syncSupported, offerAlbumReview) {
-        if (tab == 2 && syncSupported && autoSync && offerAlbumReview) showReview = true
+    // First-run album review: flipping the switch on is the moment the list
+    // gets read. Once answered, [offerAlbumReview] goes false for good.
+    LaunchedEffect(autoSync, syncSupported, offerAlbumReview) {
+        if (syncSupported && autoSync && offerAlbumReview) showReview = true
     }
     val backupStatus by MediaSync.status.collectAsState()
     val all by TransferCenter.items.collectAsState()
@@ -86,17 +102,18 @@ fun TransferCenterScreen(
     // in-flight file first, so the row must acknowledge the request.
     var stopRequested by remember { mutableStateOf(setOf<String>()) }
 
-    val uploading = all.filter { it.kind == TransferKind.UPLOAD && it.phase == TransferPhase.RUNNING }
-    val downloading = all.filter { it.kind == TransferKind.DOWNLOAD && it.phase == TransferPhase.RUNNING }
-    // Sync tab: batches with their per-file queue rows beneath them.
-    val syncBatches = all.filter { it.kind == TransferKind.SYNC && it.parent == null }
-    val syncRows = buildList {
-        syncBatches.forEach { batch ->
-            add(batch)
-            addAll(all.filter { it.parent == batch.id })
+    val active = all.filter { it.phase == TransferPhase.RUNNING || it.phase == TransferPhase.QUEUED }
+    // Active batches keep their queued children inline; settled children drop
+    // to the finished tab so the user sees photos complete without switching.
+    val activeRows = buildList {
+        active.forEach { item ->
+            add(item)
+            if (item.parent == null && item.kind == TransferKind.SYNC) {
+                addAll(active.filter { it.parent == item.id })
+            }
         }
     }
-    val finished = all.filter { it.phase != TransferPhase.RUNNING && it.parent == null }
+    val finished = all.filter { it.phase != TransferPhase.RUNNING && it.phase != TransferPhase.QUEUED }
 
     Scaffold(
         topBar = {
@@ -108,8 +125,6 @@ fun TransferCenterScreen(
                     }
                 },
                 actions = {
-                    // Clear sits in the top bar: at the bottom of a long
-                    // history it was unreachable.
                     TextButton(onClick = { TransferCenter.clearFinished() }) {
                         Text(LocalStrings.current.clearFinished)
                     }
@@ -118,76 +133,45 @@ fun TransferCenterScreen(
         },
     ) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
-            TabRow(selectedTabIndex = tab) {
-                Tab(tab == 0, { tab = 0 }) { Text(LocalStrings.current.tabUploading, Modifier.padding(12.dp)) }
-                Tab(tab == 1, { tab = 1 }) { Text(LocalStrings.current.tabDownloading, Modifier.padding(12.dp)) }
-                Tab(tab == 2, { tab = 2 }) { Text(LocalStrings.current.tabSync, Modifier.padding(12.dp)) }
-                Tab(tab == 3, { tab = 3 }) { Text(LocalStrings.current.tabDone, Modifier.padding(12.dp)) }
+            // The backup card is a fixture of the page, not a tab feature.
+            if (syncSupported) {
+                BackupSettingsCard(
+                    status = backupStatus,
+                    autoSync = autoSync,
+                    onAutoSyncChange = { on ->
+                        onAutoSyncChange(on)
+                        // Turning the switch off is also "stop what you are
+                        // doing": the schedule goes away and a running pass
+                        // winds down after the in-flight file.
+                        if (!on) MediaSync.stop()
+                    },
+                    wifiOnly = wifiOnly,
+                    onWifiOnlyChange = onWifiOnlyChange,
+                    chargingOnly = chargingOnly,
+                    onChargingOnlyChange = onChargingOnlyChange,
+                    onOpenAlbums = onOpenBackupAlbums,
+                    onSyncNow = onSyncNow,
+                    onStop = { MediaSync.stop() },
+                )
+                HorizontalDivider(Modifier.padding(vertical = 2.dp))
             }
 
-            // Album auto-sync settings live here, next to the flows they drive.
-            // Hidden where the platform has no background scheduler (web).
-            if (tab == 2 && syncSupported) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(LocalStrings.current.albumAutoSync, style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                LocalStrings.current.albumAutoSyncHint,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(checked = autoSync, onCheckedChange = onAutoSyncChange)
-                    }
-                    if (autoSync) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(LocalStrings.current.syncWifiOnly, style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    LocalStrings.current.syncWifiOnlyHint,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(checked = wifiOnly, onCheckedChange = onWifiOnlyChange)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(LocalStrings.current.syncChargingOnly, style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    LocalStrings.current.syncChargingOnlyHint,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(checked = chargingOnly, onCheckedChange = onChargingOnlyChange)
-                        }
-                        // Live backup status: pending / uploading / failed /
-                        // excluded counts, the last successful pass, the reason
-                        // nothing is running, and the two actions that belong to
-                        // it (pick albums, sync now). "Sync now" lives here rather
-                        // than on its own row above, so there is exactly one.
-                        val startedLabel = LocalStrings.current.syncStarted
-                        BackupStatusCard(
-                            status = backupStatus,
-                            onOpenAlbums = onOpenBackupAlbums,
-                            onSyncNow = {
-                                onSyncNow()
-                                com.linan.barezen_drive.platform.TransferNotifier.toast(startedLabel)
-                            },
-                        )
-                    }
-                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            TabRow(selectedTabIndex = tab) {
+                Tab(tab == 0, { tab = 0 }) {
+                    Text(
+                        "${LocalStrings.current.tabActive} (${activeRows.size})",
+                        Modifier.padding(12.dp),
+                    )
+                }
+                Tab(tab == 1, { tab = 1 }) {
+                    Text(
+                        "${LocalStrings.current.tabDone} (${finished.size})",
+                        Modifier.padding(12.dp),
+                    )
                 }
             }
 
-            val rows = when (tab) {
-                0 -> uploading
-                1 -> downloading
-                2 -> syncRows
-                else -> finished
-            }
+            val rows = if (tab == 0) activeRows else finished
             if (rows.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
@@ -207,15 +191,15 @@ fun TransferCenterScreen(
                                 stopRequested = stopRequested + item.id
                             },
                         )
+                        HorizontalDivider()
                     }
                 }
             }
         }
     }
     // Outside the Scaffold: a dialog is its own window, so it must not be laid
-    // out inside the content column (that would make it scroll with the list).
-    // Only a review that actually showed albums counts as answered; a failed
-    // scan closes without burning the one-shot flag.
+    // out inside the content column. Only a review that actually showed albums
+    // counts as answered; a failed scan closes without burning the one-shot.
     if (showReview) {
         AlbumReviewDialog(
             onDone = { reviewed ->
@@ -233,81 +217,171 @@ private fun TransferRow(
     stopping: Boolean = false,
     onStop: () -> Unit = {},
 ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                item.name,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-            )
-            Text(
-                when (item.phase) {
-                    TransferPhase.DONE -> LocalStrings.current.transferDone
-                    TransferPhase.FAILED -> LocalStrings.current.transferFailed
-                    TransferPhase.QUEUED -> LocalStrings.current.transferQueued
-                    else -> when {
-                        // Batch syncs count files, byte uploads count bytes.
-                        item.parent == null && item.kind == TransferKind.SYNC && item.bytesTotal > 0 ->
-                            "\${item.bytesDone.toInt()} / \${item.bytesTotal.toInt()}"
-                        else -> "\${formatFileSize(item.bytesDone)} / \${formatFileSize(item.bytesTotal)}"
+    Row(
+        Modifier.fillMaxWidth().padding(start = if (indent) 16.dp else 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TransferTile(item)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    item.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                )
+                Text(
+                    when (item.phase) {
+                        TransferPhase.DONE -> LocalStrings.current.transferDone
+                        TransferPhase.FAILED -> LocalStrings.current.transferFailed
+                        TransferPhase.QUEUED -> LocalStrings.current.transferQueued
+                        else -> when {
+                            // Batch syncs count files, byte uploads count bytes.
+                            item.parent == null && item.kind == TransferKind.SYNC && item.bytesTotal > 0 ->
+                                "${item.bytesDone.toInt()} / ${item.bytesTotal.toInt()}"
+                            else -> "${formatFileSize(item.bytesDone)} / ${formatFileSize(item.bytesTotal)}"
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (item.phase == TransferPhase.FAILED) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // Stop button on the batch row: flags the worker, which drops the
+                // rest of the queue after the in-flight file.
+                if (item.phase == TransferPhase.RUNNING && item.kind == TransferKind.SYNC && item.parent == null) {
+                    TextButton(onClick = onStop, enabled = !stopping) {
+                        Text(if (stopping) LocalStrings.current.stoppingSoon else LocalStrings.current.actionCancel)
                     }
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = if (item.phase == TransferPhase.FAILED) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // Stop button on the batch row: flags the worker, which drops the
-            // rest of the queue after the in-flight file.
-            if (item.phase == TransferPhase.RUNNING && item.kind == TransferKind.SYNC && item.parent == null) {
-                TextButton(onClick = onStop, enabled = !stopping) {
-                    Text(if (stopping) LocalStrings.current.stoppingSoon else LocalStrings.current.actionCancel)
                 }
             }
-        }
-        item.statusText?.let {
-            Spacer(Modifier.height(2.dp))
-            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        if (item.phase == TransferPhase.RUNNING) {
-            Spacer(Modifier.height(6.dp))
-            val fraction = if (item.bytesTotal > 0) {
-                (item.bytesDone.toFloat() / item.bytesTotal).coerceIn(0f, 1f)
-            } else {
-                // Indeterminate when the size is unknown (e.g. instant upload).
-                0f
+            item.statusText?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            LinearProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item.error?.let {
-            Spacer(Modifier.height(2.dp))
-            Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            if (item.phase == TransferPhase.RUNNING) {
+                Spacer(Modifier.height(6.dp))
+                val fraction = if (item.bytesTotal > 0) {
+                    (item.bytesDone.toFloat() / item.bytesTotal).coerceIn(0f, 1f)
+                } else {
+                    // Indeterminate when the size is unknown (e.g. instant upload).
+                    0f
+                }
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            item.error?.let {
+                Spacer(Modifier.height(2.dp))
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }
 
-/** Compact live status of the automatic backup, shown above the sync tab list. */
+/** 44 dp media tile: the real cover when known, a type icon before that. */
 @Composable
-private fun BackupStatusCard(
+private fun TransferTile(item: TransferItem) {
+    val fileId = item.fileId
+    var bmp by remember(fileId) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(fileId) { bmp = if (fileId != null) ThumbnailHub.load(fileId) else null }
+    Box(
+        Modifier
+            .size(44.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        val image = bmp
+        if (image != null) {
+            Image(
+                bitmap = image,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(44.dp),
+            )
+        } else {
+            val icon = when {
+                fileId == null && item.mediaHint && item.name.endsWith(".mp4", true) -> Icons.Default.Movie
+                fileId == null && item.mediaHint -> Icons.Default.Image
+                fileId == null && item.parent == null && item.kind == TransferKind.SYNC -> Icons.Default.PhotoLibrary
+                else -> Icons.Default.InsertDriveFile
+            }
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Album backup card, always visible on Android: the switch, the network
+ * policy, the live counters and the three actions that belong to it (pick
+ * albums, sync now, and stop while a pass is running).
+ */
+@Composable
+private fun BackupSettingsCard(
     status: com.linan.barezen_drive.platform.BackupStatus,
+    autoSync: Boolean,
+    onAutoSyncChange: (Boolean) -> Unit,
+    wifiOnly: Boolean,
+    onWifiOnlyChange: (Boolean) -> Unit,
+    chargingOnly: Boolean,
+    onChargingOnlyChange: (Boolean) -> Unit,
     onOpenAlbums: () -> Unit,
     onSyncNow: () -> Unit,
+    onStop: () -> Unit,
 ) {
     val strings = LocalStrings.current
-    androidx.compose.foundation.layout.Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(strings.backupCardTitle, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            if (status.active > 0) {
+                TextButton(onClick = onStop) { Text(strings.stopSync) }
+            }
             TextButton(onClick = onOpenAlbums) { Text(strings.backupAlbumsTitle) }
             TextButton(onClick = onSyncNow) { Text(strings.backupSyncNow) }
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(strings.albumAutoSync, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    strings.albumAutoSyncHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = autoSync, onCheckedChange = onAutoSyncChange)
+        }
+        if (autoSync) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(strings.syncWifiOnly, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        strings.syncWifiOnlyHint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = wifiOnly, onCheckedChange = onWifiOnlyChange)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(strings.syncChargingOnly, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        strings.syncChargingOnlyHint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = chargingOnly, onCheckedChange = onChargingOnlyChange)
+            }
+        }
+        // Live counters, always: they are the point of the card.
         Text(
             buildString {
                 append(strings.backupPending); append(": "); append(status.pending)
@@ -317,9 +391,7 @@ private fun BackupStatusCard(
             },
             style = MaterialTheme.typography.bodySmall,
         )
-        // Why nothing is moving even though the switch is on. Without this the
-        // card reads "pending: 300" on an unplugged phone and the user has no way
-        // to learn that the charging-only rule they set is what is holding it.
+        // Why nothing is moving even though the switch is on.
         status.pausedReason?.let { reason ->
             Text(
                 when (reason) {

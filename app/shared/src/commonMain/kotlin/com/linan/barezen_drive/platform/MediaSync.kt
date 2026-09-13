@@ -27,6 +27,14 @@ expect object MediaSync {
     /** Runs one immediate pass (the "sync now" action). */
     fun syncNow(wifiOnly: Boolean)
 
+    /**
+     * Stops an in-flight backup pass: cancels the scheduled one-shot jobs and
+     * asks every running sync batch to wind down (the in-flight file finishes,
+     * the rest of the queue stays PENDING). The periodic schedule itself is
+     * untouched - [apply] owns it, so stopping must not un-book the next tick.
+     */
+    fun stop()
+
     /** Device albums with per-album queue totals, for the backup settings. */
     suspend fun listBuckets(): List<BackupBucket>
 

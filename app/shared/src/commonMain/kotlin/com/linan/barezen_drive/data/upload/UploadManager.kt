@@ -97,7 +97,7 @@ class UploadManager(
             val result = doUpload(file, folderId, transferId, cachedSha256, onHashed, overwrite)
             if (transferId != null) {
                 result.fold(
-                    onSuccess = { com.linan.barezen_drive.data.transfer.TransferCenter.done(transferId) },
+                    onSuccess = { com.linan.barezen_drive.data.transfer.TransferCenter.done(transferId, it.id) },
                     onFailure = { com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, it.message ?: "failed") },
                 )
             }
@@ -224,6 +224,9 @@ class UploadManager(
         val cover = runCatching { coverGen(file) }.getOrNull()
         if (cover != null) {
             runCatching { api.putThumbnail(dto.id, cover) }
+            // Direct-to-cache: the list surfaces show this cover on the next
+            // frame instead of refetching it from the server one tile at a time.
+            com.linan.barezen_drive.ui.media.ThumbnailHub.put(dto.id, cover)
         }
         _progress.value = Progress(Phase.DONE, file.name, file.size, file.size)
         return Result.success(dto)
