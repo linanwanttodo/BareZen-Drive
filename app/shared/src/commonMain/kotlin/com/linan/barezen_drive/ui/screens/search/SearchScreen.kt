@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -109,6 +110,17 @@ fun SearchScreen(
                 value = query,
                 onValueChange = { query = it },
                 singleLine = true,
+                // Magnifier on the leading edge, the way every gallery and file
+                // manager marks its search field. Decorative only: the
+                // placeholder already names the field, so a content description
+                // here would just make the reader announce "search" twice.
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
                 placeholder = { Text(LocalStrings.current.searchHint) },
                 // Capsule instead of the default outlined rectangle (4 dp): a
                 // search field reads as a rounded pill in the mainstream
