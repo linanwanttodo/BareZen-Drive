@@ -75,6 +75,30 @@ class UpdateCheckerTest {
         assertIs<UpdateStatus.Available>(status)
         assertEquals("https://x/app.apk", status.downloadUrl)
         assertEquals("ab".repeat(32), status.sha256)
+        // The size rides along too: the downloader uses it as the cheap first
+        // guard before it spends a pass hashing the file.
+        assertEquals(1L, status.size)
+    }
+
+    @Test
+    fun manifestWithoutHashOrSizeStillOffersTheDownload() {
+        // Older manifests predate the checksum fields; an update must not be
+        // blocked by their absence, only unverified.
+        val status = UpdateChecker.evaluate(
+            info(
+                "0.0.2",
+                latestVersion = "0.0.2",
+                assets = listOf(
+                    UpdateAssetDto("android", "any", "apk", "https://x/app.apk", "", 0),
+                ),
+            ),
+            "0.0.1",
+            InstallChannel.ANDROID,
+        )
+        assertIs<UpdateStatus.Available>(status)
+        assertEquals("https://x/app.apk", status.downloadUrl)
+        assertEquals("", status.sha256)
+        assertEquals(0L, status.size)
     }
 
     @Test

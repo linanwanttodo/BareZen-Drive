@@ -59,15 +59,20 @@ internal fun UpdateCheckRow(
 
     // Mirrors of the same package, tried in order: the server proxy rides the
     // connection the app already depends on, the upstream link covers the case
-    // where the server's own route is the bad hop. Failure surfaces as a retry
-    // prompt - no more silent detour to the browser.
+    // where the server's own route is the bad hop. The manifest's hash and
+    // size travel with the request so a mirror that returns a short or wrong
+    // body is rejected and the next one tried, rather than reaching the
+    // installer as an unreadable package. Failure surfaces as a retry prompt -
+    // no more silent detour to the browser.
     fun startDownload(available: UpdateStatus.Available) {
         downloading = true
         downloadProgress = 0f
         scope.launch {
             val mirrors = listOfNotNull(available.downloadUrl, available.fallbackUrl).distinct()
             val ok = mirrors.isNotEmpty() && runCatching {
-                downloadAndInstallUpdate(mirrors) { p -> downloadProgress = p }
+                downloadAndInstallUpdate(mirrors, available.sha256, available.size) { p ->
+                    downloadProgress = p
+                }
             }.getOrDefault(false)
             downloading = false
             if (ok) {

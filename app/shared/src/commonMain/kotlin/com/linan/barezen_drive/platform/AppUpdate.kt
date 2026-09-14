@@ -15,9 +15,20 @@ expect fun openInBrowser(url: String)
  * mirrors of the same package, tried in order: the first one that yields a
  * complete download wins. Returns true when the hand-off started; false means
  * every source failed and the caller should fall back to the release page.
+ *
+ * [sha256] and [size] come from the release manifest and are checked against
+ * the bytes on disk before the file reaches the installer. Without them a
+ * relay that answers 200 with a short or mangled body still counted as a
+ * successful mirror, and the user got an opaque "package appears to be
+ * invalid" from the installer instead of a retry on the other source. Either
+ * value may be null (older manifests), in which case only what is present is
+ * enforced. A file that fails the check is deleted and the next mirror is
+ * tried, so a mirror is only "good" if it delivered the exact promised bytes.
  */
 expect suspend fun downloadAndInstallUpdate(
     urls: List<String>,
+    sha256: String? = null,
+    size: Long? = null,
     onProgress: (Float) -> Unit = {},
 ): Boolean
 

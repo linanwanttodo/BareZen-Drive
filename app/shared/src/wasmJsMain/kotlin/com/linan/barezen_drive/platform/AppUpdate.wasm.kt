@@ -20,5 +20,12 @@ actual fun reloadApp() {
 /**
  * Browser client: updates arrive with the server bundle, so there is nothing
  * to download in-process. The caller falls back to the server-update guidance.
+ * The manifest hash/size are accepted and ignored - a reload has no file to
+ * verify against them.
  */
-actual suspend fun downloadAndInstallUpdate(urls: List<String>, onProgress: (Float) -> Unit): Boolean = false
+actual suspend fun downloadAndInstallUpdate(
+    urls: List<String>,
+    sha256: String?,
+    size: Long?,
+    onProgress: (Float) -> Unit,
+): Boolean = false

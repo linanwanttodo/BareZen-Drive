@@ -17,6 +17,9 @@ sealed interface UpdateStatus {
      * release manifest listed a package for this platform; [fallbackUrl] is a
      * mirror of the same package (server proxy first, upstream link second);
      * [releaseUrl] is the human-facing release page (always a safe fallback).
+     * [sha256] and [size] are what the downloader enforces on the finished
+     * file, so a mirror that returns something else is retried instead of
+     * being handed to the installer.
      */
     data class Available(
         val version: String,
@@ -26,6 +29,7 @@ sealed interface UpdateStatus {
         val downloadUrl: String? = null,
         val fallbackUrl: String? = null,
         val sha256: String? = null,
+        val size: Long? = null,
     ) : UpdateStatus
 
     /** The check could not be completed (server offline, no release resolved). */
@@ -75,6 +79,7 @@ object UpdateChecker {
             downloadUrl = asset?.url,
             fallbackUrl = asset?.fallbackUrl,
             sha256 = asset?.sha256,
+            size = asset?.size,
         )
     }
 
