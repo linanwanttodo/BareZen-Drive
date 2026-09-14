@@ -1,5 +1,6 @@
 package com.linan.barezen_drive.data.transfer
 
+import com.linan.barezen_drive.data.library.LibraryRevision
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -157,6 +158,13 @@ object TransferCenter {
         // the fresh cover bytes straight into the cache, and wiping the cache
         // entry here would throw that away and force a needless round-trip.
         fileId?.let { com.linan.barezen_drive.ui.media.ThumbnailHub.markAvailable(it) }
+        // A server-assigned id means a new file exists, which is the one event
+        // every library listing has to react to. This is the single choke point
+        // for both lanes: the file uploader reports here, and so does every
+        // per-photo upload of an album backup (which runs in a worker, with the
+        // UI parked anywhere). Batch rows themselves carry no id - they only
+        // wrap the files.
+        if (fileId != null) LibraryRevision.bump()
         runCatching {
             if (item.kind == TransferKind.SYNC) {
                 // A finished backup is not news: dismiss the progress entry

@@ -38,10 +38,7 @@ internal object BackupNotification {
         ensureChannel()
         val title = if (java.util.Locale.getDefault().language == "zh") "正在备份相册" else "Backing up photos"
         val text = if (total > 0) "$done / $total" else null
-        return NotificationCompat.Builder(AndroidContext.app, CHANNEL)
-            // Same brand silhouette the transfer notifications use; the
-            // platform stat_sys_upload drawable reads as the stock robot.
-            .setSmallIcon(com.linan.barezen_drive.platform.TransferNotifier.iconRes())
+        val b = NotificationCompat.Builder(AndroidContext.app, CHANNEL)
             .setContentTitle(title)
             .apply { text?.let { setContentText(it) } }
             .setOngoing(true)
@@ -49,7 +46,12 @@ internal object BackupNotification {
             .setSilent(true)
             .setProgress(100, if (total > 0) (done * 100 / total) else 0, total == 0)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+        // The same app-icon silhouette every other notification draws. This
+        // used to point at a VectorDrawable resource, which the shade cannot
+        // always inflate - it then falls back to the platform's own drawing,
+        // and that is the stock figure users kept seeing mid-backup.
+        com.linan.barezen_drive.platform.TransferNotifier.smallIcon()?.let { b.setSmallIcon(it) }
+        return b.build()
     }
 
     fun foregroundInfo(done: Int, total: Int): ForegroundInfo {

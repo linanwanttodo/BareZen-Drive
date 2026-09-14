@@ -88,6 +88,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.core.dto.FileDto
+import com.linan.barezen_drive.data.library.LibraryRevision
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.upload.UploadManager
 import com.linan.barezen_drive.platform.PickedFile
@@ -99,6 +100,7 @@ import com.linan.barezen_drive.data.repo.AlbumFolder
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.media.fileIcon
 import com.linan.barezen_drive.ui.media.formatDateTime
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
@@ -384,6 +386,28 @@ fun AlbumScreen(
     }
 
     LaunchedEffect(albumFolderId, reloadTick) { if (albumFolderId != null) loadMore() }
+
+    // A file landing on the server - this device's upload, a background album
+    // backup, another client - has to appear without the user leaving the tab.
+    // loadMore() appends to whatever is already loaded, so this drops the pages
+    // first and re-reads page one; the plain reload effect above is keyed on the
+    // scope, not on this, precisely because re-running it with a live cursor
+    // would append a duplicate page.
+    //
+    // The delay is the debounce: a backup bumps this once per photo and every
+    // bump restarts the effect, cancelling the wait, so a 200-photo backup
+    // collapses into one re-read instead of 200.
+    val revision by LibraryRevision.value.collectAsState()
+    LaunchedEffect(revision) {
+        if (revision == 0L || albumFolderId == null) return@LaunchedEffect
+        delay(400)
+        generation++
+        loading = false
+        loaded = emptyList()
+        cursor = null
+        exhausted = false
+        loadMore()
+    }
 
     // Upload the picked photos sequentially into THIS DEVICE's album folder;
     // cancelling the current one aborts its session and moves to the next.

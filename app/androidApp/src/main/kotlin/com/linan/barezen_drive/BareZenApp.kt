@@ -22,8 +22,7 @@ class BareZenApp : Application() {
     override fun onCreate() {
         super.onCreate()
         AndroidContext.init(this)
-        runCatching { TransferNotifier.setSmallIcon(R.drawable.ic_notification) }
-        runCatching { prepareNotificationIcons() }
+        runCatching { installNotificationIcons() }
         runCatching {
             val prefs = AppPreferences.get()
             MediaSync.apply(prefs.albumAutoSync, prefs.syncWifiOnly, prefs.albumSyncChargingOnly)
@@ -33,13 +32,17 @@ class BareZenApp : Application() {
     /**
      * The shade wants the app icon on a notification, and Android renders it
      * in two pieces: the small icon is drawn as a flat tint taken only from
-     * the bitmap's alpha channel (so the coloured artwork would read as a
-     * solid block there - it must be a white silhouette), while the large
-     * icon keeps the full colour. Both are derived from the launcher icon:
-     * the silhouette from the adaptive icon's FOREGROUND layer, because the
-     * background is opaque and would silhouette into a plain square.
+     * the bitmap's alpha channel (so coloured artwork would read as a solid
+     * block there - it must be a white silhouette), while the large icon keeps
+     * the full colour. Both are cut from the launcher icon: the silhouette from
+     * the adaptive icon's FOREGROUND layer, because the background is opaque
+     * and would silhouette into a plain square.
+     *
+     * Both are handed over as bitmaps. A resource id is not an option here: the
+     * only app-owned candidate is a vector, and the shade silently falls back to
+     * its own stock drawing when it cannot inflate one.
      */
-    private fun prepareNotificationIcons() {
+    private fun installNotificationIcons() {
         val size = 128
         val d = ContextCompat.getDrawable(this, R.mipmap.ic_launcher) ?: return
         val full = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -55,7 +58,10 @@ class BareZenApp : Application() {
         val fgCanvas = Canvas(src)
         // Zoom past the adaptive 108dp grid: the artwork occupies only the
         // centre of that viewport, drawn unscaled it would silhouette small.
-        val inset = size / 4
+        // Half the box per side lands the mark at roughly four fifths of the
+        // 24dp slot, which is what the shade expects a notification icon to
+        // fill; a quarter (the previous value) left it noticeably undersized.
+        val inset = size / 2
         foreground.setBounds(-inset, -inset, size + inset, size + inset)
         foreground.draw(fgCanvas)
         val silhouette = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)

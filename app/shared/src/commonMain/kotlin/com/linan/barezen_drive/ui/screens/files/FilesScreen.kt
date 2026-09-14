@@ -97,6 +97,7 @@ import com.linan.barezen_drive.data.api.ApiFailure
 import com.linan.barezen_drive.platform.copyToClipboard
 import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.data.repo.AlbumFolder
+import com.linan.barezen_drive.data.library.LibraryRevision
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.upload.UploadManager
 import com.linan.barezen_drive.platform.PickedFile
@@ -106,6 +107,7 @@ import com.linan.barezen_drive.ui.media.FileThumbnail
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.media.formatDateTime
 import com.linan.barezen_drive.ui.screens.preview.PreviewKind
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
@@ -393,6 +395,20 @@ fun FilesScreen(
     // A fresh folder clears the selection - it belongs to one listing.
     LaunchedEffect(path) {
         selectedFiles.value = emptySet()
+        reload()
+    }
+
+    // A finished transfer has to show up in the listing without leaving the tab.
+    // Kept out of the effect above on purpose: re-running that one would clear a
+    // selection the user is in the middle of making.
+    //
+    // The delay is the debounce: a backup bumps this once per photo and every
+    // bump restarts the effect, cancelling the wait, so only the last one of a
+    // burst reaches the network.
+    val revision by LibraryRevision.value.collectAsState()
+    LaunchedEffect(revision) {
+        if (revision == 0L) return@LaunchedEffect
+        delay(400)
         reload()
     }
 

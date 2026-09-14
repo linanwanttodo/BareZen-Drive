@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.core.dto.FileDto
+import com.linan.barezen_drive.data.library.LibraryRevision
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.ui.media.FileThumbnail
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
@@ -120,7 +121,17 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    // Re-read whenever a transfer has put something new on the server. An album
+    // backup runs in a worker and finishes whenever it finishes, so "load once
+    // when the tab appears" left the recent strip showing yesterday's photos
+    // even as the upload it was reporting ran to completion behind it.
+    //
+    // The delay is the debounce: a backup bumps this once per photo and every
+    // bump restarts the effect, cancelling the wait, so only the last one of a
+    // burst reaches the network.
+    val revision by LibraryRevision.value.collectAsState()
+    LaunchedEffect(revision) {
+        if (revision > 0L) delay(400)
         reload()
     }
 
