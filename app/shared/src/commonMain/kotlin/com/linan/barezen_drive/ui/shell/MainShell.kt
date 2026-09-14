@@ -3,7 +3,9 @@ package com.linan.barezen_drive.ui.shell
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -90,6 +92,15 @@ private fun rememberSelectedIndexProvider(ordinal: Int): () -> Int {
 val BottomBarClearance = 112.dp
 
 /**
+ * Insets a bar docked to the bottom edge may claim: horizontal (display
+ * cutout in landscape, gesture rails) plus the navigation bar. Never the top
+ * one - `safeDrawing` also carries the status-bar top inset, and a
+ * bottom-docked bar can never be occluded from above, so claiming it padded
+ * dead space into the capsule / action bar.
+ */
+private val BottomBarInsetsSides = WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom
+
+/**
  * App shell: NavigationSuiteScaffold renders a navigation rail on wide
  * windows; on compact widths the stock bar is replaced by the
  * LiquidBottomTabs glass bar from Kyant0/AndroidLiquidGlass (ported under
@@ -107,6 +118,13 @@ fun MainShell(
     onSelect: (MainTab) -> Unit,
     wallpaperBitmap: ImageBitmap?,
     glassBarEnabled: Boolean = true,
+    /**
+     * False while a tab owns the bottom strip itself - the album tab inside a
+     * collection swaps the tab bar for its own action bar, mirroring how a
+     * phone gallery hands the bottom over to the folder it opened. Two bars
+     * stacked at the same edge is the bug this prevents.
+     */
+    showTabBar: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val layoutType = NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(
@@ -141,7 +159,9 @@ fun MainShell(
                 // safe insets) inside its scroll container.
                 Box(Modifier.fillMaxSize()) { content() }
             }
-            if (glassBarEnabled) LiquidBottomTabs(
+            if (!showTabBar) {
+                // The screen owns the bottom edge; nothing to draw here.
+            } else if (glassBarEnabled) LiquidBottomTabs(
                 // Stable provider lambda: LiquidBottomTabs keys its internal
                 // currentIndex state on this lambda instance. A fresh
                 // `{ selected.ordinal }` every recomposition would reset that
@@ -156,7 +176,10 @@ fun MainShell(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    // Bottom + horizontal only: safeDrawing also carries the
+                    // status-bar top inset, which a bottom-docked bar must not
+                    // claim - it padded dead space into the capsule.
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(BottomBarInsetsSides))
                     .padding(horizontal = 12.dp, vertical = 12.dp),
             ) {
                 MainTab.entries.forEach { tab ->
@@ -186,11 +209,15 @@ fun MainShell(
             } else {
                 // Plain Material bar: the settings toggle swaps the lens effect
                 // for this cheaper, fully opaque navigation.
+                //
+                // No windowInsetsPadding here on purpose: NavigationBar already
+                // claims NavigationBarDefaults.windowInsets (system bars,
+                // horizontal + bottom). Adding safeDrawing on top duplicated the
+                // bottom inset and, worse, pulled in the status-bar top inset.
                 NavigationBar(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .windowInsetsPadding(WindowInsets.safeDrawing),
+                        .fillMaxWidth(),
                 ) {
                     MainTab.entries.forEach { tab ->
                         NavigationBarItem(
@@ -202,6 +229,11 @@ fun MainShell(
                     }
                 }
             }
+        }
+    } else if (!showTabBar) {
+        Box(Modifier.fillMaxSize()) {
+            WallpaperLayer(wallpaperBitmap)
+            content()
         }
     } else {
         NavigationSuiteScaffold(

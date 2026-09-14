@@ -258,6 +258,7 @@ interface Strings {
     val tabFavorites: String
     val actionFavorite: String
     val actionUnfavorite: String
+    val actionSelect: String
     val favorited: String
     val unfavorited: String
     val archived: String

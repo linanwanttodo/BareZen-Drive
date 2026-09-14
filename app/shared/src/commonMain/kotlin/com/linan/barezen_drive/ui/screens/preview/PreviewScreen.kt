@@ -4,10 +4,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Archive
@@ -102,6 +107,16 @@ fun PreviewScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        // A custom bottomBar gets no window insets from Scaffold,
+                        // so the action row was sitting under the system
+                        // navigation bar. Bottom + horizontal only: safeDrawing
+                        // also carries the status-bar top inset, which a
+                        // bottom-docked row must not claim.
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(
+                                WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                            ),
+                        )
                         .padding(vertical = 6.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                 ) {

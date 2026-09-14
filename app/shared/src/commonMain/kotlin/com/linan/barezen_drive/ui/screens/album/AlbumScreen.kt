@@ -9,7 +9,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +23,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
@@ -57,7 +60,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -74,7 +76,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -145,7 +149,7 @@ private fun daySections(files: List<FileDto>): List<DaySection> =
  * keeps original aspect ratios; tapping opens the swipeable preview across
  * every loaded photo. Pages load on demand as the bottom becomes visible.
  */
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun AlbumScreen(
     repo: FilesRepository,
@@ -154,6 +158,9 @@ fun AlbumScreen(
     onBack: (() -> Unit)?,
     onPreview: (List<FileDto>, Int, Boolean) -> Unit,
     onOpenUploads: () -> Unit = {},
+    /** Reports whether the screen is inside one collection (not the landing),
+     *  so the shell can hand the bottom strip over to [AlbumActionBar]. */
+    onCollectionModeChange: (Boolean) -> Unit = {},
     avatar: @Composable () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
@@ -236,14 +243,36 @@ fun AlbumScreen(
         if (zoomAccum >= 1.3f) { setColumnCount(columns - 1); zoomAccum = 1f }
         else if (zoomAccum <= 0.77f) { setColumnCount(columns + 1); zoomAccum = 1f }
     }
-    // Google-Photos selection: long-press a tile to enter, tap toggles, a
-    // bottom bar carries the actions until the selection is cleared.
+    // Google-Photos selection: long-press a tile to enter, tap toggles, the
+    // bottom bar carries the actions until the selection is cleared. The
+    // explicit flag covers the "select" button on that bar: entering selection
+    // with nothing picked yet must still show checkmarks on every tile.
     val selected = remember { mutableStateMapOf<String, FileDto>() }
-    val selectionMode = selected.isNotEmpty()
+    var selecting by remember { mutableStateOf(false) }
+    val selectionMode = selecting || selected.isNotEmpty()
+    fun clearSelection() {
+        selected.clear()
+        selecting = false
+    }
     var collections by remember { mutableStateOf<List<CollectionTile>>(emptyList()) }
     var collectionsLoading by remember { mutableStateOf(false) }
     val allPhotosLabel = LocalStrings.current.allPhotos
     val allDevicesLabel = LocalStrings.current.allDevices
+    // The photo grid is on screen when a collection is open - and also for the
+    // all-devices scope, which has no collections landing and shows the grid
+    // straight away. Keying the handover on this (not on timelineMode alone) is
+    // what keeps the action bar present in that scope.
+    val gridVisible = timelineMode || scopeName == allDevicesLabel
+    // Reported to the shell: with the grid on screen the app tab bar steps
+    // aside and this screen's own bar takes the bottom edge (the two never
+    // stack).
+    LaunchedEffect(gridVisible) { onCollectionModeChange(gridVisible) }
+    /** Bottom room while the album bar owns the edge (64 dp bar + hairline +
+     *  safe insets) instead of the taller floating tab bar. */
+    val barClearance = if (gridVisible) 96.dp else BottomBarClearance
+    /** Lead rows the waterfall draws before its first day section. The
+     *  all-devices scope has no collections landing, so it gets none. */
+    val waterfallLeadRows = if (timelineMode) 1 else 0
 
     LaunchedEffect(resolveTick) {
         val id = AlbumFolder.resolve(repo, device, legacyDeviceName())
@@ -290,6 +319,17 @@ fun AlbumScreen(
         // The reload effect picks this up (tick makes same-scope reselects reload too).
         albumFolderId = id
         reloadTick++
+    }
+    // System back with the grid open. The tab bar is off screen while the grid
+    // owns the bottom edge, so this is the way out: drop the selection first,
+    // then leave the collection - and the all-devices view, which has no
+    // collections landing to fall back to, returns to this device's album.
+    BackHandler(enabled = gridVisible && onBack == null) {
+        when {
+            selectionMode -> clearSelection()
+            timelineMode -> timelineMode = false
+            else -> switchScope(deviceFolderId, device)
+        }
     }
 
     // Upload speed: derived from consecutive progress callbacks, sampled at
@@ -398,35 +438,78 @@ fun AlbumScreen(
         // Lift the snackbar above the floating bottom bar: at scaffold
         // bottom it sits behind the translucent glass and reads as a
         // second, stacked navigation bar (seen on connection errors).
-        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = BottomBarClearance)) },
+        snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = barClearance)) },
         bottomBar = {
-            if (selectionMode) {
-                // Google-Photos action bar: favorite / archive / share / download /
-                // delete for the whole selection; the tiles carry the checkmarks.
-                // A floating pill lifted above the glass bottom bar: docked at the
-                // scaffold bottom it landed exactly under that bar, untappable.
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 3.dp,
-                    shadowElevation = 6.dp,
-                    modifier = Modifier
-                        .padding(horizontal = 16.dp)
-                        .padding(bottom = BottomBarClearance),
+            if (gridVisible) {
+                // The album bar owns the bottom edge while a collection is open
+                // (the shell hides the tab bar for exactly this case). Flat and
+                // docked on purpose: no elevation, no shadow, no floating pill -
+                // a lifted rounded card over photos read as a foreign element.
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current))
+                        // Horizontal + bottom only: safeDrawing also carries the
+                        // status-bar top inset, and a bottom-docked bar can never
+                        // be occluded from above. Asking for it painted a panel
+                        // coloured strip above the divider.
+                        .windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(
+                                WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                            ),
+                        ),
                 ) {
+                    HorizontalDivider()
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                            .height(64.dp)
+                            .padding(horizontal = 4.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                    if (!selectionMode) {
+                        // Browse actions: the collection's own controls, moved
+                        // off the top bar so the picture is not framed by two
+                        // rows of chrome.
+                        BarAction(
+                            if (favoriteOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                            if (favoriteOnly) LocalStrings.current.actionUnfavorite else LocalStrings.current.actionFavorite,
+                            tint = if (favoriteOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                        ) {
+                            favoriteOnly = !favoriteOnly
+                            generation++
+                            loading = false
+                            loaded = emptyList(); cursor = null; exhausted = false; error = null
+                            loadMore()
+                        }
+                        // Cycle waterfall -> uniform -> by date; persisted.
+                        BarAction(
+                            when (viewMode) {
+                                1 -> Icons.Default.GridOn
+                                2 -> Icons.Default.CalendarViewDay
+                                else -> Icons.Default.ViewAgenda
+                            },
+                            when (viewMode) {
+                                1 -> LocalStrings.current.viewUniform
+                                2 -> LocalStrings.current.viewDated
+                                else -> LocalStrings.current.viewWaterfall
+                            },
+                        ) {
+                            viewMode = (viewMode + 1) % 3
+                            prefs.albumViewMode = viewMode
+                        }
+                        BarAction(Icons.Default.SelectAll, LocalStrings.current.actionSelect) {
+                            selecting = true
+                        }
+                    } else {
                         BarAction(Icons.Default.FavoriteBorder, LocalStrings.current.actionFavorite) {
                             scope.launch {
                                 // Favoriting keeps every file visible where it is, so
                                 // no reload: only the favorites filter needs a refresh
                                 // next time it is opened.
                                 val failed = selected.values.count { repo.setFavorite(it.id, true).isFailure }
-                                selected.clear()
+                                clearSelection()
                                 snackbar.showSnackbar(
                                     if (failed > 0) I18n.strings.operationFailed
                                     else I18n.strings.favorited,
@@ -437,7 +520,7 @@ fun AlbumScreen(
                             scope.launch {
                                 val failed = selected.values.count { repo.setArchived(it.id, true).isFailure }
                                 val hadSelection = selected.isNotEmpty()
-                                selected.clear()
+                                clearSelection()
                                 // Archiving removes the rows from the timeline, so the
                                 // grid must reload to drop them.
                                 if (hadSelection) {
@@ -468,13 +551,13 @@ fun AlbumScreen(
                                     repo.download(file.id)
                                 }
                             }
-                            selected.clear()
+                            clearSelection()
                         }
                         BarAction(Icons.Default.Delete, LocalStrings.current.actionDelete, tint = MaterialTheme.colorScheme.error) {
                             scope.launch {
                                 val failed = selected.values.count { repo.deleteFile(it.id).isFailure }
                                 val hadSelection = selected.isNotEmpty()
-                                selected.clear()
+                                clearSelection()
                                 if (hadSelection) {
                                     generation++
                                     loading = false
@@ -489,6 +572,7 @@ fun AlbumScreen(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }
@@ -545,7 +629,7 @@ fun AlbumScreen(
                 },
                 navigationIcon = {
                     if (selectionMode) {
-                        IconButton(onClick = { selected.clear() }) {
+                        IconButton(onClick = { clearSelection() }) {
                             Icon(Icons.Default.Close, contentDescription = LocalStrings.current.actionCancel)
                         }
                     } else if (onBack != null) {
@@ -559,46 +643,12 @@ fun AlbumScreen(
                         // Google-Photos "select all": grab every loaded photo;
                         // tapping again clears the whole selection.
                         IconButton(onClick = {
-                            if (selected.size >= loadedFiles.size) selected.clear()
+                            if (selected.size >= loadedFiles.size) clearSelection()
                             else loadedFiles.forEach { selected[it.id] = it }
                         }) {
                             Icon(
                                 Icons.Default.SelectAll,
                                 contentDescription = LocalStrings.current.selectAll,
-                            )
-                        }
-                    } else if (timelineMode) {
-                        // Favorites filter: show only starred photos of the
-                        // current scope; tapping again returns to the timeline.
-                        IconButton(onClick = {
-                            favoriteOnly = !favoriteOnly
-                            generation++
-                            loading = false
-                            loaded = emptyList(); cursor = null; exhausted = false; error = null
-                            loadMore()
-                        }) {
-                            Icon(
-                                if (favoriteOnly) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                contentDescription = if (favoriteOnly) LocalStrings.current.actionUnfavorite else LocalStrings.current.actionFavorite,
-                                tint = if (favoriteOnly) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
-                        // Cycle waterfall -> uniform -> by date; persisted.
-                        IconButton(onClick = {
-                            viewMode = (viewMode + 1) % 3
-                            prefs.albumViewMode = viewMode
-                        }) {
-                            Icon(
-                                when (viewMode) {
-                                    1 -> Icons.Default.GridOn
-                                    2 -> Icons.Default.CalendarViewDay
-                                    else -> Icons.Default.ViewAgenda
-                                },
-                                contentDescription = when (viewMode) {
-                                    1 -> LocalStrings.current.viewUniform
-                                    2 -> LocalStrings.current.viewDated
-                                    else -> LocalStrings.current.viewWaterfall
-                                },
                             )
                         }
                     }
@@ -684,7 +734,7 @@ fun AlbumScreen(
                 }
             }
             // Dated layout: day sections of uniform squares.
-            timelineMode && viewMode == 2 -> LazyColumn(
+            gridVisible && viewMode == 2 -> LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(pad)
@@ -692,9 +742,11 @@ fun AlbumScreen(
                         onPinchStart = { zoomAccum = 1f },
                         onScale = { onPinch(it) },
                     ),
-                contentPadding = PaddingValues(bottom = BottomBarClearance),
+                contentPadding = PaddingValues(bottom = barClearance),
             ) {
-                item(key = "back") { BackToCollectionsChip { timelineMode = false } }
+                if (timelineMode) {
+                    item(key = "back") { BackToCollectionsChip { timelineMode = false } }
+                }
                 sections.forEach { section ->
                     stickyHeader(key = "d_${section.day}") {
                         Text(
@@ -749,8 +801,8 @@ fun AlbumScreen(
                 }
             }
             // Uniform grid: fixed square cells.
-            timelineMode && viewMode == 1 -> Column(Modifier.fillMaxSize().padding(pad)) {
-                BackToCollectionsChip { timelineMode = false }
+            gridVisible && viewMode == 1 -> Column(Modifier.fillMaxSize().padding(pad)) {
+                if (timelineMode) BackToCollectionsChip { timelineMode = false }
                 if (loading) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
@@ -769,7 +821,7 @@ fun AlbumScreen(
                         ),
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
-                    contentPadding = PaddingValues(bottom = BottomBarClearance),
+                    contentPadding = PaddingValues(bottom = barClearance),
                 ) {
                     items(flat.size, key = { flat[it].id }) { i ->
                         AlbumTile(
@@ -816,8 +868,17 @@ fun AlbumScreen(
                         ),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalItemSpacing = 4.dp,
-                    contentPadding = PaddingValues(bottom = BottomBarClearance),
+                    contentPadding = PaddingValues(bottom = barClearance),
                 ) {
+                    // Way back to the collections landing. The other two layouts
+                    // carry it too, and while a collection is open the tab bar
+                    // is off screen - without this row the only exit is system
+                    // back. Counted as waterfallLeadRows in the label mapping.
+                    if (timelineMode) {
+                        item(key = "back", span = StaggeredGridItemSpan.FullLine) {
+                            BackToCollectionsChip { timelineMode = false }
+                        }
+                    }
                     sections.forEach { section ->
                         item(key = "h_${section.day}", span = StaggeredGridItemSpan.FullLine) {
                             Column {
@@ -873,16 +934,20 @@ fun AlbumScreen(
                 // twice; anywhere further down, the overlay is what keeps the day
                 // visible. Each section occupies one full-line header followed by
                 // its tiles, which is what these two index tables describe.
-                val sectionOfItem = remember(sections) {
-                    buildList { sections.forEachIndexed { si, s -> repeat(s.files.size + 1) { add(si) } } }
+                val sectionOfItem = remember(sections, waterfallLeadRows) {
+                    buildList {
+                        // -1: the lead rows belong to no day section.
+                        repeat(waterfallLeadRows) { add(-1) }
+                        sections.forEachIndexed { si, s -> repeat(s.files.size + 1) { add(si) } }
+                    }
                 }
-                val headerItemOfSection = remember(sections) {
-                    var i = 0
+                val headerItemOfSection = remember(sections, waterfallLeadRows) {
+                    var i = waterfallLeadRows
                     sections.map { s -> i.also { i += s.files.size + 1 } }
                 }
                 val firstItem = staggeredState.firstVisibleItemIndex
                 val sectionOfFirst = sectionOfItem.getOrNull(firstItem)
-                if (sectionOfFirst != null && headerItemOfSection[sectionOfFirst] != firstItem) {
+                if (sectionOfFirst != null && sectionOfFirst >= 0 && headerItemOfSection[sectionOfFirst] != firstItem) {
                     Text(
                         dayLabel(sections[sectionOfFirst].day),
                         style = MaterialTheme.typography.titleSmall,

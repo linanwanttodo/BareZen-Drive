@@ -233,6 +233,10 @@ fun App() {
         }
         var tab by remember { mutableStateOf(MainTab.HOME) }
         var filesPath by remember { mutableStateOf(emptyList<FolderDto>()) }
+        // True while the album tab is inside one collection (not the collections
+        // landing). Ownership is reported by the screen; the shell only reads it
+        // to hand the bottom strip over to the album's own action bar.
+        var albumInCollection by remember { mutableStateOf(false) }
         val current = stack.last()
         val push: (Screen) -> Unit = { stack = stack + it }
         val pop: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
@@ -307,8 +311,8 @@ fun App() {
                     onSelect = { tab = it },
                     wallpaperBitmap = wallpaperBitmap.takeIf { wallpaperEnabled },
                     glassBarEnabled = glassBlur,
+                    showTabBar = !(tab == MainTab.ALBUM && albumInCollection),
                 ) {
-                    val wallpaperBehind = wallpaperEnabled && wallpaperBitmap != null
                     when (tab) {
                         MainTab.HOME -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else HomeScreen(
                             repo = files,
@@ -327,6 +331,7 @@ fun App() {
                             onBack = null,
                             onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
                             onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)) },
+                            onCollectionModeChange = { albumInCollection = it },
                             avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
                         )
                         MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(
@@ -334,7 +339,6 @@ fun App() {
                             repo = files,
                             uploader = uploader,
                             thumbs = thumbs,
-                            wallpaperBehind = wallpaperBehind,
                             onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.FILE)) },
                             onOpenFolder = { filesPath = filesPath + it },
                             onJumpTo = { idx -> filesPath = filesPath.take(idx + 1) },

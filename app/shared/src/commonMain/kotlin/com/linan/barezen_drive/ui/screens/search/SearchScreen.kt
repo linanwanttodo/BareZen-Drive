@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
@@ -88,6 +90,10 @@ fun SearchScreen(
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         topBar = {
             TopAppBar(
+                // Transparent so the wallpaper layer MainShell paints behind
+                // this tab shows through; the default container color is
+                // opaque and renders as a hard band across the top.
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 title = { Text(LocalStrings.current.tabSearch) },
                 actions = {
                     AvatarButton(files, currentUserId, onOpenSettings = onOpenSettings)

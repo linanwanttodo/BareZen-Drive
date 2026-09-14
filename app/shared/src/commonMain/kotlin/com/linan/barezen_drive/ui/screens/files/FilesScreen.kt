@@ -19,12 +19,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
@@ -82,6 +82,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -159,7 +160,6 @@ fun FilesScreen(
     repo: FilesRepository,
     uploader: UploadManager,
     thumbs: ThumbnailLoader,
-    wallpaperBehind: Boolean = false,
     onOpenFolder: (FolderDto) -> Unit,
     onOpenUploads: () -> Unit = {},
     avatar: @Composable () -> Unit = {},
@@ -407,11 +407,10 @@ fun FilesScreen(
         topBar = {
             Column {
                 TopAppBar(
-                    colors = if (wallpaperBehind) {
-                        TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-                    } else {
-                        TopAppBarDefaults.topAppBarColors()
-                    },
+                    // Transparent so the wallpaper layer MainShell paints
+                    // behind this tab shows through; the default container
+                    // color is opaque and renders as a hard band up top.
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                     title = { Text(LocalStrings.current.tabFiles) },
                     actions = {
                         // Upload destination, new folder and transfers live in
@@ -891,8 +890,8 @@ private fun FilesGrid(
     selection: Set<String>? = null,
     onToggleSelect: (FileDto) -> Unit = {},
 ) {
-    // Grid tiles for files; folders keep a full-width leading section so the
-    // hierarchy stays scannable before the file cards.
+    // Folders and files share the same cells: a folder is a sibling of the
+    // files beside it, so switching the view re-flows the whole listing.
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 104.dp),
         modifier = Modifier.fillMaxSize(),
@@ -901,8 +900,8 @@ private fun FilesGrid(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(ui.folders, key = { "f_${it.id}" }, span = { GridItemSpan(maxLineSpan) }) { folder ->
-            FolderGridRow(
+        items(ui.folders, key = { "f_${it.id}" }) { folder ->
+            FolderTile(
                 folder = folder,
                 onOpen = { onOpenFolder(folder) },
                 onRename = { onRenameFolder(folder) },
@@ -934,8 +933,50 @@ private fun FilesGrid(
     }
 }
 
+/**
+ * Overflow trigger for a grid tile. It hangs off the tile's top-right corner
+ * instead of owning a row of its own: as a trailing Column child it made every
+ * tile taller than its neighbours and read as an extra caption line, which is
+ * what "the three dots took a row" meant.
+ *
+ * Flat and translucent - no elevation, no shadow - and translucent so it stays
+ * legible on top of a photo thumbnail in either theme.
+ */
 @Composable
-private fun FolderGridRow(
+private fun TileOverflow(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    menu: @Composable () -> Unit,
+) {
+    Box(modifier) {
+        Box(
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                .clickable(onClick = onToggle),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.MoreVert,
+                contentDescription = LocalStrings.current.moreActions,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        menu()
+    }
+}
+
+/**
+ * Folder cell for the grid view. Deliberately the same shape, padding and
+ * caption layout as [FileTile]: a folder is a sibling of the files next to it,
+ * not a full-width banner above them. Spanning the whole row was why flipping
+ * the view button only restyled folders instead of re-flowing them.
+ */
+@Composable
+private fun FolderTile(
     folder: FolderDto,
     onOpen: () -> Unit,
     onRename: () -> Unit,
@@ -944,62 +985,78 @@ private fun FolderGridRow(
     menuFor: Any?,
     setMenuFor: (Any?) -> Unit,
 ) {
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        tonalElevation = 1.dp,
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
+            .background(
+                MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
+                MaterialTheme.shapes.medium,
+            )
             .clickable(onClick = onOpen),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                Icons.Default.Folder,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.width(8.dp))
+        Column(Modifier.padding(8.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(84.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(40.dp),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
             Text(
                 folder.name,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.weight(1f))
-            Box {
-                IconButton(onClick = { setMenuFor(if (menuFor === folder) null else folder) }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = LocalStrings.current.moreActions)
-                }
-                DropdownMenu(expanded = menuFor === folder, onDismissRequest = { setMenuFor(null) }) {
-                    DropdownMenuItem(
-                        text = { Text(LocalStrings.current.actionRename) },
-                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onRename()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(LocalStrings.current.actionShare) },
-                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onShare()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(LocalStrings.current.actionDelete) },
-                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onDelete()
-                        },
-                    )
-                }
+            // Mirrors the file tile's second caption line so both cell types
+            // come out the same height; a folder has no byte size of its own.
+            Text(
+                formatDateTime(folder.updatedAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TileOverflow(
+            expanded = menuFor === folder,
+            onToggle = { setMenuFor(if (menuFor === folder) null else folder) },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(2.dp),
+        ) {
+            DropdownMenu(expanded = menuFor === folder, onDismissRequest = { setMenuFor(null) }) {
+                DropdownMenuItem(
+                    text = { Text(LocalStrings.current.actionRename) },
+                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                    onClick = {
+                        setMenuFor(null)
+                        onRename()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(LocalStrings.current.actionShare) },
+                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                    onClick = {
+                        setMenuFor(null)
+                        onShare()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(LocalStrings.current.actionDelete) },
+                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                    onClick = {
+                        setMenuFor(null)
+                        onDelete()
+                    },
+                )
             }
         }
     }
@@ -1024,132 +1081,149 @@ private fun FileTile(
     onToggleSelect: () -> Unit = {},
 ) {
     val isSelected = selection?.contains(file.id) == true
-    Column(
+    // Outer Box hosts the overflow trigger so it can sit on the tile's
+    // top-right corner. In the caption row it would have squeezed a
+    // three-column tile's name down to a couple of characters.
+    Box(
         modifier = Modifier
-            .background(MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.shapes.medium)
+            // Panel alpha, not an opaque surfaceContainer: a wall of solid
+            // cards covered the wallpaper and clashed with the folder cells,
+            // which already follow LocalPanelAlpha.
+            .background(
+                MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
+                MaterialTheme.shapes.medium,
+            )
             .combinedClickable(
                 onClick = { if (selection != null) onToggleSelect() else onOpen() },
                 onLongClick = onToggleSelect,
-            )
-            .padding(8.dp),
+            ),
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(84.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            FileThumbnail(file, thumbs, edge = 84.dp)
-            if (selection != null) {
-                Icon(
-                    if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                    contentDescription = null,
-                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.align(Alignment.TopEnd),
-                )
+        Column(Modifier.padding(8.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(84.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                FileThumbnail(file, thumbs, edge = 84.dp)
+                if (selection != null) {
+                    Icon(
+                        if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        contentDescription = null,
+                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    )
+                }
             }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                file.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                "${formatFileSize(file.size)} · ${formatDateTime(file.updatedAt)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            file.name,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            "${formatFileSize(file.size)} · ${formatDateTime(file.updatedAt)}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Box {
-            IconButton(onClick = { setMenuFor(if (menuFor === file) null else file) }) {
-                Icon(Icons.Default.MoreVert, contentDescription = LocalStrings.current.moreActions)
-            }
-            DropdownMenu(expanded = menuFor === file, onDismissRequest = { setMenuFor(null) }) {
-                DropdownMenuItem(
-                    text = { Text(LocalStrings.current.actionRename) },
-                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onRename()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text(LocalStrings.current.actionMove) },
-                    leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onMove()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text(LocalStrings.current.actionDownload) },
-                    leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onDownload()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text(LocalStrings.current.actionShare) },
-                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onShare()
-                    },
-                )
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            if (file.isFavorite) LocalStrings.current.actionUnfavorite
-                            else LocalStrings.current.actionFavorite,
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            if (file.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = null,
-                        )
-                    },
-                    onClick = {
-                        setMenuFor(null)
-                        onFavorite()
-                    },
-                )
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            if (file.archivedAt != null) LocalStrings.current.actionUnarchive
-                            else LocalStrings.current.actionArchive,
-                        )
-                    },
-                    leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onArchive()
-                    },
-                )
-                // Only offered for files: a folder has no content of its own to
-                // revision, and the server has no version endpoints for one.
-                DropdownMenuItem(
-                    text = { Text(LocalStrings.current.versionHistory) },
-                    leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onVersions()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text(LocalStrings.current.actionDelete) },
-                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onDelete()
-                    },
-                )
+        // Selection mode owns the corner, browse mode shows the overflow there;
+        // they are never both on screen.
+        if (selection == null) {
+            TileOverflow(
+                expanded = menuFor === file,
+                onToggle = { setMenuFor(if (menuFor === file) null else file) },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(2.dp),
+            ) {
+                DropdownMenu(expanded = menuFor === file, onDismissRequest = { setMenuFor(null) }) {
+                    DropdownMenuItem(
+                        text = { Text(LocalStrings.current.actionRename) },
+                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                        onClick = {
+                            setMenuFor(null)
+                            onRename()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(LocalStrings.current.actionMove) },
+                        leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
+                        onClick = {
+                            setMenuFor(null)
+                            onMove()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(LocalStrings.current.actionDownload) },
+                        leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
+                        onClick = {
+                            setMenuFor(null)
+                            onDownload()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(LocalStrings.current.actionShare) },
+                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                        onClick = {
+                            setMenuFor(null)
+                            onShare()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (file.isFavorite) LocalStrings.current.actionUnfavorite
+                                else LocalStrings.current.actionFavorite,
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                if (file.isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            setMenuFor(null)
+                            onFavorite()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                if (file.archivedAt != null) LocalStrings.current.actionUnarchive
+                                else LocalStrings.current.actionArchive,
+                            )
+                        },
+                        leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null) },
+                        onClick = {
+                            setMenuFor(null)
+                            onArchive()
+                        },
+                    )
+                    // Only offered for files: a folder has no content of its own to
+                    // revision, and the server has no version endpoints for one.
+                    DropdownMenuItem(
+                        text = { Text(LocalStrings.current.versionHistory) },
+                        leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
+                        onClick = {
+                            setMenuFor(null)
+                            onVersions()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(LocalStrings.current.actionDelete) },
+                        leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                        onClick = {
+                            setMenuFor(null)
+                            onDelete()
+                        },
+                    )
+                }
             }
         }
     }
