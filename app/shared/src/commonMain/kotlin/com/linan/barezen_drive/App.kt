@@ -306,6 +306,20 @@ fun App() {
                 onBack = if (stack.size > 1) ({ pop() }) else null,
             )
             is Screen.Main -> {
+                // One shared avatar for all four tab top bars. Building it
+                // per screen drifted: search constructed its own with no
+                // username, so it fell back to the blank-account colour and the
+                // "." letter, and files was handed no avatar at all.
+                val tabAvatar: @Composable () -> Unit = {
+                    if (signedIn) {
+                        AvatarButton(
+                            files,
+                            currentUserId,
+                            username,
+                            onOpenSettings = { push(Screen.Settings) },
+                        )
+                    }
+                }
                 MainShell(
                     selected = tab,
                     onSelect = { tab = it },
@@ -322,7 +336,7 @@ fun App() {
                             saver = recentSaver,
                             themeToggle = themeToggle,
                             onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.FILE)) },
-                            avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
+                            avatar = tabAvatar,
                         )
                         MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else AlbumScreen(
                             repo = files,
@@ -332,7 +346,7 @@ fun App() {
                             onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
                             onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)) },
                             onCollectionModeChange = { albumInCollection = it },
-                            avatar = { if (signedIn) AvatarButton(files, currentUserId, username, onOpenSettings = { push(Screen.Settings) }) },
+                            avatar = tabAvatar,
                         )
                         MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(
                             path = filesPath,
@@ -344,12 +358,12 @@ fun App() {
                             onJumpTo = { idx -> filesPath = filesPath.take(idx + 1) },
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
                             themeToggle = themeToggle,
+                            avatar = tabAvatar,
                         )
                         MainTab.SEARCH -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else SearchScreen(
                             files = files,
-                            currentUserId = currentUserId,
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
-                            onOpenSettings = { push(Screen.Settings) },
+                            avatar = tabAvatar,
                         )
                     }
                 }

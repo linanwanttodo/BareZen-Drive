@@ -39,7 +39,6 @@ import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
-import com.linan.barezen_drive.ui.AvatarButton
 import com.linan.barezen_drive.ui.media.formatDateTime
 import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
@@ -55,9 +54,15 @@ import kotlinx.coroutines.delay
 @Composable
 fun SearchScreen(
     files: FilesRepository,
-    currentUserId: String?,
     onPreview: (List<FileDto>, Int) -> Unit,
-    onOpenSettings: () -> Unit,
+    /**
+     * Shared from the shell so all four tab top bars render one and the same
+     * avatar. Building it in here only had `currentUserId` to work with, so no
+     * username reached it: the circle fell back to the blank-account colour
+     * (0xFF607D8B) and the "." letter instead of the account initial the other
+     * three tabs show.
+     */
+    avatar: @Composable () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<FileDto>?>(null) }
@@ -95,10 +100,7 @@ fun SearchScreen(
                 // opaque and renders as a hard band across the top.
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
                 title = { Text(LocalStrings.current.tabSearch) },
-                actions = {
-                    AvatarButton(files, currentUserId, onOpenSettings = onOpenSettings)
-                    Spacer(Modifier.width(8.dp))
-                },
+                actions = { avatar() },
             )
         },
     ) { pad ->
@@ -108,6 +110,11 @@ fun SearchScreen(
                 onValueChange = { query = it },
                 singleLine = true,
                 placeholder = { Text(LocalStrings.current.searchHint) },
+                // Capsule instead of the default outlined rectangle (4 dp): a
+                // search field reads as a rounded pill in the mainstream
+                // galleries and file managers; extraLarge is 28 dp, exactly
+                // half of this field's 56 dp height.
+                shape = MaterialTheme.shapes.extraLarge,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
