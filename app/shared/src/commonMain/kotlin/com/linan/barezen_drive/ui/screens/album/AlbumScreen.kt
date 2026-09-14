@@ -258,6 +258,10 @@ fun AlbumScreen(
     }
     var collections by remember { mutableStateOf<List<CollectionTile>>(emptyList()) }
     var collectionsLoading by remember { mutableStateOf(false) }
+    // Bumped when a file lands on the server: the landing page's covers are
+    // "the newest photo of each folder" and go stale the moment anything is
+    // uploaded, even when the folder list itself is unchanged.
+    var collectionsTick by remember { mutableStateOf(0) }
     val allPhotosLabel = LocalStrings.current.allPhotos
     val allDevicesLabel = LocalStrings.current.allDevices
     // The photo grid is on screen when a collection is open - and also for the
@@ -289,7 +293,7 @@ fun AlbumScreen(
     }
 
     // Covers for the collections landing: the newest photo of each folder.
-    LaunchedEffect(albumFolderId, categories) {
+    LaunchedEffect(albumFolderId, categories, collectionsTick) {
         val scope = albumFolderId ?: return@LaunchedEffect
         if (timelineMode || scopeName == allDevicesLabel) return@LaunchedEffect
         collectionsLoading = true
@@ -399,8 +403,22 @@ fun AlbumScreen(
     // collapses into one re-read instead of 200.
     val revision by LibraryRevision.value.collectAsState()
     LaunchedEffect(revision) {
-        if (revision == 0L || albumFolderId == null) return@LaunchedEffect
+        val scopeId = albumFolderId ?: return@LaunchedEffect
+        if (revision == 0L) return@LaunchedEffect
         delay(400)
+        // The category folders are stale too: a backup creates the folder for a
+        // phone album this device has never uploaded from, and it has to show up
+        // in the filter list. getOrNull() keeps a failed request from wiping the
+        // list already on screen, and the all-devices scope has no categories by
+        // design (see switchScope).
+        if (scopeName != allDevicesLabel) {
+            repo.contents(scopeId).getOrNull()?.let { contents ->
+                categories = contents.folders.map { f -> f.name to f.id }
+            }
+        }
+        // Covers ("newest photo of each folder") moved with the upload even when
+        // the folder list did not, so the landing has to be rebuilt either way.
+        collectionsTick++
         generation++
         loading = false
         loaded = emptyList()
