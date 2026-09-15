@@ -85,7 +85,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      # Google dropped the legacy `tools` sdkmanager package, so the v3/v4
+      # default (`tools platform-tools`) fails with exit code 1 (android-actions
+      # setup-android issue 537). The action installs cmdline-tools on its own
+      # and AGP pulls the platform and build-tools; keep only platform-tools.
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
       - uses: gradle/actions/setup-gradle@v4
       - name: Server tests
         run: ./gradlew :server:test --console=plain
@@ -143,7 +149,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
       - uses: gradle/actions/setup-gradle@v4
       - name: Decode the release keystore when configured
         id: keystore
