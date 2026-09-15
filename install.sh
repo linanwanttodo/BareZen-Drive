@@ -60,9 +60,13 @@ t() {
       admin_user)    echo "管理员用户名 (3-32 位字母/数字/下划线): " ;;
       admin_pass)    echo "管理员密码 (至少 8 位): " ;;
       port)          echo "服务端口:" ;;
+      port_bad)      echo "  端口必须是数字，请重试。" ;;
+      port_range)    echo "  端口需在 1-65535 之间，请重试。" ;;
       domain)        echo "绑定域名（留空则使用 http://服务器IP:端口）: " ;;
       cert)          echo "启用 HTTPS（Caddy 自动申请并续签 Let's Encrypt 证书）？[Y/n]: " ;;
+      cert_skip)     echo "  未填域名，证书无法签发给纯 IP，将使用 HTTP。" ;;
       web_remote)    echo "Web 静态端不创建账号；打开页面后在登录框填写你的服务器地址。" ;;
+      precheck_miss) echo "缺少必需命令: " ;;
       building)      echo "正在下载并部署…" ;;
       done_title)    echo "部署完成 - Successful!" ;;
       done_url)      echo "访问地址: " ;;
@@ -70,8 +74,10 @@ t() {
       done_data)     echo "数据目录: " ;;
       done_upgrade)  echo "升级: cd %DIR% && %COMPOSE% pull && %COMPOSE% up -d" ;;
       done_logs)     echo "日志: cd %DIR% && %COMPOSE% logs -f server" ;;
-      done_reg)      echo "提示: 首个注册的账号即实例所有者；可在 设置→服务器 关闭开放注册。" ;;
+      done_reg)      echo "提示: 管理员账号已由本脚本创建（仅在新实例上生效）。" ;;
+      done_reg_open) echo "提示: 当前开放注册，任何人都能注册；可在 设置→服务器 关闭。" ;;
       installing)    echo "正在下载 Web 静态包并启动…" ;;
+      web_tag)       echo "Web 静态包版本:" ;;
       failed)        echo "服务未能在 120 秒内就绪，请查看上方日志。" ;;
     esac
   else
@@ -86,9 +92,13 @@ t() {
       admin_user)    echo "Admin username (3-32 letters/digits/underscore): " ;;
       admin_pass)    echo "Admin password (at least 8 characters): " ;;
       port)          echo "Service port:" ;;
+      port_bad)      echo "  The port must be numeric, try again." ;;
+      port_range)    echo "  The port must be between 1 and 65535, try again." ;;
       domain)        echo "Domain to bind (blank = http://<host-ip>:<port>): " ;;
       cert)          echo "Enable HTTPS (Caddy issues and renews Let's Encrypt certificates automatically)? [Y/n]: " ;;
+      cert_skip)     echo "  No domain given: a certificate cannot be issued for a bare IP, using HTTP." ;;
       web_remote)    echo "The static web hosts no accounts; enter your server address on the login page." ;;
+      precheck_miss) echo "Missing required command: " ;;
       building)      echo "Downloading and deploying…" ;;
       done_title)    echo "Deployment finished - Successful!" ;;
       done_url)      echo "Open: " ;;
@@ -96,12 +106,25 @@ t() {
       done_data)     echo "Data directory: " ;;
       done_upgrade)  echo "Upgrade: cd %DIR% && %COMPOSE% pull && %COMPOSE% up -d" ;;
       done_logs)     echo "Logs: cd %DIR% && %COMPOSE% logs -f server" ;;
-      done_reg)      echo "Note: the first registered account owns the instance; close open registration in Settings -> Server." ;;
+      done_reg)      echo "Note: the admin account was created by this script (new instances only)." ;;
+      done_reg_open) echo "Note: registration is open, anyone can sign up; disable it in Settings -> Server." ;;
       installing)    echo "Fetching the web bundle and starting…" ;;
+      web_tag)       echo "Bundled web version:" ;;
       failed)        echo "the service did not become ready within 120s - see the logs above." ;;
     esac
   fi
 }
+
+# Commands used further down. curl, sed, awk and unzip are called
+# unconditionally, so a minimalist host (Alpine, slim images) would otherwise
+# fail halfway through the deploy.
+MISSING=""
+for c in curl sed awk unzip; do
+  command -v "$c" >/dev/null 2>&1 || MISSING="$MISSING $c"
+done
+if [ -n "$MISSING" ]; then
+  err "$(t precheck_miss)${MISSING}"
+fi
 
 echo
 echo "=============================================="
@@ -143,12 +166,29 @@ if [ "$INSTALL_TYPE" != "web" ]; then
     [ "$L" = zh ] && echo "密码至少 8 位，请重试。" || echo "At least 8 characters, try again."
   done
   echo
+else
+  # The static bundle authenticates against a remote server, so there is no
+  # local account to seed - say so instead of leaving the user wondering.
+  echo "$(t web_remote)"
+  echo
 fi
 
 # ---- step 4: port ----
-read -r -p "$(t port) [8080]: " input_port
-PORT="${input_port:-8080}"
-case "$PORT" in ''|*[!0-9]*) PORT=8080 ;; esac
+while true; do
+  read -r -p "$(t port) [8080]: " input_port
+  PORT="${input_port:-8080}"
+  # Trim surrounding blanks so " 8080 " is accepted rather than silently reset.
+  PORT="$(printf '%s' "$PORT" | tr -d '[:space:]')"
+  case "$PORT" in
+    ''|*[!0-9]*) echo "$(t port_bad)"; continue ;;
+  esac
+  # Leading zeros would be read as octal by arithmetic; normalise them away.
+  PORT="$((10#$PORT))"
+  if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+    echo "$(t port_range)"; continue
+  fi
+  break
+done
 echo
 
 # ---- step 5: domain ----
@@ -157,18 +197,35 @@ DOMAIN="${DOMAIN%%/}"
 echo
 
 # ---- step 6: HTTPS (needs a domain; Caddy issues + renews automatically) ----
+# Certificate issuance requires a real domain: Caddy cannot get a Let's Encrypt
+# certificate for a bare IP, so stay on plain HTTP when no domain was given.
 USE_HTTPS="no"
-if [ -n "$DOMAIN" ] && [ "$INSTALL_TYPE" != "web" -o "$INSTALL_TYPE" = "web" ]; then
+if [ -n "$DOMAIN" ]; then
   read -r -p "$(t cert)" cert_choice
   case "${cert_choice:-Y}" in n|N|no|NO) USE_HTTPS="no" ;; *) USE_HTTPS="yes" ;; esac
+else
+  echo "$(t cert_skip)"
 fi
+
+# Reachable-from-the-outside address, and the loopback URL used for the health
+# probe. With HTTPS the front door is Caddy on port 80/443, not ${PORT}.
+HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -n "$HOST_IP" ] || HOST_IP="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1); exit}')"
+[ -n "$HOST_IP" ] || HOST_IP="localhost"
+
 if [ -n "$DOMAIN" ] && [ "$USE_HTTPS" = "yes" ]; then
   PUBLIC_URL="https://${DOMAIN}"
+  PROBE_URL="https://127.0.0.1"
+  PROBE_INSECURE="yes"
+elif [ -n "$DOMAIN" ]; then
+  # Plain HTTP on a domain: server mode still listens on ${PORT}.
+  PUBLIC_URL="http://${DOMAIN}:${PORT}"
+  PROBE_URL="http://127.0.0.1:${PORT}"
+  PROBE_INSECURE="no"
 else
-  PUBLIC_URL="${DOMAIN:+http://${DOMAIN}}";
-  [ -z "$DOMAIN" ] && PUBLIC_URL="http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo localhost):${PORT}"
-  [ "$INSTALL_TYPE" = "web" ] && [ -n "$DOMAIN" ] && PUBLIC_URL="http://${DOMAIN}:${PORT}"
-  [ "$INSTALL_TYPE" = "web" ] && [ -z "$DOMAIN" ] && PUBLIC_URL="http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo localhost):${PORT}"
+  PUBLIC_URL="http://${HOST_IP}:${PORT}"
+  PROBE_URL="http://127.0.0.1:${PORT}"
+  PROBE_INSECURE="no"
 fi
 echo
 
@@ -188,15 +245,18 @@ if [ -f .env ] && [ "$INSTALL_TYPE" != "web" ]; then
 else
   log "Writing configuration to $INSTALL_DIR"
   if [ "$INSTALL_TYPE" = "web" ]; then
+    # The static bundle is served by Caddy; INSTALL_TYPE/WEB_PORT are recorded
+    # for the operator's reference only, nothing in the compose file reads them.
     cat > .env <<EOF
 # Generated by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)
 INSTALL_TYPE=web
 WEB_PORT=${PORT}
 APP_DOMAIN=${DOMAIN}
+USE_HTTPS=${USE_HTTPS}
 EOF
   else
     DB_PASS="$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)"
-    JWT="$(head -c 48 /dev/urandom | base64)"
+    JWT="$(head -c 48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')"
     cat > .env <<EOF
 # Generated by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)
 INSTALL_TYPE=${INSTALL_TYPE}
@@ -219,10 +279,18 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$INSTALL_TYPE" = "web" ]; then
   log "$(t installing)"
-  # Resolve the newest release tag, then pull its web bundle.
-  TAG="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${GITHUB_REPO}/releases/latest" | sed 's#.*/tag/##')"
+  # Resolve the tag to deploy: an explicit --version wins, otherwise the newest
+  # release is looked up so the bundle always matches the running server.
+  if [ "$IMAGE_TAG" != "latest" ]; then
+    TAG="$IMAGE_TAG"
+  else
+    TAG="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${GITHUB_REPO}/releases/latest" | sed 's#.*/tag/##')"
+  fi
+  case "$TAG" in v*) ;; *) TAG="v${TAG}" ;; esac
   V="${TAG#v}"
-  curl -fsSL -o web.zip "https://github.com/${GITHUB_REPO}/releases/download/${TAG}/BareZen-Drive-${V}-web.zip"
+  echo "  $(t web_tag) ${TAG}"
+  curl -fsSL -o web.zip "https://github.com/${GITHUB_REPO}/releases/download/${TAG}/BareZen-Drive-${V}-web.zip" \
+    || err "could not download BareZen-Drive-${V}-web.zip for ${TAG} - check the tag exists and is a release."
   rm -rf web && mkdir -p web && unzip -oq web.zip -d web && rm -f web.zip
 
   # Caddy serves the static bundle; with a domain it terminates HTTPS and
@@ -271,7 +339,7 @@ services:
 EOF
   fi
   $COMPOSE -f docker-compose.web.yml up -d
-  READY_URL="http://127.0.0.1:${PORT}"
+  READY_URL="$PROBE_URL"
 else
   log "$(t building)"
   curl -fsSL -o docker-compose.yml "${REPO_RAW}/docker-compose.yml"
@@ -309,18 +377,20 @@ volumes:
 EOF
     $COMPOSE pull --quiet server || true
     $COMPOSE -f docker-compose.yml -f docker-compose.caddy.yml up -d
-    READY_URL="http://127.0.0.1:${PORT}"
+    READY_URL="$PROBE_URL"
   else
     $COMPOSE pull --quiet || true
     $COMPOSE up -d
-    READY_URL="http://127.0.0.1:${PORT}"
+    READY_URL="$PROBE_URL"
   fi
 fi
 
 log "Waiting for the service to become ready"
 READY=0
 for i in $(seq 1 60); do
-  if curl -fsS "${READY_URL}/health" >/dev/null 2>&1 || curl -fsS "${READY_URL}/" >/dev/null 2>&1; then
+  CURL_TLS=""
+  [ "$PROBE_INSECURE" = "yes" ] && CURL_TLS="-k"
+  if curl -fsS $CURL_TLS "${READY_URL}/health" >/dev/null 2>&1 || curl -fsS $CURL_TLS "${READY_URL}/" >/dev/null 2>&1; then
     READY=1; break
   fi
   sleep 2
@@ -332,10 +402,15 @@ echo "=============================================="
 echo "  $(t done_title)"
 echo "=============================================="
 echo "  $(t done_url) ${PUBLIC_URL}"
-[ "$INSTALL_TYPE" != "web" ] && echo "  $(t done_admin) ${ADMIN_USER}"
+if [ "$INSTALL_TYPE" != "web" ]; then
+  echo "  $(t done_admin) ${ADMIN_USER}"
+  echo "  $(t done_reg)"
+  # Registration stays open by default; the seeded owner is already in place, so
+  # spell out what open registration now means.
+  echo "  $(t done_reg_open)"
+fi
 echo "  $(t done_data) $INSTALL_DIR"
 echo
-[ "$INSTALL_TYPE" != "web" ] && echo "  $(t done_reg)"
 UPGRADE_TIP="$(t done_upgrade)"; echo "  ${UPGRADE_TIP//%DIR%/$INSTALL_DIR}"
 LOGS_TIP="$(t done_logs)";     echo "  ${LOGS_TIP//%DIR%/$INSTALL_DIR}"
 echo
