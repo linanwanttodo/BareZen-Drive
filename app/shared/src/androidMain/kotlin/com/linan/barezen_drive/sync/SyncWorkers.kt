@@ -46,10 +46,10 @@ internal object BackupNotification {
             .setSilent(true)
             .setProgress(100, if (total > 0) (done * 100 / total) else 0, total == 0)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-        // The same app-icon silhouette every other notification draws. This
-        // used to point at a VectorDrawable resource, which the shade cannot
-        // always inflate - it then falls back to the platform's own drawing,
-        // and that is the stock figure users kept seeing mid-backup.
+        // The same app icon every other notification draws. This used to
+        // point at a VectorDrawable resource, which the shade cannot always
+        // inflate - it then falls back to the platform's own drawing, and
+        // that is the stock figure users kept seeing mid-backup.
         com.linan.barezen_drive.platform.TransferNotifier.smallIcon()?.let { b.setSmallIcon(it) }
         return b.build()
     }

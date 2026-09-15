@@ -21,13 +21,12 @@ actual object TransferNotifier {
     private val ids = mutableMapOf<String, Int>()
 
     /**
-     * The app's own icons, cut from the launcher artwork and injected once at
-     * startup by the app module: the small icon is that artwork's white alpha
-     * silhouette (the shade only ever draws a flat tint taken from the small
-     * icon's alpha channel, so a coloured bitmap there would read as a solid
-     * block), the large icon is the same artwork in full colour.
+     * The app's own icon, injected once at startup by the app module: per
+     * product decision both notification slots carry the launcher icon
+     * itself, scaled down - the small icon just like the full-colour large
+     * one. No silhouette, no recolouring.
      *
-     * Both are bitmaps on purpose. The shade has two ways to end up showing a
+     * It is a bitmap on purpose. The shade has two ways to end up showing a
      * stock system figure instead of the product mark, and both are closed
      * here: a VectorDrawable that the shade cannot inflate (the album backup
      * notification used to ship `R.drawable.ic_notification`, a vector, and it
