@@ -4,7 +4,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -77,7 +79,9 @@ fun AvatarButton(
     Box(
         Modifier
             .size(size + 8.dp)
-            .clip(CircleShape)
+            // No clip here: the image/letter layers carry their own circle
+            // clip, and an outer clip would cut off the corner badge that
+            // intentionally pokes out past the avatar's edge.
             .clickable(onClick = onOpenSettings),
         contentAlignment = Alignment.Center,
     ) {
@@ -105,13 +109,23 @@ fun AvatarButton(
             }
         }
         if (badge) {
+            // Corner badge half outside the avatar circle, ringed with the
+            // surface color so it stays visible on any background - the usual
+            // notification-dot look (WeChat/Telegram style).
             Box(
                 Modifier
                     .align(Alignment.TopEnd)
-                    .offset(x = 2.dp, y = (-2).dp)
-                    .size(9.dp)
-                    .background(MaterialTheme.colorScheme.error, CircleShape),
-            )
+                    .offset(x = 3.dp, y = (-3).dp)
+                    .size(11.dp)
+                    .background(MaterialTheme.colorScheme.surface, CircleShape)
+                    .padding(1.5.dp),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.error, CircleShape),
+                )
+            }
         }
     }
 }
