@@ -5,14 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.Text
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Alignment
@@ -22,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,6 +64,7 @@ import com.linan.barezen_drive.ui.theme.ThemeMode
 import com.linan.barezen_drive.ui.wallpaper.WallpaperImage
 import com.linan.barezen_drive.ui.wallpaper.loadPersistedWallpaper
 import com.linan.barezen_drive.ui.wallpaper.rememberWallpaperPicker
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DarkMode
@@ -73,7 +73,6 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import com.linan.barezen_drive.platform.isWebPlatform
-import com.linan.barezen_drive.platform.systemAccentColor
 import com.linan.barezen_drive.platform.initialShareToken
 import com.linan.barezen_drive.platform.rememberFileSaver
 import com.linan.barezen_drive.ui.screens.share.ShareScreen
@@ -86,6 +85,7 @@ import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.i18n.stringsFor
 import com.linan.barezen_drive.platform.systemLanguageTag
 import androidx.compose.ui.ExperimentalComposeUiApi
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Minimal navigation backstack (no navigation library): a list of sealed
@@ -194,16 +194,33 @@ fun App() {
         // Server-side registration switch: null until the first load answers,
         // which hides the toggle offline and on servers without the endpoint.
         var registrationOpen by remember { mutableStateOf<Boolean?>(null) }
+        // Bumped to re-probe (settings screen opened, connectivity changed).
+        var registrationProbe by remember { mutableStateOf(0) }
         val scope = rememberCoroutineScope()
         // Re-run whenever the auth token changes: before login both calls
         // fail, and the settings server card reads these - a one-shot probe
         // would leave the registration toggle hidden for the whole session.
         LaunchedEffect(TokenStorage.accessToken) {
-            registrationOpen = files.registrationStatus().getOrNull()?.open
             currentUserId = files.me().getOrNull()?.id
             // Logout / account switch: never carry the previous account's
             // thumbnails across (in-memory cache + negative entries).
             thumbs.clear()
+        }
+        // The registration probe used to be a single shot riding the token
+        // effect: one transient failure (slow handshake, connection switch)
+        // left it null and the settings toggle vanished for the whole
+        // session - the recurring "toggle missing" report. Retry with
+        // backoff until the server answers, and re-probe on demand below.
+        LaunchedEffect(TokenStorage.accessToken, registrationProbe) {
+            while (true) {
+                val open = files.registrationStatus().getOrNull()?.open
+                if (open != null) {
+                    registrationOpen = open
+                    break
+                }
+                if (TokenStorage.accessToken == null || files.baseUrl.isBlank()) break
+                delay(5_000.milliseconds)
+            }
         }
         // Keep the background album-sync job in step with the stored settings.
         LaunchedEffect(albumAutoSync, syncWifiOnly, syncChargingOnly) {
@@ -242,6 +259,18 @@ fun App() {
         val pop: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
         // System back pops the in-app backstack instead of exiting the app.
         BackHandler(enabled = stack.size > 1) { pop() }
+
+        // Notification tap: open the transfer centre (album lane, where backup
+        // progress lives) once per raised flag. Consumed immediately so a
+        // second tap can raise it again; the flag survives recomposition
+        // because it lives in a StateFlow, not in this composable.
+        val openTransfersSignal by com.linan.barezen_drive.platform.TransferDeepLink.openTransfers.collectAsState()
+        LaunchedEffect(openTransfersSignal) {
+            if (openTransfersSignal) {
+                com.linan.barezen_drive.platform.TransferDeepLink.consume()
+                stack = stack + Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)
+            }
+        }
 
         val wallpaperPicker = rememberWallpaperPicker { img ->
             wallpaper = img
@@ -316,7 +345,15 @@ fun App() {
                             files,
                             currentUserId,
                             username,
-                            onOpenSettings = { push(Screen.Settings) },
+                            onOpenSettings = {
+                                // Re-probe the registration switch: the retry
+                                // loop may have stopped before the first
+                                // success (e.g. offline at startup); entering
+                                // the screen that shows the toggle is the
+                                // natural moment to try again.
+                                registrationProbe++
+                                push(Screen.Settings)
+                            },
                         )
                     }
                 }

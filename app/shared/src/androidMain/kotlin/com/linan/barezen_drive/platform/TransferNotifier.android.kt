@@ -17,6 +17,9 @@ import com.linan.barezen_drive.AndroidContext
 actual object TransferNotifier {
     private const val CHANNEL_PROGRESS = "transfers"
     private const val CHANNEL_DONE = "transfer_results"
+
+    /** Extra on the tap intent: MainActivity turns it into [TransferDeepLink]. */
+    const val EXTRA_OPEN_TRANSFERS = "open_transfers"
     private var counter = 0
     private val ids = mutableMapOf<String, Int>()
 
@@ -101,6 +104,27 @@ actual object TransferNotifier {
         val b = NotificationCompat.Builder(AndroidContext.app, channel)
         b.setSmallIcon(smallIcon() ?: return null)
         largeIconBitmap?.let { b.setLargeIcon(it) }
+        // Tapping the entry opens MainActivity, which asks the shared
+        // navigation stack for the transfer centre. Flag bits: NEW_TASK for
+        // the activity launched from the shade's non-activity context; CLEAR
+        // so repeated taps don't stack a second instance on top.
+        b.setContentIntent(
+            android.app.PendingIntent.getActivity(
+                AndroidContext.app,
+                0,
+                android.content.Intent(AndroidContext.app, AndroidContext.app.javaClass)
+                    .setClassName(
+                        AndroidContext.app,
+                        "com.linan.barezen_drive.MainActivity",
+                    )
+                    .setFlags(
+                        android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                            android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP,
+                    )
+                    .putExtra(EXTRA_OPEN_TRANSFERS, true),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+            ),
+        )
         return b
     }
 
@@ -108,7 +132,7 @@ actual object TransferNotifier {
         branded(channel)?.apply {
             setOngoing(true)
             setOnlyAlertOnce(true)
-            setPriority(NotificationCompat.PRIORITY_LOW)
+            priority = NotificationCompat.PRIORITY_LOW
             setContentTitle(title)
             text?.let { setContentText(it) }
         }
@@ -133,7 +157,7 @@ actual object TransferNotifier {
             val nm = manager()?.takeIf { canNotify() } ?: return
             val b = branded(CHANNEL_DONE)?.apply {
                 setOngoing(false)
-                setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                priority = NotificationCompat.PRIORITY_DEFAULT
                 setAutoCancel(true)
                 setContentTitle(title)
                 setContentText(text)

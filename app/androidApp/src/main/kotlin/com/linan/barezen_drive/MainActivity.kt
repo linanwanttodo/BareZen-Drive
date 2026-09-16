@@ -1,6 +1,7 @@
 package com.linan.barezen_drive
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -29,11 +30,35 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         AndroidContext.init(applicationContext)
+        forwardTransferTap(intent)
         maybeRequestNotificationPermission()
         maybeRequestMediaReadPermission()
 
         setContent {
             App()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // The activity is single-top (launchMode in the manifest): taps on a
+        // notification while the app is foregrounded arrive here, not in
+        // onCreate.
+        forwardTransferTap(intent)
+    }
+
+    /**
+     * Notification tap -> shared deep-link flag. The shared App() watches the
+     * flag and pushes the transfer centre; this side only translates the
+     * intent extra so navigation stays owned by the common layer.
+     */
+    private fun forwardTransferTap(intent: Intent?) {
+        if (intent?.getBooleanExtra(
+                com.linan.barezen_drive.platform.TransferNotifier.EXTRA_OPEN_TRANSFERS,
+                false,
+            ) == true
+        ) {
+            com.linan.barezen_drive.platform.TransferDeepLink.request()
         }
     }
 
