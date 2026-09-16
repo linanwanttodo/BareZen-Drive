@@ -53,7 +53,6 @@ import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.ViewAgenda
 import com.linan.barezen_drive.ui.component.AlbumTransferEntryIcon
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -123,6 +122,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.text.style.TextOverflow
+import kotlin.time.Duration.Companion.milliseconds
 
 private const val PAGE_SIZE = 200
 
@@ -405,7 +405,7 @@ fun AlbumScreen(
     LaunchedEffect(revision) {
         val scopeId = albumFolderId ?: return@LaunchedEffect
         if (revision == 0L) return@LaunchedEffect
-        delay(400)
+        delay(400.milliseconds)
         // The category folders are stale too: a backup creates the folder for a
         // phone album this device has never uploaded from, and it has to show up
         // in the filter list. getOrNull() keeps a failed request from wiping the
@@ -718,6 +718,36 @@ fun AlbumScreen(
             yesterdayStr -> strings.yesterday
             else -> day
         }
+        // Pull-to-refresh around every album layout: the pages only reload on
+        // scope change or a LibraryRevision bump, so photos added on another
+        // client never reached an open album without one. Resetting the cursor
+        // and re-reading page one mirrors the revision handler above.
+        var albumRefreshing by remember { mutableStateOf(false) }
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+            isRefreshing = albumRefreshing,
+            onRefresh = {
+                val scopeId = albumFolderId
+                if (scopeId != null && !albumRefreshing) {
+                    albumRefreshing = true
+                    scope.launch {
+                        if (scopeName != allDevicesLabel) {
+                            repo.contents(scopeId).getOrNull()?.let { contents ->
+                                categories = contents.folders.map { f -> f.name to f.id }
+                            }
+                        }
+                        collectionsTick++
+                        generation++
+                        loading = false
+                        loaded = emptyList()
+                        cursor = null
+                        exhausted = false
+                        loadMore()
+                        albumRefreshing = false
+                    }
+                }
+            },
+            modifier = Modifier.padding(pad),
+        ) {
         when {
             // Album folder unreachable: offer a retry instead of a permanent
             // empty screen.
@@ -1004,6 +1034,7 @@ fun AlbumScreen(
                 }
             }
         }
+        }
 
         shareUrl?.let { url ->
             AlertDialog(
@@ -1094,12 +1125,11 @@ private fun AlbumLoadMoreFooter(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         LaunchedEffect(pageToken) { onRequest() }
-        val err = error
-        if (err != null) {
+        error?.let { err ->
             Text(err, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(4.dp))
             TextButton(onClick = onRetry) { Text(LocalStrings.current.actionRetry) }
-        } else if (loading) {
+        } ?: run {
             CircularProgressIndicator(Modifier.size(28.dp))
         }
     }
@@ -1247,7 +1277,7 @@ private fun BackToCollectionsChip(onClick: () -> Unit) {
 
 /** Icon + label action used by the album selection bar. */
 @Composable
-private fun RowScope.BarAction(
+private fun BarAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     tint: Color = MaterialTheme.colorScheme.onSurface,

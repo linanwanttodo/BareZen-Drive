@@ -1,7 +1,6 @@
 package com.linan.barezen_drive.ui.screens.files
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -52,7 +51,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -111,6 +109,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
+import kotlin.time.Duration.Companion.milliseconds
 
 private const val ROOT_FOLDER_ID = "root"
 
@@ -408,7 +407,7 @@ fun FilesScreen(
     val revision by LibraryRevision.value.collectAsState()
     LaunchedEffect(revision) {
         if (revision == 0L) return@LaunchedEffect
-        delay(400)
+        delay(400.milliseconds)
         reload()
     }
 
@@ -477,10 +476,34 @@ fun FilesScreen(
         },
     ) { pad ->
         val ui = state
-        Column(
+        // Pull-to-refresh around the whole content column: the list only
+        // reloads on entry or after an action, so a change made elsewhere
+        // (another device, the web client) never reached an open folder.
+        var refreshing by remember { mutableStateOf(false) }
+        androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                refreshing = true
+                scope.launch {
+                    repo.contents(folderId).fold(
+                        onSuccess = {
+                            val folders = if (folderId == ROOT_FOLDER_ID) {
+                                it.folders.sortedByDescending { f -> f.name == AlbumFolder.ROOT_NAME }
+                            } else it.folders
+                            state = ContentsUi(folders, it.files)
+                            loadError = null
+                        },
+                        onFailure = { },
+                    )
+                    refreshing = false
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(pad),
+        ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
         ) {
             val sel = selectedFiles.value
             if (sel.isNotEmpty() && ui != null) {
@@ -652,6 +675,7 @@ fun FilesScreen(
                 }
                 }
             }
+        }
         }
     }
 
@@ -1007,7 +1031,12 @@ private fun FolderTile(
                 MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
                 MaterialTheme.shapes.medium,
             )
-            .clickable(onClick = onOpen),
+            .combinedClickable(
+                onClick = onOpen,
+                // Long-press opens the tile's overflow menu, matching the file
+                // tiles and the list rows.
+                onLongClick = { setMenuFor(folder) },
+            ),
     ) {
         Column(Modifier.padding(8.dp)) {
             Box(
@@ -1258,7 +1287,12 @@ private fun FolderRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onOpen)
+            // Long-press opens the same menu as the 3-dot button, matching the
+            // file rows; folders previously had no long-press at all.
+            .combinedClickable(
+                onClick = onOpen,
+                onLongClick = { setMenuFor(folder) },
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
