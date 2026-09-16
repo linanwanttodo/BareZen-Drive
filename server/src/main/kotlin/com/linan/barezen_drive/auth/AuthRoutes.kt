@@ -57,11 +57,11 @@ fun Route.authRoutes() {
             // failures spend this budget, so a household where several people
             // log in as the same user is unaffected.
             val account = req.username.trim().lowercase()
-            if (Throttle.peek("login-account:" + account, 900_000) >= LOGIN_FAILURES_PER_ACCOUNT) {
+            if (Throttle.peek("login-account:$account", 900_000) >= LOGIN_FAILURES_PER_ACCOUNT) {
                 throw ApiException.rateLimited()
             }
             val result = runCatching { withContext(Dispatchers.IO) { AuthService.login(req.username, req.password) } }
-            if (result.isFailure) Throttle.record("login-account:" + account, 900_000)
+            if (result.isFailure) Throttle.record("login-account:$account", 900_000)
             call.respond(result.getOrThrow())
         }
         post("/refresh") {

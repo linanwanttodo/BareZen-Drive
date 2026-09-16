@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Drives the whole upload pipeline for one file at a time (v0.0.1: a new
@@ -207,7 +208,7 @@ class UploadManager(
                     runCatching { api.abort(init.uploadId) }
                     return failed(file, doneBytes, result.exceptionOrNull() ?: ApiFailure.Network("chunk $index failed"))
                 }
-                delay(backoffBaseMs * (1L shl (attempt - 1)))
+                delay((backoffBaseMs * (1L shl (attempt - 1))).milliseconds)
             }
             _progress.value = Progress(Phase.UPLOADING, file.name, doneBytes, file.size)
             transferId?.let { com.linan.barezen_drive.data.transfer.TransferCenter.progress(it, file.size / 2 + doneBytes / 2, file.size) }

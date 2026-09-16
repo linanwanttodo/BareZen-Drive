@@ -7,7 +7,6 @@ import com.linan.barezen_drive.auth.userId
 import com.linan.barezen_drive.storage.StorageProvider
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.call
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondText

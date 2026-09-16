@@ -21,6 +21,16 @@ exclude:
   - name: AndroidLintNewerVersionAvailable
   - name: AndroidLintGradleDependency
   - name: AndroidLintSimilarGradleDependency
+  # POST_NOTIFICATIONS is guarded at runtime by TransferNotifier.canNotify()
+  # before every notify(); Lint's flow analysis does not cross that helper.
+  - name: AndroidLintMissingPermission
+  # Mipmap ships one PNG per density by design (generated from the brand art).
+  - name: AndroidLintIconDuplicates
+  - name: AndroidLintIconLauncherShape
+  # Manifest merge provides androidx.work.impl.foreground.SystemForegroundService.
+  - name: AndroidDomInspection
+    paths:
+      - app/androidApp/src/main/AndroidManifest.xml
 
 #Enable inspections
 #include:

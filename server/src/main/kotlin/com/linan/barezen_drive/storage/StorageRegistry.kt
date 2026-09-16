@@ -78,9 +78,7 @@ object StorageRegistry {
     fun resolve(stored: String): Pair<StorageProvider, String> {
         val ref = StorageRef.parse(stored)
         val backend = ref.backend
-        if (backend == null) {
-            return (defaultProvider() ?: error("no storage backend registered")) to ref.key
-        }
+            ?: return (defaultProvider() ?: error("no storage backend registered")) to ref.key
         val provider = providers[backend] ?: error("unknown storage backend '$backend'")
         return provider to ref.key
     }

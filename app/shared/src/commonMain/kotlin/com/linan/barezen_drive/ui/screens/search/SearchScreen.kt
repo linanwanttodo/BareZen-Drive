@@ -46,6 +46,7 @@ import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import androidx.compose.foundation.layout.PaddingValues
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Search tab, Google-Photos style: the last slot in the bottom bar is search,
@@ -71,7 +72,7 @@ fun SearchScreen(
 
     // Debounced live search: every keystroke waits 300ms, then queries.
     LaunchedEffect(query) {
-        delay(300)
+        delay(300.milliseconds)
         if (query.isBlank()) {
             results = null
             searchError = null

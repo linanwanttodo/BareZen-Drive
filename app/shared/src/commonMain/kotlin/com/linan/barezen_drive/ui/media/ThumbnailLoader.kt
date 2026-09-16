@@ -32,7 +32,7 @@ object ThumbnailHub {
     /** Clears the file's cached/negative thumbnail state (no-op before register). */
     fun invalidate(fileId: String) {
         val l = loader ?: return
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default).launch {
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             l.invalidate(fileId)
         }
     }
@@ -41,7 +41,7 @@ object ThumbnailHub {
      *  tiles should refetch. Any already-cached bitmap is kept. */
     fun markAvailable(fileId: String) {
         val l = loader ?: return
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default).launch {
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             l.markAvailable(fileId)
         }
     }
@@ -51,7 +51,7 @@ object ThumbnailHub {
      *  round-trip back to the server. No-op before register. */
     fun put(fileId: String, bytes: ByteArray) {
         val l = loader ?: return
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Default).launch {
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             l.put(fileId, bytes)
         }
     }
@@ -163,9 +163,9 @@ class ThumbnailLoader(private val repo: FilesRepository) {
             insert(fileId, bitmap)
             return bitmap
         } finally {
+            @Suppress("DeferredResultUnused")
             mutex.withLock {
                 inFlight.remove(fileId)
-                Unit
             }
         }
     }

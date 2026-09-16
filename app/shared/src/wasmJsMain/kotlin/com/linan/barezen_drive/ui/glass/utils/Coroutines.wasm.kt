@@ -4,7 +4,8 @@
 package com.linan.barezen_drive.ui.glass.utils
 
 import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.milliseconds
 
 actual suspend fun awaitFrame() {
-    delay(1000L / 60L)
+    delay((1000L / 60L).milliseconds)
 }
