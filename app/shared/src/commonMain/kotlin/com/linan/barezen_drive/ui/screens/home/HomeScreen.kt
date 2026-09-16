@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +73,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.Surface
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import kotlin.time.Duration.Companion.milliseconds
 
 private const val RECENT_LIMIT = 12
 private const val ALBUM_STRIP_SIZE = 12
@@ -131,7 +131,7 @@ fun HomeScreen(
     // burst reaches the network.
     val revision by LibraryRevision.value.collectAsState()
     LaunchedEffect(revision) {
-        if (revision > 0L) delay(400)
+        if (revision > 0L) delay(400.milliseconds)
         reload()
     }
 
@@ -141,10 +141,6 @@ fun HomeScreen(
             if (s != null) {
                 stats = s
                 statsUnavailable = false
-            } else if (stats == null) {
-                // Never had data: show why instead of a permanent "reading"
-                // spinner while the server is down.
-                statsUnavailable = true
             }
             latency = runCatching { repo.ping() }.getOrNull()
             delay(3.seconds)
@@ -329,7 +325,7 @@ private fun openRecent(
             val index = images.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
             onPreview(images, index)
         }
-        PreviewKind.VIDEO, PreviewKind.AUDIO, PreviewKind.TEXT, PreviewKind.PDF ->
+        PreviewKind.VIDEO, PreviewKind.AUDIO, PreviewKind.TEXT, PreviewKind.PDF, PreviewKind.DOCUMENT ->
             onPreview(listOf(file), 0)
         PreviewKind.OTHER -> saver(file.name, file.mimeType) { repo.download(file.id) }
     }
@@ -405,7 +401,7 @@ private fun formatBytesPerSec(v: Long): String = if (v < 0) "—" else formatFil
 /** Top server status panel: CPU / memory / disk / latency / up-down throughput. */
 @Composable
 private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?, unavailable: Boolean = false) {
-    val panelAlpha = com.linan.barezen_drive.ui.theme.LocalPanelAlpha.current
+    val panelAlpha = LocalPanelAlpha.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -417,7 +413,7 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?, unavailable
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    androidx.compose.material.icons.Icons.Default.MonitorHeart,
+                    Icons.Default.MonitorHeart,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(18.dp),
@@ -437,20 +433,23 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?, unavailable
                 )
             }
             Spacer(Modifier.height(10.dp))
-            if (stats == null && !unavailable) {
+            when {
+            stats == null && !unavailable -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                     Text(LocalStrings.current.readingServerStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            } else if (stats == null) {
+            }
+            stats == null -> {
                 // Server unreachable: say so instead of spinning forever.
                 Text(
                     LocalStrings.current.networkCannotConnect,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
-            } else {
+            }
+            else -> {
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -466,6 +465,7 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?, unavailable
                     MetricChip(LocalStrings.current.actionDownload, formatBytesPerSec(stats.netRxBytesPerSec), null, Modifier.weight(1f))
                     MetricChip(LocalStrings.current.actionUpload, formatBytesPerSec(stats.netTxBytesPerSec), null, Modifier.weight(1f))
                 }
+            }
             }
         }
     }

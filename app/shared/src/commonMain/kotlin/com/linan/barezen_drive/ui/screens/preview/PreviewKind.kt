@@ -4,9 +4,15 @@ import com.linan.barezen_drive.core.dto.FileDto
 
 /** What kind of preview (if any) a file supports, decided from mime + name. */
 enum class PreviewKind {
-    IMAGE, VIDEO, AUDIO, TEXT, PDF, OTHER;
+    IMAGE, VIDEO, AUDIO, TEXT, PDF, DOCUMENT, OTHER;
 
     companion object {
+        private val officeExtensions = setOf("docx", "xlsx", "pptx")
+        private val officeMimes = setOf(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )
         private val textExtensions = setOf(
             "txt", "md", "markdown", "log", "csv", "json", "xml", "yaml", "yml", "toml", "ini", "conf",
             "kt", "kts", "java", "groovy", "gradle", "py", "rb", "go", "rs", "c", "h", "cpp", "hpp",
@@ -25,6 +31,7 @@ enum class PreviewKind {
                     mime.startsWith("video/") -> VIDEO
                     mime.startsWith("audio/") -> AUDIO
                     mime == "application/pdf" -> PDF
+                    mime in officeMimes -> DOCUMENT
                     mime.startsWith("text/") -> TEXT
                     mime in setOf("application/json", "application/xml", "application/javascript",
                         "application/yaml", "application/toml", "application/x-sh") -> TEXT
@@ -39,6 +46,7 @@ enum class PreviewKind {
             if (ext.isEmpty()) return null
             return when (ext) {
                 "pdf" -> PDF
+                in officeExtensions -> DOCUMENT
                 in textExtensions -> TEXT
                 in imageExtensions -> IMAGE
                 in videoExtensions -> VIDEO
