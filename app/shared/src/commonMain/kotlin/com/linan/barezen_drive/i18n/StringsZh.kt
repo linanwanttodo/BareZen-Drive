@@ -109,6 +109,7 @@ object StringsZh : Strings {
     override val downloadingPdf: String = "正在下载 PDF…"
     override val pdfLoadFailed: String = "PDF 加载失败"
     override val pdfCannotOpen: String = "无法打开此 PDF（可能已加密或损坏）"
+    override val officeTooLargePreview: String = "文档过大，暂不支持应用内预览，请下载后查看"
     override val shareManagement: String = "分享管理"
     override val shareManagerSubtitle: String = "查看全部链接的访问统计并随时关闭"
     override val noShareLinks: String = "暂无分享链接"

@@ -120,6 +120,7 @@ interface Strings {
     val downloadingPdf: String
     val pdfLoadFailed: String
     val pdfCannotOpen: String
+    val officeTooLargePreview: String
     val shareManagement: String
     val shareManagerSubtitle: String
     val noShareLinks: String

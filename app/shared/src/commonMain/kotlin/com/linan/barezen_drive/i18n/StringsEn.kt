@@ -109,6 +109,7 @@ object StringsEn : Strings {
     override val downloadingPdf: String = "Downloading PDF..."
     override val pdfLoadFailed: String = "Failed to load PDF"
     override val pdfCannotOpen: String = "Cannot open this PDF (it may be encrypted or damaged)"
+    override val officeTooLargePreview: String = "This document is too large for in-app preview. Use the download button instead."
     override val shareManagement: String = "Share management"
     override val shareManagerSubtitle: String = "See access stats for every link and revoke them at any time"
     override val noShareLinks: String = "No share links yet"
@@ -175,7 +176,7 @@ object StringsEn : Strings {
     override val actionDownloadUpdate: String = "Download update"
     override fun reloadToUpdate(version: String): String =
         "The server has been updated to $version. Reload to load the new version"
-    override fun selectedCount(n: Int): String = n.toString() + " selected"
+    override fun selectedCount(n: Int): String = "$n selected"
 override val appTagline: String = "Your personal cloud drive"
 override val notSignedInPrompt: String = "Sign in to start using your cloud drive"
 override val notSignedInLogin: String = "Sign in / Register"

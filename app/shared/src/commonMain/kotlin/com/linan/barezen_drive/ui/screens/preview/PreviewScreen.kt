@@ -203,6 +203,7 @@ fun PreviewScreen(
                 PreviewKind.AUDIO -> PlatformMediaPlayer(file, repo, isAudio = true)
                 PreviewKind.TEXT -> TextViewer(file, repo)
                 PreviewKind.PDF -> PlatformPdfViewer(file, repo)
+                PreviewKind.DOCUMENT -> OfficeViewer(file, repo)
                 PreviewKind.OTHER -> Unsupported(file, repo, saver)
             }
         }
