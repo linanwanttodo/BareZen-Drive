@@ -71,6 +71,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import com.linan.barezen_drive.i18n.I18n
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * HTTP client for the BareZen-Drive server.
@@ -233,7 +234,7 @@ class ApiClient(
             val retryable = failure is ConnectTimeoutException ||
                 failure?.message?.contains("Failed to connect", ignoreCase = true) == true
             if (!retryable || attempt == maxConnectAttempts - 1) return result
-            delay(retryBackoffMs[attempt])
+            delay(retryBackoffMs[attempt].milliseconds)
             attempt++
         }
     }
@@ -268,7 +269,6 @@ class ApiClient(
             contentType(ContentType.Application.Json)
             setBody(RegisterRequest(username, password))
         }
-        return@runApi Unit
     }
 
     suspend fun login(username: String, password: String): Result<LoginResponse> = runApi {
@@ -295,7 +295,6 @@ class ApiClient(
             setBody(bytes)
             contentType(ContentType.Application.OctetStream)
         }
-        return@runApi Unit
     }
 
     /** Fetches the avatar image; 404 (no avatar) becomes a failure result. */
@@ -329,7 +328,6 @@ class ApiClient(
 
     suspend fun deleteFolder(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/folders/$id")
-        return@runApi Unit
     }
 
     suspend fun updateFile(id: String, name: String?, folderId: String?): Result<FileDto> = runApi {
@@ -342,7 +340,6 @@ class ApiClient(
     suspend fun deleteFile(id: String): Result<Unit> = runApi {
         // Soft delete: the file lands in the trash and keeps its bytes.
         http.delete("$baseUrl/api/files/$id")
-        return@runApi Unit
     }
 
     /** Favorites one file on or off (album "favorites" filter). */
@@ -376,7 +373,6 @@ class ApiClient(
     /** Drops a single revision (and its blob when nothing else references it). */
     suspend fun deleteFileVersion(id: String, versionId: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/files/$id/versions/$versionId")
-        return@runApi Unit
     }
 
     suspend fun trash(): Result<TrashResponse> = runApi {
@@ -390,12 +386,10 @@ class ApiClient(
     /** Permanent removal of one trashed file; a live id is refused by the server. */
     suspend fun deleteForever(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/trash/$id")
-        return@runApi Unit
     }
 
     suspend fun emptyTrash(): Result<Unit> = runApi {
         http.delete("$baseUrl/api/trash")
-        return@runApi Unit
     }
 
     suspend fun uploadInit(req: UploadInitRequest): Result<UploadInitResponse> = runApi {
@@ -412,7 +406,6 @@ class ApiClient(
             // The dedicated streaming client has no request timeout: a 20 MiB
             // chunk on a slow link must not be aborted mid-flight (see commonConfig).
         }
-        return@runApi Unit
     }
 
     suspend fun uploadComplete(id: String): Result<FileDto> = runApi {
@@ -421,7 +414,6 @@ class ApiClient(
 
     suspend fun uploadAbort(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/uploads/$id")
-        return@runApi Unit
     }
 
     suspend fun putThumbnail(id: String, bytes: ByteArray): Result<Unit> = runApi {
@@ -429,7 +421,6 @@ class ApiClient(
             contentType(ContentType.Image.JPEG)
             setBody(bytes)
         }
-        return@runApi Unit
     }
 
     suspend fun thumbnailBytes(id: String): Result<ByteArray> = runApi {
@@ -521,7 +512,6 @@ class ApiClient(
 
     suspend fun revokeShare(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/shares/$id")
-        return@runApi Unit
     }
 
     // ---- Public share endpoints (no auth; Bearer stays absent when no token) ----

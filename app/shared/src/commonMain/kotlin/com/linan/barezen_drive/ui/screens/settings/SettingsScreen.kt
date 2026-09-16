@@ -162,7 +162,7 @@ fun SettingsScreen(
     onLogout: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
-    var showAccountInfo by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var showAccountInfo by remember { mutableStateOf(false) }
     // Sign-out drops the session and forces re-entry of credentials; confirm
     // first so a stray tap cannot trigger it.
     var confirmLogout by remember { mutableStateOf(false) }
@@ -176,7 +176,7 @@ fun SettingsScreen(
                     if (onBack != null) {
                         IconButton(onClick = onBack) {
                             Icon(
-                                androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                                Icons.AutoMirrored.Filled.ArrowBack,
                                 contentDescription = LocalStrings.current.actionBack,
                             )
                         }
@@ -236,7 +236,7 @@ fun SettingsScreen(
             }
             HorizontalDivider(Modifier.padding(horizontal = 16.dp))
             SettingsRow(title = LocalStrings.current.settingsLanguage, subtitle = LocalStrings.current.languageModeHint) {
-                var languageOpen by remember { androidx.compose.runtime.mutableStateOf(false) }
+                var languageOpen by remember { mutableStateOf(false) }
                 val languageLabels = listOf(
                     LocalStrings.current.languageSystem,
                     LocalStrings.current.languageChinese,
@@ -507,7 +507,7 @@ private fun AccountInfoDialog(
     onDismiss: () -> Unit,
 ) {
     var latency by remember { androidx.compose.runtime.mutableStateOf<Long?>(null) }
-    var pingFailed by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var pingFailed by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         runCatching { latency = ping() }.onFailure { pingFailed = true }
     }

@@ -76,8 +76,8 @@ fun averageColor(pixels: IntArray): Color {
 /** Vivid mid-lightness color for an HSL hue/saturation pair. */
 private fun hslColor(hue: Float, saturation: Float): Color {
     val l = 0.5f
-    val c = (1f - kotlin.math.abs(2f * l - 1f)) * saturation
-    val x = c * (1f - kotlin.math.abs((hue / 60f) % 2f - 1f))
+    val c = (1f - abs(2f * l - 1f)) * saturation
+    val x = c * (1f - abs((hue / 60f) % 2f - 1f))
     val m = l - c / 2f
     val (r, g, b) = when (((hue % 360f) / 60f).toInt()) {
         0 -> Triple(c, x, 0f)

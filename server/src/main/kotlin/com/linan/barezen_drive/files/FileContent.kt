@@ -8,7 +8,6 @@ import com.linan.barezen_drive.core.dto.FileLinkResponse
 import com.linan.barezen_drive.core.dto.RecentFilesResponse
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
-import com.linan.barezen_drive.db.FoldersTable
 import com.linan.barezen_drive.storage.StorageProvider
 import io.ktor.http.*
 import io.ktor.server.application.*

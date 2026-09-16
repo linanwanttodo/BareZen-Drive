@@ -266,10 +266,13 @@ private fun TransferTile(item: TransferItem, size: Int) {
                 modifier = Modifier.size(size.dp),
             )
         } else {
-            val icon = when {
-                fileId == null && item.mediaHint && item.name.endsWith(".mp4", true) -> Icons.Default.Movie
-                fileId == null && item.mediaHint -> Icons.Default.Image
-                fileId == null && item.parent == null && item.kind == TransferKind.SYNC -> Icons.Default.PhotoLibrary
+            val icon = when (fileId) {
+                null -> when {
+                    item.mediaHint && item.name.endsWith(".mp4", true) -> Icons.Default.Movie
+                    item.mediaHint -> Icons.Default.Image
+                    item.parent == null && item.kind == TransferKind.SYNC -> Icons.Default.PhotoLibrary
+                    else -> Icons.Default.InsertDriveFile
+                }
                 else -> Icons.Default.InsertDriveFile
             }
             Icon(

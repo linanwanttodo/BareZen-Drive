@@ -98,7 +98,7 @@ object UploadService {
                             if (clash[FilesTable.sha256] == sha) {
                                 // Identical bytes onto the identical name: a no-op
                                 // success (nothing to snapshot), still the same row.
-                                Triple(clash.toFileDto(), emptyList<String>(), null as FileVersionDto?)
+                                Triple(clash.toFileDto(), emptyList(), null as FileVersionDto?)
                             } else {
                             // Same dedup rule as a fresh instant row: the size of
                             // the *new* content comes from rows already holding
@@ -135,7 +135,7 @@ object UploadService {
                                     it[takenAt] = req.takenAt
                                 }
                             }
-                            Triple(FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto(), emptyList<String>(), null as FileVersionDto?)
+                            Triple(FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto(), emptyList(), null as FileVersionDto?)
                         }
                     }
                 }
@@ -353,7 +353,7 @@ object UploadService {
                         }
                     }
                     UploadSessionsTable.update({ UploadSessionsTable.id eq sessionId }) { it[status] = "completed" }
-                    Triple(FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto(), emptyList<String>(), null as FileVersionDto?)
+                    Triple(FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto(), emptyList(), null as FileVersionDto?)
                 }
             }
             cleanupSessionDir(storage, sessionId)

@@ -196,7 +196,7 @@ class S3StorageProvider(
             return S3StorageProvider(
                 // HTTP/1.1 on purpose: the signature covers the Host header, which
                 // HTTP/2 replaces with the :authority pseudo-header.
-                client = HttpClient.newBuilder().version(java.net.http.HttpClient.Version.HTTP_1_1)
+                client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1)
                     // Never follow a 30x: an object store speaks redirects only for
                     // region/bucket misconfiguration, and obeying one would let the
                     // endpoint (possibly plain http) point the client at an internal
