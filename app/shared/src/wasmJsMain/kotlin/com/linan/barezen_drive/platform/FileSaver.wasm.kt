@@ -20,24 +20,27 @@ actual fun rememberFileSaver(onDone: (String?) -> Unit): (name: String, mime: St
         scope.launch {
             try {
                 val ch = open()
-                val parts = ArrayList<ByteArray>()
-                var total = 0
+                // Each chunk becomes a Blob part directly; the Blob constructor
+                // concatenates natively at save time. The old code held the
+                // chunk list, merged everything into one ByteArray and then
+                // copied that per byte into one big Int8Array - three full
+                // copies, so a few hundred MB peaked the tab's heap. No bulk
+                // ByteArray -> Int8Array conversion exists in the wasm stdlib
+                // (checked Kotlin 2.4.20 sources), so the per-element bridge
+                // stays, but it runs per 64 KiB chunk instead of once over the
+                // merged file: one pass instead of two, one copy of the file
+                // in memory instead of three.
+                val parts = ArrayList<JsAny?>()
                 val buf = ByteArray(1 shl 16)
                 while (true) {
                     val n = ch.readAvailable(buf, 0, buf.size)
                     if (n == -1) break
-                    parts.add(buf.copyOf(n))
-                    total += n
+                    val chunk = if (n == buf.size) buf else buf.copyOf(n)
+                    val view = Int8Array(chunk.size)
+                    for (i in chunk.indices) view[i] = chunk[i]
+                    parts.add(view)
                 }
-                val bytes = ByteArray(total)
-                var pos = 0
-                for (p in parts) {
-                    p.copyInto(bytes, pos)
-                    pos += p.size
-                }
-                val i8 = Int8Array(bytes.size)
-                for (i in bytes.indices) i8[i] = bytes[i]
-                val blob = Blob(arrayOf<JsAny?>(i8).toJsArray())
+                val blob = Blob(parts.toTypedArray().toJsArray())
                 val url = URL.createObjectURL(blob)
                 val a = document.createElement("a").unsafeCast<HTMLAnchorElement>()
                 a.href = url

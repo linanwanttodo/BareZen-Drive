@@ -68,11 +68,28 @@ class MainActivity : ComponentActivity() {
             this,
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        // One prompt per install: after a denial (and especially a permanent
+        // one) the system silently no-ops further automatic requests, so re
+        // asking on every launch would only flash a dead dialog. Users grant
+        // later through the system settings.
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (!granted && !prefs.getBoolean("notifications_asked", false)) {
+            prefs.edit().putBoolean("notifications_asked", true).apply()
+            requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     private fun maybeRequestMediaReadPermission() {
         val wanted = when {
+            // Android 14 adds the partial-access grant: the user picks which
+            // photos to share and VISUAL_USER_SELECTED (only) comes back
+            // granted. Treating that as "still missing" would re-prompt with
+            // a dialog that can never succeed.
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VIDEO,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+            )
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
                 Manifest.permission.READ_MEDIA_IMAGES,
                 Manifest.permission.READ_MEDIA_VIDEO,
@@ -82,7 +99,20 @@ class MainActivity : ComponentActivity() {
         val missing = wanted.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        if (missing.isNotEmpty()) requestMediaRead.launch(missing.toTypedArray())
+        val partialOk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+            ) == PackageManager.PERMISSION_GRANTED
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (missing.isNotEmpty() && !partialOk && !prefs.getBoolean("media_read_asked", false)) {
+            prefs.edit().putBoolean("media_read_asked", true).apply()
+            requestMediaRead.launch(missing.toTypedArray())
+        }
+    }
+
+    private companion object {
+        const val PREFS = "permissions"
     }
 }
 

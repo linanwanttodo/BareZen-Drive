@@ -191,7 +191,7 @@ fun TrashScreen(
         AlertDialog(
             onDismissRequest = { confirmPurge = null },
             title = { Text(strings.actionDeleteForever) },
-            text = { Text(strings.confirmDeleteForever) },
+            text = { Text(strings.confirmDeleteForeverNamed(target.name)) },
             confirmButton = {
                 TextButton(onClick = { confirmPurge = null; purge(target) }) { Text(strings.actionConfirm) }
             },

@@ -50,8 +50,11 @@ private fun OpenInNewTab(file: FileDto, repo: FilesRepository, label: String) {
         if (!opened) {
             repo.fileLink(file.id).fold(
                 onSuccess = {
-                    window.open(repo.baseUrl + it.url, "_blank")
-                    opened = true
+                    // The automatic first open is not a user gesture, so popup
+                    // blockers may return null; surface that as the retry
+                    // button instead of pretending the tab opened.
+                    if (window.open(repo.baseUrl + it.url, "_blank") != null) opened = true
+                    else failed = true
                 },
                 onFailure = { failed = true },
             )

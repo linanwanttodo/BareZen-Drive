@@ -89,7 +89,12 @@ object SyncDb {
                 val cv = ContentValues().apply {
                     put("uri", uri)
                     put("name", uri.substringAfterLast('/'))
-                    put("size", 0L)
+                    // The legacy fingerprint carried no size. A placeholder 0
+                    // would make isStale flag every row on the first scan and
+                    // reset the whole library to PENDING; the sentinel marks
+                    // the size as unknown instead (see SyncPolicy.SIZE_UNKNOWN),
+                    // and the first full scan writes the real value over it.
+                    put("size", SyncPolicy.SIZE_UNKNOWN)
                     put("date_modified", date)
                     put("state", SyncState.DONE.key)
                     put("attempts", 0)
@@ -131,34 +136,48 @@ object SyncDb {
         val d = db()
         d.beginTransaction()
         try {
+            // Existing rows come back in chunked IN(...) queries instead of one
+            // SELECT per item: a 50k-photo library would otherwise issue two
+            // statements per photo. 500 placeholders stays comfortably below
+            // SQLite's host-parameter limit.
+            val existing = HashMap<String, SyncRow>()
+            items.map { it.uri }.distinct().chunked(500).forEach { chunk ->
+                val placeholders = chunk.joinToString(",") { "?" }
+                queryListOn(
+                    d,
+                    "SELECT * FROM $TABLE WHERE uri IN ($placeholders)",
+                    chunk.toTypedArray(),
+                    ::toRow,
+                ).forEach { existing[it.uri] = it }
+            }
             for (m in items) {
-                val existing = queryOne(d, m.uri)
-                if (existing == null) {
+                val existingRow = existing[m.uri]
+                if (existingRow == null) {
                     if (isBucketExcluded(m.bucket)) continue
                     d.insert(TABLE, null, valuesOf(m, SyncState.PENDING, 0))
                 } else {
-                    val budgetOver = existing.state == SyncState.FAILED &&
-                        existing.attempts >= SyncPolicy.MAX_ATTEMPTS
+                    val budgetOver = existingRow.state == SyncState.FAILED &&
+                        existingRow.attempts >= SyncPolicy.MAX_ATTEMPTS
                     val stale = SyncPolicy.isStale(
-                        state = existing.state,
-                        storedSize = existing.size,
-                        storedDateModified = existing.dateModified,
+                        state = existingRow.state,
+                        storedSize = existingRow.size,
+                        storedDateModified = existingRow.dateModified,
                         scannedSize = m.size,
                         scannedDateModified = m.dateModified,
                     )
                     val retry = stale || budgetOver
-                    val newState = if (retry) SyncState.PENDING else existing.state
-                    val cv = valuesOf(m, newState, if (retry) 0 else existing.attempts)
+                    val newState = if (retry) SyncState.PENDING else existingRow.state
+                    val cv = valuesOf(m, newState, if (retry) 0 else existingRow.attempts)
                     if (retry) {
                         cv.putNull("hash_cache")
                         cv.putNull("server_file_id")
                     } else {
                         // Preserve the queue-owned columns for a live row.
-                        existing.hashCache?.let { cv.put("hash_cache", it) }
-                        existing.serverFileId?.let { cv.put("server_file_id", it) }
-                        cv.put("state", existing.state.key)
-                        cv.put("attempts", existing.attempts)
-                        cv.put("uploaded_at", existing.uploadedAt)
+                        existingRow.hashCache?.let { cv.put("hash_cache", it) }
+                        existingRow.serverFileId?.let { cv.put("server_file_id", it) }
+                        cv.put("state", existingRow.state.key)
+                        cv.put("attempts", existingRow.attempts)
+                        cv.put("uploaded_at", existingRow.uploadedAt)
                     }
                     d.update(TABLE, cv, "uri=?", arrayOf(m.uri))
                 }

@@ -99,6 +99,7 @@ import com.linan.barezen_drive.data.repo.AlbumFolder
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.media.fileIcon
 import com.linan.barezen_drive.ui.media.formatDateTime
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
@@ -264,11 +265,16 @@ fun AlbumScreen(
     var collectionsTick by remember { mutableStateOf(0) }
     val allPhotosLabel = LocalStrings.current.allPhotos
     val allDevicesLabel = LocalStrings.current.allDevices
+    // True while browsing the all-devices scope. Declared explicitly at the
+    // scope-switch entry rather than derived from the localized scope name:
+    // a user-named device could otherwise collide with the label and flip the
+    // grid handover by accident.
+    var allDevicesScope by remember { mutableStateOf(false) }
     // The photo grid is on screen when a collection is open - and also for the
     // all-devices scope, which has no collections landing and shows the grid
     // straight away. Keying the handover on this (not on timelineMode alone) is
     // what keeps the action bar present in that scope.
-    val gridVisible = timelineMode || scopeName == allDevicesLabel
+    val gridVisible = timelineMode || allDevicesScope
     // Reported to the shell: with the grid on screen the app tab bar steps
     // aside and this screen's own bar takes the bottom edge (the two never
     // stack).
@@ -295,7 +301,7 @@ fun AlbumScreen(
     // Covers for the collections landing: the newest photo of each folder.
     LaunchedEffect(albumFolderId, categories, collectionsTick) {
         val scope = albumFolderId ?: return@LaunchedEffect
-        if (timelineMode || scopeName == allDevicesLabel) return@LaunchedEffect
+        if (timelineMode || allDevicesScope) return@LaunchedEffect
         collectionsLoading = true
         suspend fun coverOf(folderId: String?): FileDto? =
             repo.album(1, null, folderId).getOrNull()?.files?.firstOrNull()
@@ -307,7 +313,7 @@ fun AlbumScreen(
         collectionsLoading = false
     }
 
-    fun switchScope(id: String?, name: String) {
+    fun switchScope(id: String?, name: String, isAllDevices: Boolean = false) {
         generation++
         loading = false
         loaded = emptyList(); cursor = null; exhausted = false; error = null
@@ -315,10 +321,11 @@ fun AlbumScreen(
         favoriteOnly = false
         timelineMode = false
         scopeName = name
+        allDevicesScope = isAllDevices
         categories = emptyList()
         scope.launch {
             categories = id?.let { cid ->
-                if (name == allDevicesLabel) emptyList()
+                if (isAllDevices) emptyList()
                 else repo.contents(cid).getOrNull()?.folders?.map { f -> f.name to f.id } ?: emptyList()
             } ?: emptyList()
         }
@@ -361,10 +368,12 @@ fun AlbumScreen(
         if (picks.isNotEmpty()) pendingUploads = picks
     }
 
-    fun loadMore() {
-        if (loading || exhausted) return
+    /** Starts the next page read; the returned job finishes when the page
+     *  settles, so callers that show a spinner can join it. */
+    fun loadMore(): Job {
+        if (loading || exhausted) return scope.launch { }
         val myGen = generation
-        scope.launch {
+        return scope.launch {
             loading = true
             repo.album(PAGE_SIZE, cursor, activeCategory ?: albumFolderId, favorite = favoriteOnly).fold(
                 onSuccess = { page ->
@@ -411,7 +420,7 @@ fun AlbumScreen(
         // in the filter list. getOrNull() keeps a failed request from wiping the
         // list already on screen, and the all-devices scope has no categories by
         // design (see switchScope).
-        if (scopeName != allDevicesLabel) {
+        if (!allDevicesScope) {
             repo.contents(scopeId).getOrNull()?.let { contents ->
                 categories = contents.folders.map { f -> f.name to f.id }
             }
@@ -577,7 +586,11 @@ fun AlbumScreen(
                                 )
                             }
                         }
-                        BarAction(Icons.Default.Share, LocalStrings.current.actionShare) {
+                        // Sharing creates one link per photo server-side, so this
+                        // action only applies to a single selection; disabled
+                        // (not hidden) on multi-select keeps the bar layout stable.
+                        BarAction(Icons.Default.Share, LocalStrings.current.actionShare,
+                            enabled = selected.size == 1) {
                             scope.launch {
                                 selected.values.firstOrNull()?.let { first ->
                                     repo.createShare(fileId = first.id).fold(
@@ -730,7 +743,7 @@ fun AlbumScreen(
                 if (scopeId != null && !albumRefreshing) {
                     albumRefreshing = true
                     scope.launch {
-                        if (scopeName != allDevicesLabel) {
+                        if (!allDevicesScope) {
                             repo.contents(scopeId).getOrNull()?.let { contents ->
                                 categories = contents.folders.map { f -> f.name to f.id }
                             }
@@ -741,24 +754,31 @@ fun AlbumScreen(
                         loaded = emptyList()
                         cursor = null
                         exhausted = false
-                        loadMore()
+                        // loadMore launches its own coroutine; joining it keeps
+                        // the pull-to-refresh spinner up until the re-read
+                        // actually finishes instead of vanishing instantly.
+                        loadMore().join()
                         albumRefreshing = false
                     }
                 }
             },
-            modifier = Modifier.padding(pad),
+            // Full-bleed: content scrolls behind the transparent top bar
+            // (Google Photos style). The bar's height rides in each layout's
+            // contentPadding instead of a blanket padding, which used to
+            // strand a dead empty strip under the bar.
+            modifier = Modifier.fillMaxSize(),
         ) {
         when {
             // Album folder unreachable: offer a retry instead of a permanent
             // empty screen.
-            resolveFailed -> Centered(pad) {
+            resolveFailed -> Centered {
                 Text(LocalStrings.current.loadFailed, color = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = { resolveTick++ }) { Text(LocalStrings.current.actionRetry) }
             }
             // Collections landing: one rounded cover per phone album (the
             // first photo), plus an all-photos tile - Google Photos style.
-            !timelineMode && scopeName != allDevicesLabel -> Centered(pad) {
+            !timelineMode && !allDevicesScope -> Centered {
                 if (collectionsLoading) {
                     CircularProgressIndicator()
                 } else {
@@ -767,8 +787,15 @@ fun AlbumScreen(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        // Bottom clears the floating glass bar, like files/home.
-                        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = BottomBarClearance),
+                        // Top rides under the transparent bar on first show,
+                        // then scrolls behind it; bottom clears the floating
+                        // glass bar, like files/home.
+                        contentPadding = PaddingValues(
+                            start = 16.dp,
+                            top = pad.calculateTopPadding() + 16.dp,
+                            end = 16.dp,
+                            bottom = BottomBarClearance,
+                        ),
                     ) {
                         items(collections.size, key = { collections[it].folderId }) { i ->
                             val tile = collections[i]
@@ -790,13 +817,13 @@ fun AlbumScreen(
             }
             // Initial load failed (pages already on screen report through the
             // grid footer instead).
-            error != null && loaded.isEmpty() -> Centered(pad) {
+            error != null && loaded.isEmpty() -> Centered {
                 Text(error ?: LocalStrings.current.loadFailed, color = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = { error = null; loadMore() }) { Text(LocalStrings.current.actionRetry) }
             }
-            loaded.isEmpty() && loading -> Centered(pad) { CircularProgressIndicator() }
-            loaded.isEmpty() -> Centered(pad) {
+            loaded.isEmpty() && loading -> Centered { CircularProgressIndicator() }
+            loaded.isEmpty() -> Centered {
                 Text(LocalStrings.current.noPhotos, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (timelineMode) {
                     Spacer(Modifier.height(8.dp))
@@ -809,33 +836,38 @@ fun AlbumScreen(
             gridVisible && viewMode == 2 -> LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(pad)
                     .pinchToColumnCount(
                         onPinchStart = { zoomAccum = 1f },
                         onScale = { onPinch(it) },
                     ),
-                contentPadding = PaddingValues(bottom = barClearance),
+                contentPadding = PaddingValues(
+                    top = pad.calculateTopPadding(),
+                    bottom = barClearance,
+                ),
             ) {
                 if (timelineMode) {
                     item(key = "back") { BackToCollectionsChip { timelineMode = false } }
                 }
                 sections.forEach { section ->
-                    stickyHeader(key = "d_${section.day}") {
+                    // A light in-flow date label, like the system gallery: the
+                    // label scrolls with the photos instead of snapping into
+                    // an opaque banded strip under the bar.
+                    item(key = "d_${section.day}") {
                         Text(
                             dayLabel(section.day),
-                            style = MaterialTheme.typography.titleSmall,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                // Same translucency as the screen panel: an
-                                // opaque strip here reads as a white bar over
-                                // the wallpaper.
-                                .background(MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current))
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                                .padding(horizontal = 16.dp, vertical = 6.dp),
                         )
                     }
-                    items(section.files.chunked(columns).size) { row ->
+                    // One chunking per section: counting and indexing the
+                    // same chunked list twice recomputed it for every cell.
+                    val rows = section.files.chunked(columns)
+                    items(rows.size) { row ->
                         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                            val rowFiles = section.files.chunked(columns)[row]
+                            val rowFiles = rows[row]
                             rowFiles.forEach { file ->
                                 Box(Modifier.weight(1f).padding(2.dp)) {
                                     AlbumTile(
@@ -873,10 +905,14 @@ fun AlbumScreen(
                 }
             }
             // Uniform grid: fixed square cells.
-            gridVisible && viewMode == 1 -> Column(Modifier.fillMaxSize().padding(pad)) {
-                if (timelineMode) BackToCollectionsChip { timelineMode = false }
-                if (loading) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
+            gridVisible && viewMode == 1 -> Column(Modifier.fillMaxSize()) {
+                // Fixed lead row sits below the transparent bar; the grid
+                // beneath scrolls its own padding.
+                Column(Modifier.padding(top = pad.calculateTopPadding())) {
+                    if (timelineMode) BackToCollectionsChip { timelineMode = false }
+                    if (loading) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
                 }
                 LazyVerticalGrid(
                     state = gridState,
@@ -928,7 +964,7 @@ fun AlbumScreen(
             // Waterfall: intrinsic tile shapes, day sections, and - because a
             // staggered grid cannot host a sticky header - the day label is drawn
             // as an overlay that follows the first visible item.
-            else -> Box(Modifier.fillMaxSize().padding(pad)) {
+            else -> Box(Modifier.fillMaxSize()) {
                 LazyVerticalStaggeredGrid(
                     state = staggeredState,
                     columns = StaggeredGridCells.Fixed(columns),
@@ -940,7 +976,10 @@ fun AlbumScreen(
                         ),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalItemSpacing = 4.dp,
-                    contentPadding = PaddingValues(bottom = barClearance),
+                    contentPadding = PaddingValues(
+                        top = pad.calculateTopPadding(),
+                        bottom = barClearance,
+                    ),
                 ) {
                     // Way back to the collections landing. The other two layouts
                     // carry it too, and while a collection is open the tab bar
@@ -952,24 +991,16 @@ fun AlbumScreen(
                         }
                     }
                     sections.forEach { section ->
+                        // Light date caption, not a full-width banded row: the
+                        // divider and heavy strip read as the photos being cut
+                        // into blocks; the system gallery just captions them.
                         item(key = "h_${section.day}", span = StaggeredGridItemSpan.FullLine) {
-                            Column {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(dayLabel(section.day), style = MaterialTheme.typography.titleMedium)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        "${section.files.size}",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                HorizontalDivider()
-                            }
+                            Text(
+                                "${dayLabel(section.day)} · ${section.files.size}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                            )
                         }
                         items(section.files, key = { it.id }) { file ->
                             AlbumTile(
@@ -1101,8 +1132,10 @@ fun AlbumScreen(
 }
 
 @Composable
-private fun Centered(pad: PaddingValues, content: @Composable () -> Unit) {
-    Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) {
+private fun Centered(content: @Composable () -> Unit) {
+    // No scaffold padding here: the pull-to-refresh container above already
+    // consumes it, and stacking both pushed every centered state down.
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) { content() }
     }
 }
@@ -1281,18 +1314,23 @@ private fun BarAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     tint: Color = MaterialTheme.colorScheme.onSurface,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    // Disabled actions keep their slot in the bar (stable layout) but read as
+    // inert: standard M3 38% on-surface alpha for both icon and label.
+    val effectiveTint = if (enabled) tint
+    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {
-        Icon(icon, contentDescription = label, tint = tint)
+        Icon(icon, contentDescription = label, tint = effectiveTint)
         Spacer(Modifier.height(2.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall, color = tint)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = effectiveTint)
     }
 }
 

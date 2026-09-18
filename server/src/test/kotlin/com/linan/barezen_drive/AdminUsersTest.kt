@@ -42,6 +42,15 @@ class AdminUsersTest {
         val anon = client.get("/api/admin/users")
         assertEquals(HttpStatusCode.Unauthorized, anon.status)
 
+        // A signed-in non-owner is authenticated but has no admin rights: an
+        // open registration window must not promote guests to administrators.
+        val guestList = client.get("/api/admin/users") { header(HttpHeaders.Authorization, "Bearer $second") }
+        assertEquals(HttpStatusCode.Forbidden, guestList.status, guestList.bodyAsText())
+        val guestDelete = client.delete("/api/admin/users/00000000-0000-0000-0000-000000000000") {
+            header(HttpHeaders.Authorization, "Bearer $second")
+        }
+        assertEquals(HttpStatusCode.Forbidden, guestDelete.status, guestDelete.bodyAsText())
+
         val list = client.get("/api/admin/users") { header(HttpHeaders.Authorization, ownerH) }
         assertEquals(HttpStatusCode.OK, list.status, list.bodyAsText())
         val body = list.bodyAsText()
@@ -54,6 +63,13 @@ class AdminUsersTest {
 
         val after = client.get("/api/admin/users") { header(HttpHeaders.Authorization, ownerH) }
         assertFalse(after.bodyAsText().contains(""""username":"second"""") , after.bodyAsText())
+
+        // The owner account itself refuses deletion: it carries the instance's
+        // administration, and removing it would hand the instance to whoever
+        // registered next.
+        val ownerId = Regex(""""id":"([^"]+)","username":"owner"""").find(after.bodyAsText())!!.groupValues[1]
+        val selfDel = client.delete("/api/admin/users/$ownerId") { header(HttpHeaders.Authorization, ownerH) }
+        assertEquals(HttpStatusCode.BadRequest, selfDel.status, selfDel.bodyAsText())
 
         val login2 = client.post("/api/auth/login") {
             contentType(ContentType.Application.Json)

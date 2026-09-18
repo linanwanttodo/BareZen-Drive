@@ -54,6 +54,10 @@ internal fun UpdateCheckRow(
     var downloadProgress by remember { mutableStateOf(0f) }
     var status by remember { mutableStateOf<UpdateStatus?>(null) }
     var downloadFailed by remember { mutableStateOf(false) }
+    // The available manifest of the download in flight or last failed: the
+    // retry prompt must be able to restart it after the result dialog has
+    // already cleared `status`.
+    var lastAvailable by remember { mutableStateOf<UpdateStatus.Available?>(null) }
     val scope = rememberCoroutineScope()
     val badgeAvailable by UpdateBadge.available.collectAsState()
 
@@ -65,6 +69,7 @@ internal fun UpdateCheckRow(
     // installer as an unreadable package. Failure surfaces as a retry prompt -
     // no more silent detour to the browser.
     fun startDownload(available: UpdateStatus.Available) {
+        lastAvailable = available
         downloading = true
         downloadProgress = 0f
         scope.launch {
@@ -147,7 +152,7 @@ internal fun UpdateCheckRow(
             confirmButton = {
                 TextButton(onClick = {
                     downloadFailed = false
-                    (status as? UpdateStatus.Available)?.let(::startDownload)
+                    lastAvailable?.let(::startDownload)
                 }) { Text(LocalStrings.current.actionRetry) }
             },
             dismissButton = {

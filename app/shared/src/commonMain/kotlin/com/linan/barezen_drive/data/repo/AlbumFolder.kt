@@ -1,5 +1,7 @@
 package com.linan.barezen_drive.data.repo
 
+import com.linan.barezen_drive.i18n.I18n
+import com.linan.barezen_drive.i18n.Language
 import com.linan.barezen_drive.platform.InstallChannel
 import com.linan.barezen_drive.platform.installChannel
 
@@ -13,7 +15,12 @@ import com.linan.barezen_drive.platform.installChannel
  * another client created it concurrently, and we then re-list to find it.
  */
 object AlbumFolder {
+    // The album tree root. Earliest builds created only the Chinese name;
+    // every other locale now creates "Album". Both names are looked up, so
+    // an existing "相册" tree keeps working and is never renamed behind the
+    // user's back.
     const val ROOT_NAME = "相册"
+    const val ROOT_NAME_EN = "Album"
 
     /**
      * Resolves (or creates) this device's album folder. The nesting mirrors a
@@ -84,14 +91,16 @@ object AlbumFolder {
 
     private suspend fun findOrCreateRoot(repo: FilesRepository): String? {
         val contents = repo.contents("root").getOrNull() ?: return null
-        contents.folders.firstOrNull { it.name == ROOT_NAME }?.let { return it.id }
-        // Not found: create it. A concurrent sibling client may win the race;
-        // re-listing resolves to the same folder either way.
-        repo.createFolder(null, ROOT_NAME).fold(
+        contents.folders.firstOrNull { it.name == ROOT_NAME || it.name == ROOT_NAME_EN }?.let { return it.id }
+        // Not found: create it in the app's language. A concurrent sibling
+        // client may win the race; re-listing resolves to the same folder
+        // either way, and both names resolve from then on.
+        val name = if (I18n.language == Language.ZH) ROOT_NAME else ROOT_NAME_EN
+        repo.createFolder(null, name).fold(
             onSuccess = { return it.id },
             onFailure = {
                 val again = repo.contents("root").getOrNull()
-                return again?.folders?.firstOrNull { it.name == ROOT_NAME }?.id
+                return again?.folders?.firstOrNull { it.name == ROOT_NAME || it.name == ROOT_NAME_EN }?.id
             },
         )
     }

@@ -76,6 +76,31 @@ class SyncPolicyTest {
         )
     }
 
+    @Test
+    fun unknownSizeCannotMakeARowStaleByItself() {
+        // Legacy-migrated rows carry SIZE_UNKNOWN instead of a fake 0: a size
+        // mismatch alone must not reset the whole library to PENDING for a
+        // full re-hash. The timestamp still catches edits.
+        assertFalse(
+            SyncPolicy.isStale(
+                SyncState.DONE,
+                storedSize = SyncPolicy.SIZE_UNKNOWN,
+                storedDateModified = 1,
+                scannedSize = 99,
+                scannedDateModified = 1,
+            ),
+        )
+        assertTrue(
+            SyncPolicy.isStale(
+                SyncState.DONE,
+                storedSize = SyncPolicy.SIZE_UNKNOWN,
+                storedDateModified = 1,
+                scannedSize = 99,
+                scannedDateModified = 2,
+            ),
+        )
+    }
+
     // ---- due selection ----
 
     @Test

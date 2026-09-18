@@ -10,6 +10,7 @@ import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.transfer.TransferCenter
 import com.linan.barezen_drive.data.transfer.TransferKind
 import com.linan.barezen_drive.data.upload.UploadManager
+import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.platform.AndroidPickedFile
 import com.linan.barezen_drive.platform.deviceName
 import com.linan.barezen_drive.platform.legacyDeviceName
@@ -51,8 +52,11 @@ object SyncUploadQueue {
     suspend fun runPass(lanes: Int, onProgress: suspend (Int, Int) -> Unit): SyncPass = coroutineScope {
         val ctx: Context = AndroidContext.app
         val repo = FilesRepository(ApiClient())
+        // stoppedEarly is what makes the worker return retry(): an unreachable
+        // server (or a still-migrating album root) must re-drive the queue on
+        // the request's backoff, not park it until the next periodic run.
         val deviceFolder = AlbumFolder.resolve(repo, deviceName(), legacyDeviceName())
-            ?: return@coroutineScope SyncPass(0, 0, stoppedEarly = false)
+            ?: return@coroutineScope SyncPass(0, 0, stoppedEarly = true)
 
         // One list, one moving cursor. The earlier Channel-based version pushed
         // the queue in and then drained it straight back out just to learn the
@@ -69,7 +73,7 @@ object SyncUploadQueue {
         val consecutiveNet = AtomicInteger(0)
         val stop = AtomicBoolean(false)
 
-        val batchTitle = if (java.util.Locale.getDefault().language == "zh") "相册同步" else "Album sync"
+        val batchTitle = I18n.strings.syncBatchTitle
         val batchId = TransferCenter.start(batchTitle, TransferKind.SYNC, total.toLong())
         val childIds = pending.associate {
             it.uri to TransferCenter.queueFile(batchId, it.name, it.size, mediaHint = isMediaName(it.name))
@@ -154,11 +158,11 @@ object SyncUploadQueue {
         val done = doneCount.get()
         val failed = failCount.get()
         if (stop.get()) {
-            TransferCenter.fail(batchId, if (java.util.Locale.getDefault().language == "zh") "网络中断，稍后自动续传" else "network lost, retrying later")
+            TransferCenter.fail(batchId, I18n.strings.syncBatchNetworkLost)
         } else if (failed == 0) {
             TransferCenter.done(batchId)
         } else {
-            TransferCenter.fail(batchId, if (java.util.Locale.getDefault().language == "zh") "$failed 张失败，已同步 $done 张" else "$failed failed, $done synced")
+            TransferCenter.fail(batchId, I18n.strings.syncBatchFailed(failed, done))
         }
         SyncPass(done, failed, stoppedEarly = stop.get())
     }

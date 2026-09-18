@@ -148,6 +148,13 @@ actual fun PlatformPdfViewer(file: FileDto, repo: FilesRepository) {
         runCatching {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val target = java.io.File(context.cacheDir, "preview-${file.id}.pdf")
+                // One preview is live at a time; older ones would otherwise
+                // pile up in cacheDir forever (each a full document).
+                context.cacheDir.listFiles()?.forEach { f ->
+                    if (f.isFile && f.name.startsWith("preview-") && f.name != target.name) {
+                        runCatching { f.delete() }
+                    }
+                }
                 repo.download(file.id).let { channel ->
                     target.outputStream().use { out ->
                         channel.toInputStream().use { ins ->
@@ -231,17 +238,40 @@ private fun pdfLayoutLabel(layout: PdfLayout): String = when (layout) {
     PdfLayout.CONTINUOUS -> LocalStrings.current.mediaTallImage
 }
 
-/** Holds rendered pages and serializes PdfRenderer access (one open page at a time). */
+/**
+ * Holds rendered pages and serializes PdfRenderer access (one open page at a
+ * time). Bounded as an access-order LRU: every rendered page used to stay in
+ * memory for the whole session, and a hundreds-page document (each page up to
+ * ~16 MB at the 2048 px long edge) grew until the process was killed.
+ */
 private class PdfPageCache {
     val mutex = kotlinx.coroutines.sync.Mutex()
-    val bitmaps = mutableMapOf<Int, android.graphics.Bitmap?>()
+
+    // Access-order LinkedHashMap: get() refreshes recency, and inserting past
+    // MAX_PAGES drops the least recently used entry. Every access happens on
+    // the main thread (composition reads and LaunchedEffect effects), so the
+    // plain map needs no extra synchronization - the mutex only serializes the
+    // PdfRenderer itself. Evicted bitmaps are simply unreferenced; recycling
+    // one still drawn by a composable would corrupt that view.
+    private val lru = object : LinkedHashMap<Int, android.graphics.Bitmap?>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, android.graphics.Bitmap?>): Boolean =
+            size > MAX_PAGES
+    }
+
+    /** Non-mutating read for a pager page's initial composition state. */
+    fun peek(index: Int): android.graphics.Bitmap? = lru[index]
 
     suspend fun bitmapFor(renderer: android.graphics.pdf.PdfRenderer, index: Int): android.graphics.Bitmap? =
         mutex.withLock {
-            bitmaps.getOrPut(index) {
+            lru.getOrPut(index) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { renderPage(renderer, index) }
             }
         }
+
+    companion object {
+        /** 12 pages at ~16 MB each is roughly a 200 MB ceiling. */
+        private const val MAX_PAGES = 12
+    }
 }
 
 @Composable
@@ -308,7 +338,7 @@ private fun PdfPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize().weight(1f),
         ) { index ->
-            var bitmap by remember(index) { mutableStateOf(cache.bitmaps[index]) }
+            var bitmap by remember(index) { mutableStateOf(cache.peek(index)) }
             LaunchedEffect(renderer, index) {
                 bitmap = cache.bitmapFor(renderer, index)
             }
@@ -376,7 +406,7 @@ private fun PdfContinuous(
                     },
             ) {
                 items(pageCount, key = { it }) { index ->
-                    var bitmap by remember(index) { mutableStateOf(cache.bitmaps[index]) }
+                    var bitmap by remember(index) { mutableStateOf(cache.peek(index)) }
                     LaunchedEffect(renderer, index) {
                         bitmap = cache.bitmapFor(renderer, index)
                     }

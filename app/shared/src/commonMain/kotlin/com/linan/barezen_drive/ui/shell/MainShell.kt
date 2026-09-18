@@ -1,10 +1,8 @@
 package com.linan.barezen_drive.ui.shell
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,7 +28,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -195,7 +192,6 @@ fun MainShell(
                         val label = tabLabel(tab)
                         TabIcon(
                             tab,
-                            showDot = false,
                             modifier = Modifier.size(28.dp),
                             tint = tint,
                         )
@@ -223,7 +219,7 @@ fun MainShell(
                         NavigationBarItem(
                             selected = tab == selected,
                             onClick = { onSelect(tab) },
-                            icon = { TabIcon(tab, showDot = false) },
+                            icon = { TabIcon(tab) },
                             label = { Text(tabLabel(tab)) },
                         )
                     }
@@ -242,7 +238,7 @@ fun MainShell(
                     item(
                         selected = tab == selected,
                         onClick = { onSelect(tab) },
-                        icon = { TabIcon(tab, showDot = false) },
+                        icon = { TabIcon(tab) },
                         label = { Text(tabLabel(tab)) },
                     )
                 }
@@ -256,24 +252,11 @@ fun MainShell(
     }
 }
 
-/** Tab icon with the update-available dot on the settings entry. */
 @Composable
 private fun TabIcon(
     tab: MainTab,
-    showDot: Boolean,
     modifier: Modifier = Modifier,
     tint: Color = Color.Unspecified,
 ) {
-    Box(modifier) {
-        Icon(tabIcon(tab), contentDescription = tabLabel(tab), tint = tint)
-        if (showDot) {
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 4.dp, y = (-2).dp)
-                    .size(8.dp)
-                    .background(MaterialTheme.colorScheme.error, CircleShape),
-            )
-        }
-    }
+    Icon(tabIcon(tab), contentDescription = tabLabel(tab), tint = tint, modifier = modifier)
 }

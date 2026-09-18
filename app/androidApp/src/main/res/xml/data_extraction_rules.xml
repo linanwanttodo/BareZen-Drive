@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ cloud backup / device-to-device transfer rules.
+
+  barezen_prefs holds the live access and refresh tokens in plaintext; a
+  backup snapshot restored onto another device would otherwise carry the
+  session with it. Every other pref file keeps the default include behaviour.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="barezen_prefs.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="barezen_prefs.xml" />
+    </device-transfer>
+</data-extraction-rules>

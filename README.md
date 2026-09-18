@@ -19,7 +19,7 @@ The whole stack is Kotlin: Compose Multiplatform for the clients, with a UI buil
 on Material 3 and Backdrop; a Ktor server; PostgreSQL for metadata; Docker Compose
 for deployment. Tuned to run comfortably on a small 1 vCPU / 1 GB RAM server.
 
-Version: 0.0.11 | License: MIT | Platforms: Android, Web, Server
+Version: 0.1.0 | License: MIT | Platforms: Android, Web, Server
 
 ## Quick start
 

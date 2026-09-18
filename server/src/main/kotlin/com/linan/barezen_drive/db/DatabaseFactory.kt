@@ -39,7 +39,55 @@ object DatabaseFactory {
         db = Database.connect(ds)
         transaction(db) { SchemaUtils.createMissingTablesAndColumns(*ALL_TABLES) }
         dropLegacyNameIndex(ds)
+        createRootNameIndexes(ds)
         return db
+    }
+
+    /**
+     * Partial unique indexes for root-level sibling names. The full indexes
+     * declared on FoldersTable/FilesTable include parent_id/folder_id, and
+     * PostgreSQL's default NULLS DISTINCT makes rows whose parent is NULL
+     * never collide - so at the root the concurrency backstop behind
+     * mapNameConflict was dead and two racing creates could both land,
+     * producing duplicate sibling names. These partial indexes cover exactly
+     * the NULL-parent rows (live files only: deleted_at = 0, mirroring the
+     * four-column index's trash carve-out).
+     *
+     * PostgreSQL only: H2 (the test dialect) has no partial indexes, and the
+     * app-level pre-check answers 409 for every sequential case anyway.
+     * createMissingTablesAndColumns never adds indexes, so this runs on every
+     * boot; IF NOT EXISTS keeps it idempotent. If existing root rows already
+     * hold duplicates the create fails - logged with guidance instead of
+     * silently mutating data.
+     */
+    private fun createRootNameIndexes(ds: HikariDataSource) {
+        val ddl = listOf(
+            "folders" to
+                "CREATE UNIQUE INDEX IF NOT EXISTS folders_root_name_uidx " +
+                "ON folders (user_id, name) WHERE parent_id IS NULL",
+            "files" to
+                "CREATE UNIQUE INDEX IF NOT EXISTS files_root_name_uidx " +
+                "ON files (user_id, name) WHERE folder_id IS NULL AND deleted_at = 0",
+        )
+        runCatching {
+            ds.connection.use { conn ->
+                val product = conn.metaData.databaseProductName.orEmpty()
+                if (!product.contains("PostgreSQL", ignoreCase = true)) return
+                conn.autoCommit = true
+                ddl.forEach { (table, statement) ->
+                    runCatching { conn.createStatement().use { it.execute(statement) } }
+                        .onFailure {
+                            log.warn(
+                                "could not create the root-level name index on {} - most likely " +
+                                    "existing root rows already contain duplicate names; deduplicate " +
+                                    "them and the next boot will retry",
+                                table,
+                                it,
+                            )
+                        }
+                }
+            }
+        }.onFailure { log.warn("could not inspect the database for root-level name indexes", it) }
     }
 
     /**

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark windowBackground for the cold-start window: without this, users
+         on the system dark theme saw a white flash before Compose drew. -->
+    <style name="Theme.BareZen" parent="android:Theme.Material.NoActionBar" />
+</resources>

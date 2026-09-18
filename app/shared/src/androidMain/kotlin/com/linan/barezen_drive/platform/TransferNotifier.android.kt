@@ -7,6 +7,9 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.linan.barezen_drive.AndroidContext
+import com.linan.barezen_drive.i18n.I18n
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Ongoing transfer notifications in the shade. One channel for progress and a
@@ -20,8 +23,12 @@ actual object TransferNotifier {
 
     /** Extra on the tap intent: MainActivity turns it into [TransferDeepLink]. */
     const val EXTRA_OPEN_TRANSFERS = "open_transfers"
-    private var counter = 0
-    private val ids = mutableMapOf<String, Int>()
+    // Notification ids are allocated from concurrent upload/download lanes,
+    // so both the counter and the tag map must be thread-safe: a plain
+    // MutableMap getOrPut could allocate two ids for one tag and race the
+    // counter.
+    private val counter = AtomicInteger(0)
+    private val ids = ConcurrentHashMap<String, Int>()
 
     /**
      * The app's own icon, injected once at startup by the app module: per
@@ -73,26 +80,28 @@ actual object TransferNotifier {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = AndroidContext.app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL_PROGRESS) == null) {
+            // Channel names are cached by the system at creation, so a later
+            // language switch keeps the first-created name on that device.
             nm.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_PROGRESS,
-                    "Transfers",
+                    I18n.strings.notifyChannelTransfers,
                     NotificationManager.IMPORTANCE_LOW,
-                ).apply { description = "Upload and download progress" },
+                ),
             )
         }
         if (nm.getNotificationChannel(CHANNEL_DONE) == null) {
             nm.createNotificationChannel(
                 NotificationChannel(
                     CHANNEL_DONE,
-                    "Transfer results",
+                    I18n.strings.notifyChannelTransferResults,
                     NotificationManager.IMPORTANCE_DEFAULT,
                 ),
             )
         }
     }
 
-    private fun idFor(tag: String): Int = ids.getOrPut(tag) { ++counter }
+    private fun idFor(tag: String): Int = ids.getOrPut(tag) { counter.incrementAndGet() }
 
     /**
      * Single place the app's own icons are applied, so no builder in this file

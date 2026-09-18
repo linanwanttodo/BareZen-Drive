@@ -493,7 +493,11 @@ fun FilesScreen(
                             state = ContentsUi(folders, it.files)
                             loadError = null
                         },
-                        onFailure = { },
+                        onFailure = { e ->
+                            // A silent failure would read as "nothing new";
+                            // say what happened instead.
+                            scope.launch { snackbar.showSnackbar(msg(e, I18n.strings.loadFailed)) }
+                        },
                     )
                     refreshing = false
                 }
@@ -531,10 +535,16 @@ fun FilesScreen(
                         }
                         selectedFiles.value = emptySet()
                     }) { Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload) }
-                    IconButton(onClick = {
-                        shareTarget = ui.files.firstOrNull { it.id == sel.first() }
-                        selectedFiles.value = emptySet()
-                    }) { Icon(Icons.Default.Share, contentDescription = LocalStrings.current.actionShare) }
+                    // Sharing creates one link per file server-side, so the action
+                    // only exists for a single selection; disabled (not hidden) on
+                    // multi-select keeps the bar layout stable.
+                    IconButton(
+                        enabled = sel.size == 1,
+                        onClick = {
+                            shareTarget = ui.files.firstOrNull { it.id == sel.first() }
+                            selectedFiles.value = emptySet()
+                        },
+                    ) { Icon(Icons.Default.Share, contentDescription = LocalStrings.current.actionShare) }
                     IconButton(onClick = {
                         // Delete every selected file, not just the first one.
                         deleting = ui.files.filter { it.id in sel }
@@ -1637,6 +1647,10 @@ private fun ShareDialog(
     var creating by remember { mutableStateOf(false) }
     var ttlIndex by remember { mutableStateOf(0) }
     var freshUrl by remember { mutableStateOf<String?>(null) }
+    // Id of the share the freshUrl banner refers to. Revoking must hit exactly
+    // the just-created link: falling back to existing.firstOrNull() revoked the
+    // oldest link whenever this file already had one, leaving the new link live.
+    var freshId by remember { mutableStateOf<String?>(null) }
     var copied by remember { mutableStateOf(false) }
 
     fun refresh() {
@@ -1686,9 +1700,9 @@ private fun ShareDialog(
                                     // Revoke right from the banner: closing a link
                                     // must not require hunting for it later.
                                     scope.launch {
-                                        existing.firstOrNull()?.let { s ->
-                                            repo.revokeShare(s.id).fold(
-                                                onSuccess = { freshUrl = null; refresh() },
+                                        freshId?.let { id ->
+                                            repo.revokeShare(id).fold(
+                                                onSuccess = { freshUrl = null; freshId = null; refresh() },
                                                 onFailure = { onError(it) },
                                             )
                                         }
@@ -1723,6 +1737,7 @@ private fun ShareDialog(
                                 .fold(
                                     onSuccess = { share ->
                                         freshUrl = repo.shareUrl(share.url)
+                                        freshId = share.id
                                         copied = false
                                         creating = false
                                         refresh()

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -78,13 +79,15 @@ fun SyncAlbumsScreen(
     // First-run album review: flipping the switch on is the moment the list
     // gets read. Once answered, [offerAlbumReview] goes false for good.
     var showReview by remember { mutableStateOf(false) }
+    // Bumped by the retry button after a failed scan; the effect reruns per tick.
+    var scanTick by remember { mutableStateOf(0) }
 
     LaunchedEffect(autoSync, offerAlbumReview) {
         if (autoSync && offerAlbumReview) showReview = true
     }
     val backupStatus by MediaSync.status.collectAsState()
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(scanTick) {
         loadFailed = false
         buckets = runCatching { MediaSync.listBuckets() }
             .onFailure { loadFailed = true }
@@ -213,7 +216,11 @@ fun SyncAlbumsScreen(
             )
             when {
                 loadFailed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(strings.loadFailed, color = MaterialTheme.colorScheme.error)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(strings.loadFailed, color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { scanTick++ }) { Text(strings.actionRetry) }
+                    }
                 }
                 buckets == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()

@@ -17,7 +17,7 @@
 技术栈全用 Kotlin：客户端为 Compose Multiplatform，界面基于 Material 3 与 Backdrop；服务端为
 Ktor；元数据存 PostgreSQL；部署走 Docker Compose。针对 1 核 1 GB 内存的小型服务器调优。
 
-版本：0.0.11 | 许可证：MIT | 平台：Android、Web、服务端
+版本：0.1.0 | 许可证：MIT | 平台：Android、Web、服务端
 
 ## 快速开始
 

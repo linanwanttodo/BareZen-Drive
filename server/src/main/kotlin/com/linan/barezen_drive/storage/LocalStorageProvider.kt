@@ -36,7 +36,12 @@ class LocalStorageProvider(private val root: Path) : StorageProvider {
                     out.write(buf, 0, n)
                 }
             }
-            Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE)
+            // REPLACE_EXISTING closes the concurrent-put race: two writers of
+            // the same content key both pass the exists() check above, and the
+            // loser's ATOMIC_MOVE alone would throw FileAlreadyExistsException
+            // (a 500) even though the winning bytes are identical - keys are
+            // content-addressed, so replacing same with same is a no-op.
+            Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } catch (t: Throwable) {
             Files.deleteIfExists(tmp); throw t
         } finally {

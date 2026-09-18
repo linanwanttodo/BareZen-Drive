@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.ui.screens.preview.PreviewKind
+import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Cover image for a file row/tile: shows the server-stored client-generated
@@ -42,7 +44,16 @@ fun FileThumbnail(
     LaunchedEffect(file.id) {
         val kind = PreviewKind.of(file)
         if (file.hasThumbnail || kind == PreviewKind.IMAGE || kind == PreviewKind.VIDEO) {
-            bitmap = loader.load(file.id)
+            // The loader negatively caches a miss for 60s, and this effect
+            // would otherwise never rerun on a resident screen: a cover the
+            // server generates lazily would stay invisible until the row was
+            // scrolled off and back. A few spaced retries cover that window
+            // without polling forever.
+            repeat(3) { attempt ->
+                bitmap = loader.load(file.id)
+                if (bitmap != null) return@LaunchedEffect
+                if (attempt < 2) delay(30.seconds)
+            }
         }
     }
     val bmp = bitmap

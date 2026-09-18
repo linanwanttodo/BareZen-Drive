@@ -12,6 +12,8 @@ import org.w3c.files.File
 import org.w3c.files.FileReader
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.js.JsNumber
+import kotlin.js.toJsNumber
 
 internal class WasmPickedFile(internal val file: File) : PickedFile {
     override val name: String = file.name
@@ -21,12 +23,18 @@ internal class WasmPickedFile(internal val file: File) : PickedFile {
     override suspend fun readRange(offset: Long, length: Int): ByteArray? {
         if (offset >= size || length <= 0) return null
         val end = minOf(offset + length, size)
-        val blob = file.slice(offset.toInt(), end.toInt())
+        val blob = rawSlice(file, offset.toDouble().toJsNumber(), end.toDouble().toJsNumber())
         val ab = blob.readAsArrayBufferSuspending()
         val i8 = Int8Array(ab)
         return ByteArray(i8.length) { i8[it] }
     }
 }
+
+// The org.w3c Blob.slice binding takes Int, so a >2GiB offset would wrap
+// around and read the wrong span of the file. The raw JS call takes doubles,
+// which covers any span a browser File can actually have.
+private fun rawSlice(blob: File, start: JsNumber, end: JsNumber): Blob =
+    js("blob.slice(start, end)")
 
 private suspend fun Blob.readAsArrayBufferSuspending(): ArrayBuffer =
     suspendCancellableCoroutine { cont ->

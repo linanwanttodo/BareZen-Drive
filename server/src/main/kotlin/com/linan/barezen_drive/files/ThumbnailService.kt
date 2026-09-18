@@ -58,6 +58,16 @@ object ThumbnailService {
      *  spawning their own ffmpeg/decoder (bounded CPU + disk usage). */
     private val inFlight = ConcurrentHashMap<String, CompletableFuture<Boolean>>()
 
+    /** Dedicated bounded pool for generation work: supplyAsync's default
+     *  ForkJoinPool.commonPool() shares CPU-1 blocking-sensitive threads with
+     *  parallel streams and any other commonPool user, and generation blocks
+     *  on ffmpeg/decoders. Two workers cap CPU and disk pressure on small
+     *  hosts; inFlight already collapses same-content requests. Daemon
+     *  threads, so the pool never blocks JVM shutdown. */
+    private val genPool = java.util.concurrent.Executors.newFixedThreadPool(2) { r ->
+        Thread(r, "thumb-gen").apply { isDaemon = true }
+    }
+
     fun ffmpegAvailable(): Boolean {
         ffmpegOk?.let { return it }
         val ok = runCatching {
@@ -92,7 +102,7 @@ object ThumbnailService {
         // (computeIfAbsent must store the REAL future - storing a completed
         // placeholder would hand late callers an instant false.)
         val future = inFlight.computeIfAbsent(key) {
-            val f = CompletableFuture.supplyAsync<Boolean> { generateAndStore(storage, meta, key) }
+            val f = CompletableFuture.supplyAsync<Boolean>({ generateAndStore(storage, meta, key) }, genPool)
             f.whenComplete { _, _ -> inFlight.remove(key, f) }
             f
         }

@@ -29,10 +29,15 @@ class AuthRepository(
 
     fun defaultHost(): String = store.baseUrl
 
-    /** Whether the server accepts new sign-ups; true when it cannot be reached. */
+    /**
+     * Whether the server accepts new sign-ups; true when it cannot be reached.
+     * Probes the given host without persisting it: the login screen calls this
+     * while the server URL field is being edited, and the stored base URL must
+     * only change on a real login/register.
+     */
     suspend fun registrationStatus(host: String): Result<Boolean> {
-        if (host.isNotBlank()) store.baseUrl = normalizeHost(host)
-        return api.registrationStatus().map { it.open }
+        val probed = if (host.isBlank()) null else normalizeHost(host)
+        return api.registrationStatus(probed).map { it.open }
     }
 
     fun logout() {

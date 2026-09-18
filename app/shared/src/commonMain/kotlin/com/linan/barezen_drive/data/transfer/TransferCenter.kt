@@ -4,6 +4,7 @@ import com.linan.barezen_drive.data.library.LibraryRevision
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlin.time.Clock
 
 /** What a transfer row represents. */
 enum class TransferKind { UPLOAD, DOWNLOAD, SYNC }
@@ -204,7 +205,29 @@ object TransferCenter {
     }
 
     private fun push(item: TransferItem) {
-        _items.update { (listOf(item) + it).take(MAX_HISTORY) }
+        _items.update { list ->
+            // Live batch headers survive the history cap: a first backup with
+            // more than MAX_HISTORY photos would otherwise evict its own batch
+            // row, which turns "stop syncing" into a no-op (it scans for
+            // RUNNING batch rows) and strands the queued children without
+            // their settle path. Everything else still truncates, newest first.
+            val combined = listOf(item) + list
+            val liveBatches = combined
+                .filter {
+                    it.kind == TransferKind.SYNC && it.parent == null &&
+                        it.phase == TransferPhase.RUNNING
+                }
+                .map { it.id }
+                .toSet()
+            var budget = MAX_HISTORY
+            combined.filter {
+                when {
+                    it.id in liveBatches -> true
+                    budget > 0 -> { budget--; true }
+                    else -> false
+                }
+            }
+        }
     }
 
     private fun update(id: String, block: (TransferItem) -> TransferItem) {
@@ -213,5 +236,7 @@ object TransferCenter {
 
     // A plain counter, not a clock: the rows only need creation ORDER, and a
     // platform clock would drag Android framework calls into unit tests.
-    private fun nowMs(): Long = ++seq
+    // Real wall-clock timestamp for the UI. The seq counter stays reserved
+    // for ids ("t<n>"), where uniqueness matters but the value never shows.
+    private fun nowMs(): Long = Clock.System.now().toEpochMilliseconds()
 }

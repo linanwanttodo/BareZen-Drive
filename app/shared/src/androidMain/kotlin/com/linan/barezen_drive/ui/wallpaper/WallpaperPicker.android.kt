@@ -29,27 +29,41 @@ internal class AndroidWallpaperImage(private val filePath: String, bitmap: Bitma
     override val source: String = filePath
 
     // Decode lazily so recompositions do not re-read the file; the bitmap is
-    // small (at most 512 px on the long edge) so memory stays bounded.
+    // small (at most 512 px on the long edge) so memory stays bounded. The
+    // first decode runs on Dispatchers.IO - bitmap() is suspend - so the
+    // read never lands on the composition (main) thread.
     private val cached: Bitmap? by lazy {
         runCatching { BitmapFactory.decodeFile(filePath) }.getOrNull()
     }
 
-    override suspend fun bitmap(): ImageBitmap? = cached?.asImageBitmap()
+    override suspend fun bitmap(): ImageBitmap? = withContext(Dispatchers.IO) {
+        cached?.asImageBitmap()
+    }
 }
 
 private const val MAX_DIM = 512
 private const val WALLPAPER_FILE = "wallpaper.png"
 
-// Reads a SAF uri fully off the main thread, downscales it to at most
-// MAX_DIM on the longer edge and writes the result to filesDir. The file
-// is rewritten in place so there is exactly one live wallpaper per install.
+// Reads a SAF uri off the main thread, downscales it to at most MAX_DIM on
+// the longer edge and writes the result to filesDir. The file is rewritten in
+// place so there is exactly one live wallpaper per install.
 private suspend fun importWallpaper(ctx: Context, uri: Uri): AndroidWallpaperImage? =
     withContext(Dispatchers.IO) {
-        val raw = runCatching {
-            ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        // Two-stage decode: measure the image first, then decode with an
+        // inSampleSize that lands near MAX_DIM. Decoding a 50-megapixel photo
+        // at full size would allocate a couple hundred megabytes just to
+        // shrink it right back down.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        runCatching {
+            ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_DIM) sample *= 2
+        val bitmap = runCatching {
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
         }.getOrNull() ?: return@withContext null
-        val bitmap = runCatching { BitmapFactory.decodeByteArray(raw, 0, raw.size) }
-            .getOrNull() ?: return@withContext null
         val scale = minOf(1f, MAX_DIM.toFloat() / maxOf(bitmap.width, bitmap.height))
         val small = if (scale < 1f) {
             Bitmap.createScaledBitmap(
@@ -87,14 +101,21 @@ actual fun rememberWallpaperPicker(onResult: (WallpaperImage?) -> Unit): () -> U
 }
 
 /** Reads the wallpaper persisted by a previous pick; null when never set. */
-actual fun loadPersistedWallpaper(): WallpaperImage? {
+actual suspend fun loadPersistedWallpaper(): WallpaperImage? = withContext(Dispatchers.IO) {
     val ctx: Context = AndroidContext.app
     val file = File(ctx.filesDir, WALLPAPER_FILE)
-    if (!file.exists()) return null
-    return runCatching {
-        val bmp = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+    if (!file.exists()) return@withContext null
+    runCatching {
+        val bmp = BitmapFactory.decodeFile(file.absolutePath) ?: return@withContext null
         AndroidWallpaperImage(file.absolutePath, bmp)
     }.getOrNull()
+}
+
+/** Deletes the persisted wallpaper file; no-op when it does not exist. */
+actual fun deletePersistedWallpaper() {
+    runCatching {
+        File(AndroidContext.app.filesDir, WALLPAPER_FILE).delete()
+    }
 }
 
 actual fun isBackdropBlurSupported(): Boolean = true

@@ -69,7 +69,15 @@ fun Route.sharePublicRoutes(storage: StorageProvider) {
             val share = resolve(call)
             val fid = call.parameters["fid"]!!.toUuidOrBadRequest()
             val meta = withContext(Dispatchers.IO) { ShareService.sharedFileMeta(share, fid) }
-            withContext(Dispatchers.IO) { ShareService.recordDownload(share) }
+            // Count one download per transfer, not per HTTP request: media
+            // players fire many Range requests during one playback, and the
+            // PartialContent plugin answers each separately. Only a body that
+            // starts at byte 0 (no Range, or "bytes=0-...") counts; seek and
+            // suffix requests do not.
+            val range = call.request.headers[HttpHeaders.Range]
+            if (range == null || range.startsWith("bytes=0-")) {
+                withContext(Dispatchers.IO) { ShareService.recordDownload(share) }
+            }
             val contentType = meta.mimeType?.let { mime ->
                 runCatching { ContentType.parse(mime) }.getOrNull()
             } ?: ContentType.Application.OctetStream

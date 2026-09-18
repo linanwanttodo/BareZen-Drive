@@ -26,13 +26,16 @@ fun Route.versionRoutes(storage: StorageProvider) {
             val id = call.parameters["id"]!!.toUuidOrBadRequest()
             val versionId = call.parameters["versionId"]?.toUuidOrBadRequest()
                 ?: throw ApiException.badRequest("versionId 非法")
-            call.respond(VersionService.restore(call.userId, id, versionId, storage))
+            // restore opens transactions around its storage IO; run them on the
+            // IO dispatcher instead of the event-loop thread.
+            val dto = withContext(Dispatchers.IO) { VersionService.restore(call.userId, id, versionId, storage) }
+            call.respond(dto)
         }
         delete("/{versionId}") {
             val id = call.parameters["id"]!!.toUuidOrBadRequest()
             val versionId = call.parameters["versionId"]?.toUuidOrBadRequest()
                 ?: throw ApiException.badRequest("versionId 非法")
-            VersionService.deleteVersion(call.userId, id, versionId, storage)
+            withContext(Dispatchers.IO) { VersionService.deleteVersion(call.userId, id, versionId, storage) }
             call.respond(HttpStatusCode.NoContent)
         }
     }

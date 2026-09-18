@@ -62,6 +62,7 @@ import com.linan.barezen_drive.ui.theme.LocalCardAlpha
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.ui.theme.ThemeMode
 import com.linan.barezen_drive.ui.wallpaper.WallpaperImage
+import com.linan.barezen_drive.ui.wallpaper.deletePersistedWallpaper
 import com.linan.barezen_drive.ui.wallpaper.loadPersistedWallpaper
 import com.linan.barezen_drive.ui.wallpaper.rememberWallpaperPicker
 import kotlinx.coroutines.delay
@@ -74,7 +75,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import com.linan.barezen_drive.platform.isWebPlatform
 import com.linan.barezen_drive.platform.initialShareToken
-import com.linan.barezen_drive.platform.rememberFileSaver
 import com.linan.barezen_drive.ui.screens.share.ShareScreen
 import com.linan.barezen_drive.ui.screens.share.ShareManagerScreen
 import com.linan.barezen_drive.ui.screens.trash.TrashScreen
@@ -139,8 +139,10 @@ fun App() {
         I18n.set(language)
     }
 
-    // Load the persisted wallpaper (if any) once; re-decode only on change.
-    LaunchedEffect(wallpaperEnabled) {
+    // Load the persisted wallpaper (if any) exactly once at startup. Keyed on
+    // Unit on purpose: re-running on the wallpaperEnabled toggle re-read the
+    // just-cleared image from disk and "revived" the old wallpaper.
+    LaunchedEffect(Unit) {
         if (wallpaper == null) {
             wallpaper = loadPersistedWallpaper()
         }
@@ -296,9 +298,6 @@ fun App() {
         } else {
             null
         }
-        // One shared saver for the home tab; the files screen owns its own so
-        // download failures surface through that screen's snackbar.
-        val recentSaver = rememberFileSaver { ok -> }
         // Browser clients loaded before a server upgrade keep running the old
         // bundle; this offers the reload that pulls the new one from the server.
         WebUpdatePrompt(
@@ -370,7 +369,6 @@ fun App() {
                             thumbs = thumbs,
                             onOpenAlbum = { tab = MainTab.ALBUM },
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
-                            saver = recentSaver,
                             themeToggle = themeToggle,
                             onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.FILE)) },
                             avatar = tabAvatar,
@@ -460,6 +458,9 @@ fun App() {
                 wallpaperBitmap = null
                 wallpaperEnabled = false
                 prefs.wallpaperEnabled = false
+                // Delete the persisted copy too: leaving it on disk made the
+                // next toggle resurrect the old image.
+                deletePersistedWallpaper()
                 },
                 onOpenSource = { push(Screen.OpenSource) },
                 onOpenUsers = { push(Screen.Users) },

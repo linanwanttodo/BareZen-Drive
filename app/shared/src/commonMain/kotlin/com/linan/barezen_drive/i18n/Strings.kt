@@ -118,6 +118,7 @@ interface Strings {
     val fetchLinkFailed: String
     val playbackUrlUnavailable: String
     val downloadingPdf: String
+    val loadingDocument: String
     val pdfLoadFailed: String
     val pdfCannotOpen: String
     val officeTooLargePreview: String
@@ -275,6 +276,7 @@ interface Strings {
     val restored: String
     val actionDeleteForever: String
     val confirmDeleteForever: String
+    fun confirmDeleteForeverNamed(name: String): String
     val actionEmptyTrash: String
     val confirmEmptyTrash: String
     val actionUnarchive: String
@@ -322,4 +324,15 @@ interface Strings {
     val backupOff: String
     val backupFailedRetryHint: String
     val showBackupSettings: String
+
+    /** Notification channels and worker-side strings (non-Compose callers read
+     *  these through [com.linan.barezen_drive.i18n.I18n.strings]). */
+    val notifyChannelBackup: String
+    val notifyChannelBackupDesc: String
+    val notifyChannelTransfers: String
+    val notifyChannelTransferResults: String
+    val notifyBackupTitle: String
+    val syncBatchTitle: String
+    val syncBatchNetworkLost: String
+    fun syncBatchFailed(failed: Int, done: Int): String
 }

@@ -190,7 +190,12 @@ object UploadService {
         // and every complete would answer CHUNK_MISSING until the session expires.
         val stagingDir = storage.tmpDir.resolve(sessionId.toString()).toFile()
         val present = received.filter { File(stagingDir, "$it.part").exists() }
-        return UploadInitResponse(sessionId.toString(), chunkSize, present.sorted())
+        // A resumed session answers with ITS OWN chunk size, never the one this
+        // request computed: putChunk and complete validate against the stored
+        // value, so echoing a different size would 400 every subsequent chunk
+        // until the session expires.
+        val effectiveChunkSize = existing?.get(UploadSessionsTable.chunkSize) ?: chunkSize
+        return UploadInitResponse(sessionId.toString(), effectiveChunkSize, present.sorted())
     }
 
     /**
@@ -258,6 +263,13 @@ object UploadService {
                     it[UploadChunksTable.chunkIndex] = index
                     it[UploadChunksTable.size] = written
                 }
+            }
+            // Activity extends the session: the TTL is idle-time, not lifetime.
+            // Without this renewal, cleanupExpired would delete an open session
+            // (and every uploaded chunk with it) exactly 24h after creation,
+            // forcing a slow large upload to start over from byte zero.
+            UploadSessionsTable.update({ UploadSessionsTable.id eq sessionId }) {
+                it[expiresAt] = System.currentTimeMillis() + SESSION_TTL_MILLIS
             }
         }
     }
@@ -402,6 +414,19 @@ object UploadService {
                     UploadSessionsTable.deleteWhere { UploadSessionsTable.id eq sid }
                 }
                 cleanupSessionDir(storage, sid)
+            }
+            // Crash leftovers: complete() merges into merge-*.bin and the S3
+            // provider stages into s3put-*.bin directly under tmpDir; a kill -9
+            // skips their finally blocks and orphans the files. Sweep anything
+            // idle for a full session TTL - no live merge or staging file is
+            // anywhere near this old.
+            val staleCutoff = now - SESSION_TTL_MILLIS
+            storage.tmpDir.toFile().listFiles()?.forEach { f ->
+                if (f.isFile && f.lastModified() < staleCutoff &&
+                    (f.name.startsWith("merge-") || f.name.startsWith("s3put-"))
+                ) {
+                    runCatching { f.delete() }
+                }
             }
         }
         // Expired refresh tokens (revoked or not) are dead weight. One statement,

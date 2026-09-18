@@ -112,7 +112,16 @@ private fun ZoomableImage(file: FileDto, repo: FilesRepository) {
                             val newScale = (scale * zoomChange).coerceIn(1f, 6f)
                             scale = newScale
                             if (newScale > 1f) {
-                                offset += panChange
+                                // Keep the scaled image covering the viewport:
+                                // pan is bounded to the overflow on each side,
+                                // so the picture can never be dragged fully
+                                // off screen.
+                                val maxX = size.width * (newScale - 1f) / 2f
+                                val maxY = size.height * (newScale - 1f) / 2f
+                                offset = Offset(
+                                    (offset.x + panChange.x).coerceIn(-maxX, maxX),
+                                    (offset.y + panChange.y).coerceIn(-maxY, maxY),
+                                )
                             } else {
                                 offset = Offset.Zero
                             }

@@ -466,9 +466,14 @@ class ApiClient(
         http.delete("$baseUrl/api/admin/users/$id")
     }
 
-    /** Whether the server accepts new sign-ups right now (public endpoint). */
-    suspend fun registrationStatus(): Result<RegistrationStatusDto> = runApi {
-        http.get("$baseUrl/api/settings/registration").body()
+    /**
+     * Whether the server accepts new sign-ups right now (public endpoint).
+     * baseUrlOverride probes a typed-in host without touching the persisted
+     * base URL - the login screen polls it while the server URL field is
+     * being edited, and a probe must never overwrite the stored address.
+     */
+    suspend fun registrationStatus(baseUrlOverride: String? = null): Result<RegistrationStatusDto> = runApi {
+        http.get("${baseUrlOverride?.trimEnd('/') ?: baseUrl}/api/settings/registration").body()
     }
 
     /** Owner toggle for open registration (PATCH /api/settings/registration). */
