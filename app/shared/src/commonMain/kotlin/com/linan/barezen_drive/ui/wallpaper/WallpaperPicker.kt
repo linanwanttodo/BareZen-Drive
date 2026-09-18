@@ -29,8 +29,14 @@ interface WallpaperImage {
 @Composable
 expect fun rememberWallpaperPicker(onResult: (WallpaperImage?) -> Unit): () -> Unit
 
-/** Reads the wallpaper persisted by a previous pick; null when never set. */
-expect fun loadPersistedWallpaper(): WallpaperImage?
+/**
+ * Reads the wallpaper persisted by a previous pick; null when never set.
+ * Suspending so platform actuals can move disk IO off the caller's thread.
+ */
+expect suspend fun loadPersistedWallpaper(): WallpaperImage?
+
+/** Removes the persisted wallpaper (if any); safe to call when none exists. */
+expect fun deletePersistedWallpaper()
 
 /** True when this platform can render the real-time backdrop blur effects. */
 expect fun isBackdropBlurSupported(): Boolean

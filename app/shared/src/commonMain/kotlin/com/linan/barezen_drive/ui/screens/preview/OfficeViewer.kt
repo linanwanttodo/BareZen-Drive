@@ -108,7 +108,7 @@ fun OfficeViewer(file: FileDto, repo: FilesRepository) {
                     CircularProgressIndicator()
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        LocalStrings.current.downloadingPdf,
+                        LocalStrings.current.loadingDocument,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

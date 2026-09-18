@@ -62,16 +62,28 @@ object SyncPolicy {
     fun albumCategory(name: String?): String? =
         name?.takeIf { it.isNotBlank() && !it.startsWith(".") && !CACHE_ALBUM.matches(it) }
 
+    /** Size stored by the legacy-prefs migration, which had no size column to
+     *  copy. A row with this stored size is only compared by modification
+     *  time: treating "unknown" as "0 bytes" made every migrated row stale
+     *  on the first scan (0 != real size) and reset the whole library to
+     *  PENDING for a pointless full re-hash. */
+    const val SIZE_UNKNOWN = -1L
+
     /** A DONE row whose size or modification time moved on was edited on the
-     *  device and has to go back into the queue (with its cached hash dropped). */
+     *  device and has to go back into the queue (with its cached hash dropped).
+     *  An unknown stored size (see [SIZE_UNKNOWN]) cannot vote: only the
+     *  modification time decides for migrated rows. The first full scan also
+     *  heals them by writing the real size over the sentinel. */
     fun isStale(
         state: SyncState,
         storedSize: Long,
         storedDateModified: Long,
         scannedSize: Long,
         scannedDateModified: Long,
-    ): Boolean = state == SyncState.DONE &&
-        (storedSize != scannedSize || storedDateModified != scannedDateModified)
+    ): Boolean = state == SyncState.DONE && (
+        storedDateModified != scannedDateModified ||
+            (storedSize != SIZE_UNKNOWN && storedSize != scannedSize)
+        )
 
     /** PENDING is always due; FAILED is due while it still has retries left. */
     fun isDue(state: SyncState, attempts: Int, maxAttempts: Int = MAX_ATTEMPTS): Boolean =

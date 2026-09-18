@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pre-Android-12 auto backup rules (fullBackupContent). barezen_prefs holds
+  the plaintext session tokens; it must not leave the device in a backup.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="barezen_prefs.xml" />
+</full-backup-content>

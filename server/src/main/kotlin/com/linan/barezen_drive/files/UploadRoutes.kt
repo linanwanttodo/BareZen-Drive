@@ -10,12 +10,17 @@ import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 fun Route.uploadRoutes(storage: StorageProvider) {
     route("/api/uploads") {
         post("/init") {
             val req = call.receive<UploadInitRequest>()
-            call.respond(UploadService.initUpload(call.userId, req, storage))
+            // initUpload opens several transactions; keep them off the
+            // event-loop thread (see also putChunk/abort below).
+            val res = withContext(Dispatchers.IO) { UploadService.initUpload(call.userId, req, storage) }
+            call.respond(res)
         }
         put("/{id}/chunks/{index}") {
             val sessionId = call.parameters["id"]!!.toUuidOrBadRequest()
@@ -24,7 +29,10 @@ fun Route.uploadRoutes(storage: StorageProvider) {
             // Streamed: the chunk body never buffers in memory (a 20 MiB body per
             // concurrent upload used to multiply the JVM heap pressure on 1G hosts).
             val chunkSha = call.request.headers["X-Chunk-Sha256"]
-            UploadService.putChunk(call.userId, sessionId, index, call.request.receiveChannel(), chunkSha, storage)
+            val body = call.request.receiveChannel()
+            withContext(Dispatchers.IO) {
+                UploadService.putChunk(call.userId, sessionId, index, body, chunkSha, storage)
+            }
             call.respond(HttpStatusCode.NoContent)
         }
         post("/{id}/complete") {
@@ -33,7 +41,7 @@ fun Route.uploadRoutes(storage: StorageProvider) {
         }
         delete("/{id}") {
             val sessionId = call.parameters["id"]!!.toUuidOrBadRequest()
-            UploadService.abort(call.userId, sessionId, storage)
+            withContext(Dispatchers.IO) { UploadService.abort(call.userId, sessionId, storage) }
             call.respond(HttpStatusCode.NoContent)
         }
     }

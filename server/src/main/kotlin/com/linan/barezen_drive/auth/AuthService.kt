@@ -1,6 +1,7 @@
 package com.linan.barezen_drive.auth
 
 import com.linan.barezen_drive.api.ApiException
+import com.linan.barezen_drive.api.isUniqueViolation
 import com.linan.barezen_drive.core.dto.ErrorCodes
 import com.linan.barezen_drive.core.dto.LoginResponse
 import com.linan.barezen_drive.core.dto.RefreshResponse
@@ -35,6 +36,15 @@ object AuthService {
     private val rnd = SecureRandom()
     private val USERNAME_RE = Regex("^[a-zA-Z0-9_]{3,32}$")
 
+    /**
+     * Timing-equalizer for logins against a non-existent username. A real
+     * verification burns one bcrypt KDF; a plain 401 does not, and the
+     * response-time delta turns the login endpoint into a username oracle.
+     * The dummy hash is valid bcrypt so verify() pays the full cost.
+     */
+    private const val TIMING_DUMMY_PASSWORD = "barezen-timing-equalizer"
+    private val timingDummyHash: String by lazy { PasswordHasher.hash(TIMING_DUMMY_PASSWORD) }
+
     private fun hashToken(t: String) = java.security.MessageDigest.getInstance("SHA-256")
         .digest(t.encodeToByteArray()).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
@@ -63,19 +73,29 @@ object AuthService {
         if (password.encodeToByteArray().size > 72) {
             throw ApiException.badRequest("密码过长（最多 72 字节）", ErrorCodes.VALIDATION_ERROR)
         }
-        return transaction(DatabaseFactory.db) {
-            if (UsersTable.selectAll().where { UsersTable.username eq username }.any()) {
+        return try {
+            transaction(DatabaseFactory.db) {
+                if (UsersTable.selectAll().where { UsersTable.username eq username }.any()) {
+                    throw ApiException.conflict(ErrorCodes.USERNAME_TAKEN, "用户名已存在")
+                }
+                val id = UUID.randomUUID()
+                val now = System.currentTimeMillis()
+                UsersTable.insert {
+                    it[UsersTable.id] = id
+                    it[UsersTable.username] = username
+                    it[passwordHash] = PasswordHasher.hash(password)
+                    it[createdAt] = now
+                }
+                UserDto(id.toString(), username, epochToIso(now))
+            }
+        } catch (e: Exception) {
+            // Two racing registers can both pass the SELECT above; the unique
+            // index is the backstop, and the loser must read as the same 409
+            // instead of an unmapped 500.
+            if (e.isUniqueViolation()) {
                 throw ApiException.conflict(ErrorCodes.USERNAME_TAKEN, "用户名已存在")
             }
-            val id = UUID.randomUUID()
-            val now = System.currentTimeMillis()
-            UsersTable.insert {
-                it[UsersTable.id] = id
-                it[UsersTable.username] = username
-                it[passwordHash] = PasswordHasher.hash(password)
-                it[createdAt] = now
-            }
-            UserDto(id.toString(), username, epochToIso(now))
+            throw e
         }
     }
 
@@ -94,12 +114,20 @@ object AuthService {
 
     fun login(username: String, password: String): LoginResponse = transaction(DatabaseFactory.db) {
         val row = UsersTable.selectAll().where { UsersTable.username eq username }.singleOrNull()
-            ?: throw ApiException.unauthorized("用户名或密码错误")
         // A stored hash can never correspond to a >72-byte raw password (register
         // rejects those), so verify() would only throw; answer like a wrong password.
-        val ok = password.encodeToByteArray().size <= 72 &&
-            PasswordHasher.verify(password, row[UsersTable.passwordHash])
-        if (!ok) throw ApiException.unauthorized("用户名或密码错误")
+        val ok = when {
+            row == null -> {
+                // Burn one bcrypt verification against the dummy hash so the
+                // response timing matches an existing-username attempt; without
+                // this the fast 401 is a username-existence oracle.
+                PasswordHasher.verify(TIMING_DUMMY_PASSWORD, timingDummyHash)
+                false
+            }
+            else -> password.encodeToByteArray().size <= 72 &&
+                PasswordHasher.verify(password, row[UsersTable.passwordHash])
+        }
+        if (!ok || row == null) throw ApiException.unauthorized("用户名或密码错误")
         issueTokens(row[UsersTable.id])
     }
 
@@ -134,10 +162,11 @@ object AuthService {
             throw ApiException.unauthorized("refresh token 已过期", ErrorCodes.TOKEN_EXPIRED)
         }
         val uid = row[RefreshTokensTable.user]
-        // Conditional revoke: if a concurrent refresh already took this token,
-        // the update matches zero rows and we re-check against the grace window
-        // below instead of failing outright.
+        var graceReplay = false
         if (prevRevokedAt == null) {
+            // Conditional revoke: if a concurrent refresh already took this token,
+            // the update matches zero rows and this attempt falls into the grace
+            // replay path below instead of failing outright.
             val revoked = RefreshTokensTable.update({
                 (RefreshTokensTable.tokenHash eq h) and (RefreshTokensTable.revokedAt eq null)
             }) { it[RefreshTokensTable.revokedAt] = now }
@@ -147,6 +176,23 @@ object AuthService {
                 if (at == null || now - at >= REFRESH_REUSE_GRACE_MS) {
                     throw ApiException.unauthorized("refresh token 已失效", ErrorCodes.TOKEN_INVALID)
                 }
+                graceReplay = true
+            }
+        } else {
+            graceReplay = true
+        }
+        if (graceReplay) {
+            // The grace window exists for exactly one thing: the rotation response
+            // died in transit and the legitimate client retries the same old
+            // token. Bound it to ONE extra rotation - an unbounded window let a
+            // stolen token mint a fresh child per replay for its whole duration.
+            // The compare-and-increment keeps the bound when replays race.
+            val observed = row[RefreshTokensTable.graceReplays]
+            val bounded = RefreshTokensTable.update({
+                (RefreshTokensTable.tokenHash eq h) and (RefreshTokensTable.graceReplays eq observed)
+            }) { it[graceReplays] = observed + 1 }
+            if (bounded == 0) {
+                throw ApiException.unauthorized("refresh token 已失效", ErrorCodes.TOKEN_INVALID)
             }
         }
         val (newRaw, expMs) = newRefreshToken()

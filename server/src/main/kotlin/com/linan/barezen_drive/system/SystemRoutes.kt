@@ -34,8 +34,9 @@ fun Route.systemRoutes(storageDir: String) {
  *
  * GET is public: the login screen reads it to hide the register tab when
  * sign-ups are closed, so a visitor never fills a form that would only fail.
- * PATCH is owner-only: any signed-in user of this single-user deployment may
- * toggle registration, matching the rest of the server's single-tenant model.
+ * PATCH is owner-only: the first account created administers the instance
+ * (see OwnerGuard). A guest account let in through an open registration
+ * window must never be able to close the door behind it.
  */
 fun Route.settingsRoutes() {
     get("/api/settings/registration") {
@@ -44,7 +45,7 @@ fun Route.settingsRoutes() {
     }
     authenticate("auth-jwt") {
         patch("/api/settings/registration") {
-            call.userId // enforce authentication before touching anything
+            requireOwner(call.userId) // authentication AND ownership
             val req = call.receive<RegistrationSettingRequest>()
             withContext(Dispatchers.IO) { ServerSettingsService.setRegistrationOpen(req.open) }
             call.respond(RegistrationStatusDto(req.open))

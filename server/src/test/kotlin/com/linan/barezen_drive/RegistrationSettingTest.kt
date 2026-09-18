@@ -66,5 +66,21 @@ class RegistrationSettingTest {
         val after = client.post("/api/auth/register") {
             contentType(ContentType.Application.Json); setBody("""{"username":"second","password":"password123"}""") }
         assertEquals(HttpStatusCode.Created, after.status, after.bodyAsText())
+
+        // The newly admitted account is a guest, not an administrator: it can
+        // sign in but must not be able to flip the registration switch.
+        val secondLogin = client.post("/api/auth/login") {
+            contentType(ContentType.Application.Json); setBody("""{"username":"second","password":"password123"}""")
+        }
+        assertEquals(HttpStatusCode.OK, secondLogin.status, secondLogin.bodyAsText())
+        val secondAuth = "Bearer " + Regex(""""accessToken":"([^"]+)"""").find(secondLogin.bodyAsText())!!.groupValues[1]
+        val secondToggle = client.patch("/api/settings/registration") {
+            header(HttpHeaders.Authorization, secondAuth)
+            contentType(ContentType.Application.Json); setBody("""{"open":false}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, secondToggle.status, secondToggle.bodyAsText())
+        // The switch still reads open - the guest's attempt changed nothing.
+        val stillOpen = client.get("/api/settings/registration")
+        assertTrue(stillOpen.bodyAsText().contains("\"open\":true"), stillOpen.bodyAsText())
     }
 }

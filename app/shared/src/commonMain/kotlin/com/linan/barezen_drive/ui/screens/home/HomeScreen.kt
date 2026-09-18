@@ -64,6 +64,10 @@ import com.linan.barezen_drive.ui.media.formatDateTime
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.ui.screens.preview.PreviewKind
 import io.ktor.utils.io.ByteReadChannel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import com.linan.barezen_drive.platform.rememberFileSaver
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.ui.component.FileTransferEntryIcon
 import com.linan.barezen_drive.ui.shell.BottomBarClearance
@@ -89,7 +93,6 @@ fun HomeScreen(
     thumbs: ThumbnailLoader,
     onOpenAlbum: () -> Unit,
     onPreview: (List<FileDto>, Int) -> Unit,
-    saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit,
     themeToggle: (@Composable () -> Unit)? = null,
     onOpenUploads: () -> Unit = {},
     avatar: @Composable () -> Unit = {},
@@ -102,6 +105,11 @@ fun HomeScreen(
     var latency by remember { mutableStateOf<Long?>(null) }
     val snackbar = SnackbarHostState()
     val scope = rememberCoroutineScope()
+    // One shared saver for the home tab; download failures surface through
+    // this screen's snackbar, same as the files screen.
+    val saver = rememberFileSaver { ok ->
+        if (ok == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    }
     // Pending batch delete from the selection bar; confirmed through a dialog
     // like the files screen does - a bare tap must never destroy data.
     var confirmDelete by remember { mutableStateOf<List<FileDto>?>(null) }
@@ -135,15 +143,21 @@ fun HomeScreen(
         reload()
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            val s = repo.serverStats().getOrNull()
-            if (s != null) {
-                stats = s
-                statsUnavailable = false
+    // Poll only while the screen is actually visible: STARTED/STOPPED bracket
+    // the loop, so backgrounding the app stops the 3s stats traffic instead
+    // of draining battery against a paused Activity.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                val s = repo.serverStats().getOrNull()
+                if (s != null) {
+                    stats = s
+                    statsUnavailable = false
+                }
+                latency = runCatching { repo.ping() }.getOrNull()
+                delay(3.seconds)
             }
-            latency = runCatching { repo.ping() }.getOrNull()
-            delay(3.seconds)
         }
     }
 
@@ -168,122 +182,128 @@ fun HomeScreen(
         // Long-press multi-select over the recent list, same pattern as Files.
         var selected by remember { mutableStateOf(setOf<String>()) }
         val recentList = recent
-        if (selected.isNotEmpty() && recentList != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        // One Column wraps the selection bar and the list: the scaffold
+        // places every child of its content slot at (0,0), so siblings
+        // would stack on top of each other and the bar would be unusable
+        // (same pattern as the files screen).
+        Column(Modifier.fillMaxSize().padding(pad)) {
+            if (selected.isNotEmpty() && recentList != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = { selected = recentList.map { it.id }.toSet() }) {
+                        Text(LocalStrings.current.selectAll)
+                    }
+                    Text(
+                        "${selected.size}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = {
+                        selected.forEach { id ->
+                            recentList.firstOrNull { it.id == id }?.let {
+                                saver(it.name, it.mimeType) { repo.download(it.id) }
+                            }
+                        }
+                        selected = emptySet()
+                    }) { Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload) }
+                    IconButton(onClick = {
+                        // Ask first: a bare tap must never destroy data.
+                        confirmDelete = recentList.filter { it.id in selected }
+                        selected = emptySet()
+                    }) {
+                        Icon(Icons.Default.Delete, contentDescription = LocalStrings.current.actionDelete,
+                            tint = MaterialTheme.colorScheme.error)
+                    }
+                    IconButton(onClick = { selected = emptySet() }) {
+                        Icon(Icons.Default.Close, contentDescription = LocalStrings.current.actionCancel)
+                    }
+                }
+                HorizontalDivider()
+            }
+            val albumList = album
+            // Bottom clearance lets the last rows scroll clear of the floating
+            // glass bar while content still flows behind it for the refraction.
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = BottomBarClearance),
             ) {
-                TextButton(onClick = { selected = recentList.map { it.id }.toSet() }) {
-                    Text(LocalStrings.current.selectAll)
+                // ---- Server status section ----
+                item(key = "server_status") {
+                    ServerStatusCard(stats, latency, statsUnavailable)
                 }
-                Text(
-                    "${selected.size}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = {
-                    selected.forEach { id ->
-                        recentList.firstOrNull { it.id == id }?.let {
-                            saver(it.name, it.mimeType) { repo.download(it.id) }
-                        }
+                // ---- Album section ----
+                if (!albumList.isNullOrEmpty()) {
+                    item(key = "album_header") {
+                        SectionHeader(
+                            title = LocalStrings.current.tabAlbum,
+                            action = LocalStrings.current.seeAll,
+                            onAction = onOpenAlbum,
+                        )
                     }
-                    selected = emptySet()
-                }) { Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload) }
-                IconButton(onClick = {
-                    // Ask first: a bare tap must never destroy data.
-                    confirmDelete = recentList.filter { it.id in selected }
-                    selected = emptySet()
-                }) {
-                    Icon(Icons.Default.Delete, contentDescription = LocalStrings.current.actionDelete,
-                        tint = MaterialTheme.colorScheme.error)
-                }
-                IconButton(onClick = { selected = emptySet() }) {
-                    Icon(Icons.Default.Close, contentDescription = LocalStrings.current.actionCancel)
-                }
-            }
-            HorizontalDivider()
-        }
-        val albumList = album
-        // Bottom clearance lets the last rows scroll clear of the floating
-        // glass bar while content still flows behind it for the refraction.
-        LazyColumn(
-            Modifier.fillMaxSize().padding(pad),
-            contentPadding = PaddingValues(bottom = BottomBarClearance),
-        ) {
-            // ---- Server status section ----
-            item(key = "server_status") {
-                ServerStatusCard(stats, latency, statsUnavailable)
-            }
-            // ---- Album section ----
-            if (!albumList.isNullOrEmpty()) {
-                item(key = "album_header") {
-                    SectionHeader(
-                        title = LocalStrings.current.tabAlbum,
-                        action = LocalStrings.current.seeAll,
-                        onAction = onOpenAlbum,
-                    )
-                }
-                item(key = "album_strip") {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        contentPadding = PaddingValues(horizontal = 16.dp),
-                    ) {
-                        items(albumList, key = { it.id }) { file ->
-                            Box(Modifier.clickable {
-                                val index = albumList.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
-                                onPreview(albumList, index)
-                            }) {
-                                FileThumbnail(file, thumbs, edge = 108.dp)
+                    item(key = "album_strip") {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                        ) {
+                            items(albumList, key = { it.id }) { file ->
+                                Box(Modifier.clickable {
+                                    val index = albumList.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
+                                    onPreview(albumList, index)
+                                }) {
+                                    FileThumbnail(file, thumbs, edge = 108.dp)
+                                }
                             }
                         }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                }
-            }
-            // ---- Recent section ----
-            item(key = "recent_header") {
-                SectionHeader(title = LocalStrings.current.homeRecent, action = null, onAction = null)
-            }
-            if (error != null && recentList == null) {
-                item(key = "recent_error") {
-                    Text(
-                        error ?: LocalStrings.current.loadFailed,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(16.dp),
-                    )
-                }
-            } else if (recentList == null) {
-                item(key = "recent_loading") {
-                    Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
-                        CircularProgressIndicator()
+                        Spacer(Modifier.height(12.dp))
                     }
                 }
-            } else if (recentList.isEmpty()) {
-                item(key = "recent_empty") {
-                    Text(
-                        LocalStrings.current.noRecentFiles,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(16.dp),
-                    )
+                // ---- Recent section ----
+                item(key = "recent_header") {
+                    SectionHeader(title = LocalStrings.current.homeRecent, action = null, onAction = null)
                 }
-            } else {
-                items(recentList, key = { it.id }) { file ->
-                    RecentRow(
-                        file = file,
-                        thumbs = thumbs,
-                        onOpen = { openRecent(file, recentList, onPreview, saver, repo) },
-                        selection = selected.ifEmpty { null },
-                        onToggleSelect = {
-                            selected = selected.toMutableSet().apply {
-                                if (!add(file.id)) remove(file.id)
-                            }
-                        },
-                    )
-                    HorizontalDivider()
+                if (error != null && recentList == null) {
+                    item(key = "recent_error") {
+                        Text(
+                            error ?: LocalStrings.current.loadFailed,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                } else if (recentList == null) {
+                    item(key = "recent_loading") {
+                        Box(Modifier.fillMaxWidth().padding(24.dp), Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                } else if (recentList.isEmpty()) {
+                    item(key = "recent_empty") {
+                        Text(
+                            LocalStrings.current.noRecentFiles,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                } else {
+                    items(recentList, key = { it.id }) { file ->
+                        RecentRow(
+                            file = file,
+                            thumbs = thumbs,
+                            onOpen = { openRecent(file, recentList, onPreview, repo) },
+                            selection = selected.ifEmpty { null },
+                            onToggleSelect = {
+                                selected = selected.toMutableSet().apply {
+                                    if (!add(file.id)) remove(file.id)
+                                }
+                            },
+                        )
+                        HorizontalDivider()
+                    }
                 }
             }
         }
@@ -316,7 +336,6 @@ private fun openRecent(
     file: FileDto,
     listing: List<FileDto>,
     onPreview: (List<FileDto>, Int) -> Unit,
-    saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit,
     repo: FilesRepository,
 ) {
     when (PreviewKind.of(file)) {
@@ -327,7 +346,9 @@ private fun openRecent(
         }
         PreviewKind.VIDEO, PreviewKind.AUDIO, PreviewKind.TEXT, PreviewKind.PDF, PreviewKind.DOCUMENT ->
             onPreview(listOf(file), 0)
-        PreviewKind.OTHER -> saver(file.name, file.mimeType) { repo.download(file.id) }
+        // Unknown types open the preview too (its Unsupported pane offers an
+        // explicit download): tapping a file must never silently start one.
+        PreviewKind.OTHER -> onPreview(listOf(file), 0)
     }
 }
 

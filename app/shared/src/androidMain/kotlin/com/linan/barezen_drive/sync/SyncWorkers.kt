@@ -12,6 +12,7 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.linan.barezen_drive.AndroidContext
 import com.linan.barezen_drive.data.local.TokenStorage
+import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.platform.MediaSync
 
 /**
@@ -27,16 +28,21 @@ internal object BackupNotification {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = AndroidContext.app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL) == null) {
+            // The system caches a channel's name at creation time, so this only
+            // fully applies to fresh installs; language switches later on keep
+            // showing the first-created name on that platform.
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Album backup", NotificationManager.IMPORTANCE_LOW)
-                    .apply { description = "Automatic photo and video backup progress" },
+                NotificationChannel(CHANNEL, I18n.strings.notifyChannelBackup, NotificationManager.IMPORTANCE_LOW)
+                    .apply { description = I18n.strings.notifyChannelBackupDesc },
             )
         }
     }
 
     fun build(done: Int, total: Int): Notification {
         ensureChannel()
-        val title = if (java.util.Locale.getDefault().language == "zh") "正在备份相册" else "Backing up photos"
+        // The app's in-app language, not the system locale: a user running the
+        // app in English on a Chinese system phone must still get English.
+        val title = I18n.strings.notifyBackupTitle
         val text = if (total > 0) "$done / $total" else null
         val b = NotificationCompat.Builder(AndroidContext.app, CHANNEL)
             .setContentTitle(title)
@@ -70,6 +76,20 @@ internal object BackupNotification {
  */
 class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
 
+    companion object {
+        /**
+         * Serializes upload passes within this process. WorkManager unique
+         * names do not cross-serialize the periodic request and a trigger or
+         * manual one, and two concurrent passes used to stomp each other:
+         * pass B's resetUploadingToPending() flipped the rows pass A was
+         * actively uploading back to PENDING, both passes then claimed the
+         * same photo and one of them failed NAME_CONFLICT. tryLock, not
+         * lock: a pass that arrives while another drains has nothing left
+         * to do - the running pass is already doing exactly that work.
+         */
+        private val passMutex = kotlinx.coroutines.sync.Mutex()
+    }
+
     /**
      * WorkManager itself calls this on the expedited path (below Android 12 an
      * expedited job is emulated with a foreground service, and the platform asks
@@ -95,47 +115,60 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
             return Result.success()
         }
 
-        SyncDb.migrateLegacyOnce()
-        SyncDb.resetUploadingToPending()
-        setForeground(BackupNotification.foregroundInfo(0, 0))
+        // One drain at a time (see [passMutex]). Everything from the queue
+        // reset to the final bookkeeping stays inside the lock.
+        if (!passMutex.tryLock()) return Result.success()
+        try {
+            SyncDb.migrateLegacyOnce()
+            SyncDb.resetUploadingToPending()
+            // setForeground needs the dataSync FGS allowance, which some OEM
+            // skins and Android 14's background-start rules deny. A rejection
+            // must not fail the pass: WorkManager would mark FAILED (not
+            // RETRY) and this trigger's queue would sit until the next
+            // periodic run. Uploading as a plain background worker is the
+            // graceful degradation.
+            runCatching { setForeground(BackupNotification.foregroundInfo(0, 0)) }
 
-        // The change observer asks for an incremental read: only media whose
-        // DATE_MODIFIED moved past the last scan's watermark is re-read, so a
-        // photo landing no longer walks the whole library. The periodic tick and
-        // the reconcile job still pass null and take everything.
-        val incremental = inputData.getBoolean(MediaSync.KEY_INCREMENTAL, false)
-        val since = if (incremental) SyncPolicy.scanSinceSeconds(MediaSync.lastScanAt()) else null
-        val scanned = runCatching { SyncScan.scanAll(applicationContext, since) }.getOrNull()
-        if (scanned != null) {
-            SyncDb.upsertScanned(scanned)
-            MediaSync.markScanned()
-        }
-
-        val totalEstimate = SyncDb.dueCount()
-        val pass = runCatching {
-            SyncUploadQueue.runPass(MediaSync.syncLanes()) { done, total ->
-                val grand = total.takeIf { it > 0 } ?: totalEstimate
-                runCatching { setForeground(BackupNotification.foregroundInfo(done, grand)) }
-                // Keep the transfer-centre card live (pending / uploading /
-                // paused) without a second source of truth: it reads the queue.
-                MediaSync.refreshStatus()
+            // The change observer asks for an incremental read: only media whose
+            // DATE_MODIFIED moved past the last scan's watermark is re-read, so a
+            // photo landing no longer walks the whole library. The periodic tick and
+            // the reconcile job still pass null and take everything.
+            val incremental = inputData.getBoolean(MediaSync.KEY_INCREMENTAL, false)
+            val since = if (incremental) SyncPolicy.scanSinceSeconds(MediaSync.lastScanAt()) else null
+            val scanned = runCatching { SyncScan.scanAll(applicationContext, since) }.getOrNull()
+            if (scanned != null) {
+                SyncDb.upsertScanned(scanned)
+                MediaSync.markScanned()
             }
-        }.getOrNull()
 
-        if (pass != null && !pass.stoppedEarly && pass.failed == 0 && SyncDb.dueCount() == 0) {
-            MediaSync.markSynced()
-        }
-        MediaSync.refreshStatus()
+            val totalEstimate = SyncDb.dueCount()
+            val pass = runCatching {
+                SyncUploadQueue.runPass(MediaSync.syncLanes()) { done, total ->
+                    val grand = total.takeIf { it > 0 } ?: totalEstimate
+                    runCatching { setForeground(BackupNotification.foregroundInfo(done, grand)) }
+                    // Keep the transfer-centre card live (pending / uploading /
+                    // paused) without a second source of truth: it reads the queue.
+                    MediaSync.refreshStatus()
+                }
+            }.getOrNull()
 
-        // Work left in the queue (failures with retries remaining, or an early
-        // stop from a dropped connection) is retried with the linear backoff the
-        // request carries; retry() keeps us from hot-looping against an offline
-        // server, which is what the default 30 s exponential backoff used to do.
-        val remaining = SyncDb.dueCount()
-        return if (remaining > 0 && (pass == null || pass.stoppedEarly || pass.failed > 0)) {
-            Result.retry()
-        } else {
-            Result.success()
+            if (pass != null && !pass.stoppedEarly && pass.failed == 0 && SyncDb.dueCount() == 0) {
+                MediaSync.markSynced()
+            }
+            MediaSync.refreshStatus()
+
+            // Work left in the queue (failures with retries remaining, or an early
+            // stop from a dropped connection) is retried with the linear backoff the
+            // request carries; retry() keeps us from hot-looping against an offline
+            // server, which is what the default 30 s exponential backoff used to do.
+            val remaining = SyncDb.dueCount()
+            return if (remaining > 0 && (pass == null || pass.stoppedEarly || pass.failed > 0)) {
+                Result.retry()
+            } else {
+                Result.success()
+            }
+        } finally {
+            passMutex.unlock()
         }
     }
 }

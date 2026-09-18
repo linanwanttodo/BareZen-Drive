@@ -170,9 +170,11 @@ object FileService {
         r.toFileMeta()
     }
 
-    /** Owner-agnostic metadata lookup, only for signature-authenticated access. */
+    /** Owner-agnostic metadata lookup, only for signature-authenticated access.
+     *  Trashed rows are excluded: moving a file to the trash revokes its share
+     *  links, and its signed /link URLs must die the same way. */
     fun getFileMetaUnscoped(id: UUID): FileMeta = transaction(DatabaseFactory.db) {
-        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileMeta()
+        FilesTable.selectAll().where { (FilesTable.id eq id) and (FilesTable.deletedAt eq 0L) }.singleOrNull()?.toFileMeta()
             ?: throw ApiException.notFound("文件不存在")
     }
 
@@ -209,7 +211,8 @@ object FileService {
                 it[updatedAt] = System.currentTimeMillis()
             }
         }
-        FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto()
+        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
+                ?: throw ApiException.notFound("文件不存在")
     }
 
     /**
@@ -230,7 +233,8 @@ object FileService {
         // an explicit act.
         val activeLinks = SqlExpressionBuilder.run { (ShareLinksTable.file eq id) and ShareLinksTable.revokedAt.isNull() }
         ShareLinksTable.update({ activeLinks }) { it[revokedAt] = now }
-        FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto()
+        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
+                ?: throw ApiException.notFound("文件不存在")
     }
 
     /** Everything currently in the trash, most recently trashed first. */
@@ -255,7 +259,8 @@ object FileService {
                 it[updatedAt] = System.currentTimeMillis()
             }
         }
-        FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto()
+        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
+                ?: throw ApiException.notFound("文件不存在")
     }
 
     /** Permanent removal of a trashed file; returns blob keys that lost their last reference. */
@@ -294,7 +299,8 @@ object FileService {
     fun setFavorite(userId: UUID, id: UUID, favorite: Boolean): FileDto = transaction(DatabaseFactory.db) {
         fileRowOf(userId, id)
         FilesTable.update({ FilesTable.id eq id }) { it[isFavorite] = favorite }
-        FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto()
+        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
+                ?: throw ApiException.notFound("文件不存在")
     }
 
     /** Archive is a flag, not a move: the file keeps its folder and name. */
@@ -305,7 +311,8 @@ object FileService {
             it[archivedAt] = if (archived) now else 0L
             it[updatedAt] = now
         }
-        FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto()
+        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
+                ?: throw ApiException.notFound("文件不存在")
     }
 
     /** Row of a file owned by [userId] regardless of trash state - the trash

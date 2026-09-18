@@ -42,6 +42,12 @@ fun TextViewer(file: FileDto, repo: FilesRepository) {
     var error by remember(file.id) { mutableStateOf(false) }
 
     LaunchedEffect(file.id) {
+        // An empty file has no valid byte range; requesting one would answer
+        // 416. Hand back empty text without touching the network.
+        if (file.size == 0L) {
+            text = ""
+            return@LaunchedEffect
+        }
         runCatching {
             withContext(Dispatchers.Default) {
                 // The Range header caps the response at TEXT_PREVIEW_LIMIT, so

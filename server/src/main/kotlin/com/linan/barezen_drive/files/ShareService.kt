@@ -129,26 +129,26 @@ object ShareService {
             folderId != null -> base.filter { it[ShareLinksTable.folder]?.toString() == folderId }
             else -> base
         }
+        // Two batched name lookups instead of one SELECT per share row: the
+        // management screen lists every active share, and a per-row query made
+        // the endpoint O(n) round trips. A missing row (target deleted) reads
+        // as the same "(已删除)" placeholder as before.
+        val fileNames = rows.mapNotNull { it[ShareLinksTable.file] }.distinct().let { ids ->
+            if (ids.isEmpty()) emptyMap()
+            else FilesTable.selectAll().where { FilesTable.id inList ids }
+                .associate { it[FilesTable.id] to it[FilesTable.name] }
+        }
+        val folderNames = rows.mapNotNull { it[ShareLinksTable.folder] }.distinct().let { ids ->
+            if (ids.isEmpty()) emptyMap()
+            else FoldersTable.selectAll().where { FoldersTable.id inList ids }
+                .associate { it[FoldersTable.id] to it[FoldersTable.name] }
+        }
         rows.map { row ->
             val isFile = row[ShareLinksTable.file] != null
             val targetName = if (isFile) {
-                val fid = row[ShareLinksTable.file] ?: return@map ShareDto(
-                    row[ShareLinksTable.id].toString(), "/s/<token>", "file", "(已删除)",
-                    row[ShareLinksTable.expiresAt]?.let { Instant.ofEpochMilli(it).toString() },
-                    Instant.ofEpochMilli(row[ShareLinksTable.createdAt]).toString(),
-                    row[ShareLinksTable.viewCount], row[ShareLinksTable.downloadCount],
-                )
-                FilesTable.selectAll().where { FilesTable.id eq fid }
-                    .singleOrNull()?.get(FilesTable.name) ?: "(已删除)"
+                fileNames[row[ShareLinksTable.file]] ?: "(已删除)"
             } else {
-                val gid = row[ShareLinksTable.folder] ?: return@map ShareDto(
-                    row[ShareLinksTable.id].toString(), "/s/<token>", "folder", "(已删除)",
-                    row[ShareLinksTable.expiresAt]?.let { Instant.ofEpochMilli(it).toString() },
-                    Instant.ofEpochMilli(row[ShareLinksTable.createdAt]).toString(),
-                    row[ShareLinksTable.viewCount], row[ShareLinksTable.downloadCount],
-                )
-                FoldersTable.selectAll().where { FoldersTable.id eq gid }
-                    .singleOrNull()?.get(FoldersTable.name) ?: "(已删除)"
+                folderNames[row[ShareLinksTable.folder]] ?: "(已删除)"
             }
             ShareDto(
                 row[ShareLinksTable.id].toString(),

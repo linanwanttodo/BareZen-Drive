@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
 import io.ktor.utils.io.ByteReadChannel
+import com.linan.barezen_drive.data.library.LibraryRevision
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
@@ -161,6 +162,9 @@ fun PreviewScreen(
                             repo.setArchived(file.id, next).fold(
                                 onSuccess = {
                                     archived = next
+                                    // Server content changed: the lists behind
+                                    // (album/files/home) must drop this item.
+                                    LibraryRevision.bump()
                                     // Archiving hides the photo from the timeline, so
                                     // the viewer leaves it right away; returning pops
                                     // the preview and the album reloads.
@@ -257,6 +261,9 @@ fun PreviewScreen(
                     scope.launch {
                         repo.deleteFile(file.id).fold(
                             onSuccess = {
+                                // The row is gone server-side; bump before
+                                // leaving so the lists behind reload fresh.
+                                LibraryRevision.bump()
                                 onBack()
                             },
                             onFailure = { snackbar.showSnackbar(I18n.strings.deleteFailed) },

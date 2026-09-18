@@ -19,7 +19,7 @@ enum class PreviewKind {
             "cs", "swift", "m", "mm", "sh", "bash", "zsh", "bat", "ps1", "sql", "html", "css", "scss",
             "js", "ts", "jsx", "tsx", "vue", "php", "properties", "gitignore", "dockerfile",
         )
-        private val imageExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "heic", "avif")
+        private val imageExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "avif")
         private val videoExtensions = setOf("mp4", "mov", "webm", "mkv", "avi", "3gp", "m4v")
         private val audioExtensions = setOf("mp3", "wav", "m4a", "aac", "flac", "ogg", "opus")
 
@@ -27,6 +27,10 @@ enum class PreviewKind {
             val mime = file.mimeType
             if (mime != null && mime != "application/octet-stream") {
                 return when {
+                    // No decoder supports SVG on any platform; classify it as
+                    // OTHER so the preview offers a download instead of a
+                    // guaranteed "image failed to load".
+                    mime == "image/svg+xml" -> OTHER
                     mime.startsWith("image/") -> IMAGE
                     mime.startsWith("video/") -> VIDEO
                     mime.startsWith("audio/") -> AUDIO

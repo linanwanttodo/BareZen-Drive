@@ -244,6 +244,9 @@ private fun TransferRow(
     }
 }
 
+/** Video file extensions, so the type tile is not tied to a single container. */
+private val videoExtensions = setOf("mp4", "mov", "mkv", "webm", "avi", "m4v", "3gp", "ts")
+
 /** Media tile: the real cover when known, a type icon before that. */
 @Composable
 private fun TransferTile(item: TransferItem, size: Int) {
@@ -266,15 +269,17 @@ private fun TransferTile(item: TransferItem, size: Int) {
                 modifier = Modifier.size(size.dp),
             )
         } else {
-            val icon = when (fileId) {
-                null -> when {
-                    item.mediaHint && item.name.endsWith(".mp4", true) -> Icons.Default.Movie
-                    item.mediaHint -> Icons.Default.Image
-                    item.parent == null && item.kind == TransferKind.SYNC -> Icons.Default.PhotoLibrary
-                    else -> Icons.Default.InsertDriveFile
-                }
-                else -> Icons.Default.InsertDriveFile
-            }
+        val icon = when {
+            // The media guess applies before and after the file id exists: the
+            // cover fetch may take a moment, and switching the tile from a
+            // photo/video glyph to a generic one and back is what read as
+            // flicker on in-flight rows.
+            item.mediaHint &&
+                item.name.substringAfterLast('.', "").lowercase() in videoExtensions -> Icons.Default.Movie
+            item.mediaHint -> Icons.Default.Image
+            item.parent == null && item.kind == TransferKind.SYNC -> Icons.Default.PhotoLibrary
+            else -> Icons.Default.InsertDriveFile
+        }
             Icon(
                 icon,
                 contentDescription = null,

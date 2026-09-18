@@ -64,6 +64,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.glass.GlassCard
 import com.linan.barezen_drive.ui.glass.GlassSectionHeader
+import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.platform.openInBrowser
 import com.linan.barezen_drive.ui.theme.ThemeMode
@@ -463,7 +464,7 @@ fun SettingsScreen(
             }
             }
             // Bottom clearance for the floating glass bar (content flows behind).
-            Spacer(Modifier.height(112.dp))
+            Spacer(Modifier.height(BottomBarClearance))
         }
 
         if (showAccountInfo) {

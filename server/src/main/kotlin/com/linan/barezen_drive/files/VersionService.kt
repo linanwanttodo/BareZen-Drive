@@ -116,7 +116,13 @@ object VersionService {
         val hasThumb = withContext(Dispatchers.IO) { storage.exists(thumbKey(vSha)) }
         val (orphans, dto) = transaction(DatabaseFactory.db) {
             val file = FileService.fileRowOf(userId, fileId)
+            // Row lock on the version being adopted: a concurrent deleteVersion
+            // must not drop this row (and then physically free its blob by
+            // refcount) between our read here and our commit - that would leave
+            // the live file row pointing at deleted bytes. Holding the lock
+            // serializes the two paths; the loser sees the row already gone.
             val v = FileVersionsTable.selectAll().where { (FileVersionsTable.id eq versionId) and (FileVersionsTable.file eq fileId) }
+                .forUpdate()
                 .singleOrNull() ?: throw ApiException.notFound("版本不存在")
             val now = System.currentTimeMillis()
             val (keys, _) = snapshotAndReplace(

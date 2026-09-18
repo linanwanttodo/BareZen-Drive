@@ -111,7 +111,12 @@ private fun downloadOne(
     // Download is complete; report the last percent before handing the file
     // to the installer so the UI never ends on 99.
     onProgress(1f)
-    installApk(context, destination)
+    // A rejected installer intent (no handler, OEM quirk) must not read as
+    // "download failed": the bytes are verified, and the next mirror would
+    // fetch the very same package before hitting the same wall. The verified
+    // file stays in updates/ under its own name - same-name writes overwrite,
+    // so nothing accumulates.
+    runCatching { installApk(context, destination) }
     return true
 }
 

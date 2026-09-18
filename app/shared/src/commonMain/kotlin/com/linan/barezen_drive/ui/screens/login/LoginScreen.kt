@@ -59,6 +59,7 @@ import org.jetbrains.compose.resources.painterResource
 import barezen_drive.app.shared.generated.resources.Res
 import barezen_drive.app.shared.generated.resources.barezen_logo
 import barezen_drive.app.shared.generated.resources.barezen_logo_on_white
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -132,6 +133,10 @@ fun LoginScreen(
                     // an unreachable server still lets the user try.
                     var registrationOpen by remember { mutableStateOf(true) }
                     LaunchedEffect(host) {
+                        // Debounce: the probe restarts on every keystroke, so only
+                        // a pause in typing reaches the network instead of one
+                        // request per character.
+                        delay(600)
                         registrationOpen = runCatching {
                             auth.registrationStatus(host).getOrDefault(true)
                         }.getOrDefault(true)

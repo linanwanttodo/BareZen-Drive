@@ -20,6 +20,11 @@ object RefreshTokensTable : Table("refresh_tokens") {
     val tokenHash = varchar("token_hash", 64).uniqueIndex()
     val expiresAt = long("expires_at")
     val revokedAt = long("revoked_at").nullable()
+    // SQL-level default so the ALTER on an existing database backfills 0.
+    // Bounds the post-revocation reuse grace window to ONE extra rotation:
+    // unlimited grace replays would mint unlimited child tokens for a
+    // stolen one (see AuthService.refresh).
+    val graceReplays = integer("grace_replays").default(0)
     override val primaryKey = PrimaryKey(id)
 }
 

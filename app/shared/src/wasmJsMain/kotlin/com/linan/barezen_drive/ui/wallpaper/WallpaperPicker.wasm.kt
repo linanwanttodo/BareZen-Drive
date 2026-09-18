@@ -155,7 +155,7 @@ actual fun rememberWallpaperPicker(onResult: (WallpaperImage?) -> Unit): () -> U
     }
 }
 
-actual fun loadPersistedWallpaper(): WallpaperImage? {
+actual suspend fun loadPersistedWallpaper(): WallpaperImage? {
     val dataUrl = try {
         window.localStorage.getItem(STORE_KEY_DATA)
     } catch (_: Throwable) {
@@ -170,6 +170,16 @@ actual fun loadPersistedWallpaper(): WallpaperImage? {
     // pixels carries only the persisted average color; the bitmap decodes
     // from the data URL lazily through bitmap().
     return WasmWallpaperImage(dataUrl, intArrayOf(avg))
+}
+
+/** Removes the persisted data URL and average color from localStorage. */
+actual fun deletePersistedWallpaper() {
+    try {
+        window.localStorage.removeItem(STORE_KEY_DATA)
+        window.localStorage.removeItem(STORE_KEY_AVG)
+    } catch (_: Throwable) {
+        // Storage unavailable: nothing persisted, nothing to remove.
+    }
 }
 
 actual fun isBackdropBlurSupported(): Boolean = false
