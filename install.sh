@@ -23,24 +23,6 @@ IMAGE_TAG="latest"
 log() { printf '\n\033[1;32m==>\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --dir) INSTALL_DIR="$2"; shift 2 ;;
-    --version) IMAGE_TAG="$2"; shift 2 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
-    *) err "unknown option: $1 (see --help)" ;;
-  esac
-done
-
-command -v docker >/dev/null 2>&1 || err "Docker is required: https://docs.docker.com/engine/install/"
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE="docker compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE="docker-compose"
-else
-  err "Docker Compose is required (docker compose plugin or docker-compose)."
-fi
-
 # ---------------------------------------------------------------------------
 # i18n: t <key>  (zh default detected, switchable in step 1)
 # ---------------------------------------------------------------------------
@@ -67,6 +49,10 @@ t() {
       cert_skip)     echo "  未填域名，证书无法签发给纯 IP，将使用 HTTP。" ;;
       web_remote)    echo "Web 静态端不创建账号；打开页面后在登录框填写你的服务器地址。" ;;
       precheck_miss) echo "缺少必需命令: " ;;
+      deps_install)  echo "检测到缺少依赖，正在自动安装:" ;;
+      pkg_missing)   echo "无法识别包管理器，请手动安装:" ;;
+      docker_install) echo "未检测到 Docker，是否现在安装（约需几分钟）？[Y/n]: " ;;
+      dir_noaccess)  echo "无法创建安装目录，请用 sudo 运行或通过 --dir 指定可写目录" ;;
       building)      echo "正在下载并部署…" ;;
       done_title)    echo "部署完成 - Successful!" ;;
       done_url)      echo "访问地址: " ;;
@@ -99,6 +85,10 @@ t() {
       cert_skip)     echo "  No domain given: a certificate cannot be issued for a bare IP, using HTTP." ;;
       web_remote)    echo "The static web hosts no accounts; enter your server address on the login page." ;;
       precheck_miss) echo "Missing required command: " ;;
+      deps_install)  echo "Missing dependencies detected, installing:" ;;
+      pkg_missing)   echo "Could not detect a package manager, install manually:" ;;
+      docker_install) echo "Docker not found, install it now (takes a few minutes)? [Y/n]: " ;;
+      dir_noaccess)  echo "Cannot create the install directory; run with sudo or pass a writable --dir" ;;
       building)      echo "Downloading and deploying…" ;;
       done_title)    echo "Deployment finished - Successful!" ;;
       done_url)      echo "Open: " ;;
@@ -115,16 +105,66 @@ t() {
   fi
 }
 
-# Commands used further down. curl, sed, awk and unzip are called
-# unconditionally, so a minimalist host (Alpine, slim images) would otherwise
-# fail halfway through the deploy.
+# ---------------------------------------------------------------------------
+# Prerequisites: auto-install missing tools via the system package manager
+# (apt/dnf/yum/apk/pacman), then make sure Docker + Compose are available.
+# ---------------------------------------------------------------------------
+SUDO=""
+[ "$(id -u)" != "0" ] && SUDO="sudo"
+
+pkg_install() {
+  if command -v apt-get >/dev/null 2>&1; then
+    $SUDO apt-get update -y >/dev/null 2>&1 || true
+    $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+  elif command -v dnf >/dev/null 2>&1; then
+    $SUDO dnf install -y "$@"
+  elif command -v yum >/dev/null 2>&1; then
+    $SUDO yum install -y "$@"
+  elif command -v apk >/dev/null 2>&1; then
+    $SUDO apk add --no-progress -- "$@"
+  elif command -v pacman >/dev/null 2>&1; then
+    $SUDO pacman -Sy --noconfirm --needed "$@"
+  else
+    err "$(t pkg_missing) $*"
+  fi
+}
+
 MISSING=""
 for c in curl sed awk unzip; do
   command -v "$c" >/dev/null 2>&1 || MISSING="$MISSING $c"
 done
 if [ -n "$MISSING" ]; then
-  err "$(t precheck_miss)${MISSING}"
+  log "$(t deps_install)${MISSING}"
+  pkg_install $MISSING
 fi
+for c in curl sed awk unzip; do
+  command -v "$c" >/dev/null 2>&1 || err "$(t precheck_miss) $c"
+done
+
+if ! command -v docker >/dev/null 2>&1; then
+  read -r -p "$(t docker_install)" docker_choice
+  case "${docker_choice:-Y}" in
+    n|N|no|NO) err "Docker is required: https://docs.docker.com/engine/install/" ;;
+  esac
+  curl -fsSL https://get.docker.com | $SUDO sh || err "Docker install failed: https://docs.docker.com/engine/install/"
+  command -v docker >/dev/null 2>&1 || err "Docker still missing after installation - see the output above."
+fi
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE="docker-compose"
+else
+  err "Docker Compose is required (docker compose plugin or docker-compose)."
+fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dir) INSTALL_DIR="$2"; shift 2 ;;
+    --version) IMAGE_TAG="$2"; shift 2 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    *) err "unknown option: $1 (see --help)" ;;
+  esac
+done
 
 echo
 echo "=============================================="
@@ -229,7 +269,13 @@ else
 fi
 echo
 
-mkdir -p "$INSTALL_DIR"
+# Create the install directory; fall back to sudo + chown when the default
+# location (/opt/barezen) is not writable by the current user.
+if ! mkdir -p "$INSTALL_DIR" 2>/dev/null; then
+  $SUDO mkdir -p "$INSTALL_DIR" \
+    && $SUDO chown "$(id -u):$(id -g)" "$INSTALL_DIR" \
+    || err "$(t dir_noaccess)"
+fi
 cd "$INSTALL_DIR"
 
 # Keep an existing .env on re-runs; a fresh install gets a full one.
