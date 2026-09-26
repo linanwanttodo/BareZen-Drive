@@ -88,6 +88,7 @@ fun AlbumReviewDialog(onDone: (reviewed: Boolean) -> Unit) {
     fun close() = onDone(!loadFailed)
 
     AlertDialog(
+        containerColor = MaterialTheme.colorScheme.surface,
         onDismissRequest = ::close,
         title = { Text(strings.backupAlbumsReviewTitle) },
         text = {

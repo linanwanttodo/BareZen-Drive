@@ -1069,6 +1069,7 @@ fun AlbumScreen(
 
         shareUrl?.let { url ->
             AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
                 onDismissRequest = { shareUrl = null },
                 title = { Text(LocalStrings.current.actionShare) },
                 text = { Text(url) },
@@ -1093,6 +1094,7 @@ fun AlbumScreen(
         if (pendingUploads.isNotEmpty() && uploadDialogVisible) {
             val p = progress
             AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
                 onDismissRequest = { uploadDialogVisible = false },
                 title = { Text(LocalStrings.current.uploadingGeneric) },
                 text = {

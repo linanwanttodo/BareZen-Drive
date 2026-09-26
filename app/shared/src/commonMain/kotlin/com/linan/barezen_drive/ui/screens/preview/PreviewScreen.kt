@@ -217,6 +217,7 @@ fun PreviewScreen(
 
     if (showInfo) {
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { showInfo = false },
             title = { Text(LocalStrings.current.actionInfo) },
             text = {
@@ -234,6 +235,7 @@ fun PreviewScreen(
 
     shareUrl?.let { url ->
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { shareUrl = null },
             title = { Text(LocalStrings.current.actionShare) },
             text = { Text(url) },
@@ -254,6 +256,7 @@ fun PreviewScreen(
 
     if (confirmDelete) {
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { confirmDelete = false },
             title = { Text(LocalStrings.current.deleteFile) },
             text = { Text(LocalStrings.current.confirmDeleteFile(file.name)) },

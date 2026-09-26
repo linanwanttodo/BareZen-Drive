@@ -178,22 +178,24 @@ fun TrashScreen(
 
     if (confirmEmpty) {
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { confirmEmpty = false },
             title = { Text(strings.actionEmptyTrash) },
             text = { Text(strings.confirmEmptyTrash) },
             confirmButton = {
-                TextButton(onClick = { confirmEmpty = false; empty() }) { Text(strings.actionConfirm) }
+                TextButton(onClick = { confirmEmpty = false; empty() }) { Text(strings.actionConfirm, color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text(strings.actionCancel) } },
         )
     }
     confirmPurge?.let { target ->
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { confirmPurge = null },
             title = { Text(strings.actionDeleteForever) },
             text = { Text(strings.confirmDeleteForeverNamed(target.name)) },
             confirmButton = {
-                TextButton(onClick = { confirmPurge = null; purge(target) }) { Text(strings.actionConfirm) }
+                TextButton(onClick = { confirmPurge = null; purge(target) }) { Text(strings.actionConfirm, color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirmPurge = null }) { Text(strings.actionCancel) } },
         )
