@@ -411,6 +411,7 @@ fun App() {
                         )
                         MainTab.SEARCH -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else SearchScreen(
                             files = files,
+                            thumbs = thumbs,
                             onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
                             avatar = tabAvatar,
                         )

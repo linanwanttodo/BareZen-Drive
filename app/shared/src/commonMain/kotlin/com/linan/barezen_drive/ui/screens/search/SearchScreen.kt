@@ -40,6 +40,8 @@ import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
+import com.linan.barezen_drive.ui.media.FileThumbnail
+import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.media.formatDateTime
 import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
@@ -56,6 +58,7 @@ import kotlin.time.Duration.Companion.milliseconds
 @Composable
 fun SearchScreen(
     files: FilesRepository,
+    thumbs: ThumbnailLoader,
     onPreview: (List<FileDto>, Int) -> Unit,
     /**
      * Shared from the shell so all four tab top bars render one and the same
@@ -160,11 +163,12 @@ fun SearchScreen(
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                fileKindIcon(file.mimeType),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            // Same cover component as the files list and grid
+                            // rows, so an image hit in search looks like the
+                            // same image in the folder it came from. Falls back
+                            // to the type icon while loading / when there is no
+                            // cover, which is what non-media rows show anyway.
+                            FileThumbnail(file, thumbs, edge = 40.dp)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(file.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
