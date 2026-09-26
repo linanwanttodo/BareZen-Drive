@@ -1,9 +1,11 @@
 package com.linan.barezen_drive.ui.screens.transfer
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -18,16 +20,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -54,6 +60,7 @@ import com.linan.barezen_drive.data.transfer.TransferKind
 import com.linan.barezen_drive.data.transfer.TransferLane
 import com.linan.barezen_drive.data.transfer.TransferPhase
 import com.linan.barezen_drive.i18n.LocalStrings
+import com.linan.barezen_drive.ui.component.EmptyState
 import com.linan.barezen_drive.ui.media.ThumbnailHub
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
@@ -78,6 +85,10 @@ fun TransferCenterScreen(
     lane: TransferLane,
     onBack: () -> Unit,
     actions: @Composable RowScope.() -> Unit = {},
+    /** Primary action on the empty state; null hides the button. */
+    onGoUpload: (() -> Unit)? = null,
+    /** Retry hook for failed rows; null hides the retry affordance. */
+    onRetry: ((String) -> Unit)? = null,
 ) {
     var tab by remember { mutableIntStateOf(0) }
     val all by TransferCenter.items.collectAsState()
@@ -146,10 +157,16 @@ fun TransferCenterScreen(
 
             val rows = if (tab == 0) activeRows else finished
             if (rows.isEmpty()) {
+                // Empty state gets the same shape as trash/archive: icon, one
+                // line, a hint, and - the only screen of the three with an
+                // obvious next step - a way to start an upload.
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        if (lane == TransferLane.ALBUM) strings.noAlbumTransfers else strings.noFileTransfers,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    EmptyState(
+                        icon = Icons.Default.SwapVert,
+                        title = if (lane == TransferLane.ALBUM) strings.noAlbumTransfers else strings.noFileTransfers,
+                        subtitle = strings.transferEmptyHint,
+                        actionLabel = if (onGoUpload != null) strings.actionGoUpload else null,
+                        onAction = onGoUpload,
                     )
                 }
             } else {
@@ -163,6 +180,8 @@ fun TransferCenterScreen(
                                 TransferCenter.cancel(item.id)
                                 stopRequested = stopRequested + item.id
                             },
+                            retryable = onRetry != null && TransferCenter.retryHandle(item.id) != null,
+                            onRetry = { onRetry?.invoke(item.id) },
                         )
                         HorizontalDivider()
                     }
@@ -178,6 +197,8 @@ private fun TransferRow(
     indent: Boolean = false,
     stopping: Boolean = false,
     onStop: () -> Unit = {},
+    retryable: Boolean = false,
+    onRetry: () -> Unit = {},
 ) {
     Row(
         Modifier
@@ -240,7 +261,39 @@ private fun TransferRow(
             }
             item.error?.let {
                 Spacer(Modifier.height(2.dp))
-                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.ErrorOutline,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    // Only where a retry can actually run: the source handle is
+                    // kept for single-file uploads, not for album batch rows.
+                    if (retryable) {
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = onRetry,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            modifier = Modifier.height(28.dp),
+                        ) {
+                            Text(
+                                LocalStrings.current.actionRetry,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
+                }
             }
         }
     }

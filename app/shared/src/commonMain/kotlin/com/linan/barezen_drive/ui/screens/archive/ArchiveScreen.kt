@@ -1,5 +1,6 @@
 package com.linan.barezen_drive.ui.screens.archive
 
+import com.linan.barezen_drive.ui.component.EmptyState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -122,7 +124,11 @@ fun ArchiveScreen(
                 }
             }
             files.isEmpty() -> Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) {
-                Text(strings.archiveEmpty, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                EmptyState(
+                    icon = Icons.Default.Archive,
+                    title = strings.archiveEmpty,
+                    subtitle = strings.archiveEmptyHint,
+                )
             }
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 150.dp),

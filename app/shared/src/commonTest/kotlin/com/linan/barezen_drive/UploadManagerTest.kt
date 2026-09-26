@@ -176,6 +176,40 @@ class UploadManagerTest {
     }
 
     @Test
+    fun retryFailedReUploadsTheSameSourceAndSettlesTheRow() = runTest {
+        val data = (0 until 16).map { it.toByte() }.toByteArray()
+        val api = FakeApi(data, chunkSize = 8)
+        api.failChunk(index = 1, times = 9) // every attempt of chunk 1 fails
+        val mgr = UploadManager(api, backoffBaseMs = 10)
+
+        val first = mgr.upload(FakePickedFile(data), null)
+        assertTrue(first.isFailure, "first upload should fail: $first")
+        val failedId = com.linan.barezen_drive.data.transfer.TransferCenter.items.value
+            .last { it.phase == com.linan.barezen_drive.data.transfer.TransferPhase.FAILED }.id
+        assertTrue(
+            com.linan.barezen_drive.data.transfer.TransferCenter.retryHandle(failedId) != null,
+            "a failed single-file upload must keep a retry handle",
+        )
+
+        // The flaky chunk recovers; the retry re-runs the very same source.
+        api.failChunk(index = 1, times = 0)
+        val retried = mgr.retryFailed(failedId)
+
+        assertTrue(retried?.isSuccess == true, "retry should succeed: $retried")
+        assertTrue(api.completed)
+        val row = com.linan.barezen_drive.data.transfer.TransferCenter.items.value
+            .first { it.id == failedId }
+        assertEquals(com.linan.barezen_drive.data.transfer.TransferPhase.DONE, row.phase)
+        assertNull(row.error, "a settled retry must not keep the old error text")
+    }
+
+    @Test
+    fun retryFailedReturnsNullForUnknownRow() = runTest {
+        val mgr = UploadManager(FakeApi(ByteArray(4), chunkSize = 8), backoffBaseMs = 10)
+        assertNull(mgr.retryFailed("t-does-not-exist"), "unknown rows are not retryable")
+    }
+
+    @Test
     fun retriesFlakyChunkUpToThreeAttempts() = runTest {
         val data = (0 until 16).map { it.toByte() }.toByteArray()
         val api = FakeApi(data, chunkSize = 8)

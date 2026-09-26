@@ -19,6 +19,18 @@ enum class TransferLane { ALBUM, FILE }
 
 enum class TransferPhase { QUEUED, RUNNING, DONE, FAILED }
 
+/**
+ * Enough to run the same upload again: the picked source plus the two
+ * arguments that change the server's answer. Held beside the transfer (not
+ * inside [TransferItem]) so the list state stays a cheap value type - a
+ * PickedFile is a File/URI reference, not the bytes.
+ */
+data class RetryHandle(
+    val file: com.linan.barezen_drive.platform.PickedFile,
+    val folderId: String?,
+    val overwrite: Boolean,
+)
+
 data class TransferItem(
     val id: String,
     val name: String,
@@ -35,6 +47,13 @@ data class TransferItem(
     /** Image-like when the name maps to an image/video type, for the tile icon. */
     val mediaHint: Boolean = false,
     val error: String? = null,
+    /**
+     * Set while the row can be retried (single-file uploads only). Lives on
+     * the item rather than in a side map so it rides the same atomic StateFlow
+     * update as everything else - the upload coroutine writes it while the UI
+     * reads - and it is released automatically when the row is cleared.
+     */
+    val retry: RetryHandle? = null,
     val atMs: Long = 0,
     /** Owning transfer page; sync work is always album-side. */
     val lane: TransferLane = if (kind == TransferKind.SYNC) TransferLane.ALBUM else TransferLane.FILE,
@@ -131,6 +150,26 @@ object TransferCenter {
         return id
     }
 
+    /**
+     * Retries run the same upload again, so the picked source has to outlive
+     * the attempt that failed. Kept in a side map keyed by transfer id, and
+     * dropped as soon as the row is cleared or cancelled, so nothing pins a
+     * file handle for longer than the transfer itself.
+     */
+    /** Called by the uploader right after [start] for single-file uploads. */
+    fun rememberRetryHandle(id: String, handle: RetryHandle) {
+        update(id) { it.copy(retry = handle) }
+    }
+
+    /** Null when the row cannot be retried (batch sync, or already cleared). */
+    fun retryHandle(id: String): RetryHandle? =
+        _items.value.firstOrNull { it.id == id }?.retry
+
+    /** Clears a stale error before a retry re-runs, so the row stops reading failed. */
+    fun clearError(id: String) {
+        update(id) { it.copy(error = null, phase = TransferPhase.RUNNING, bytesDone = 0) }
+    }
+
     fun progress(id: String, done: Long, total: Long, text: String? = null) {
         var title = ""
         var fraction: Float? = null
@@ -200,6 +239,7 @@ object TransferCenter {
         _items.update { list -> list.filterNot(::settled) }
         finished.forEach {
             cancelledIds.remove(it.id)
+            // The row is gone, so the retained source handle goes with it.
             runCatching { com.linan.barezen_drive.platform.TransferNotifier.dismiss(it.id) }
         }
     }

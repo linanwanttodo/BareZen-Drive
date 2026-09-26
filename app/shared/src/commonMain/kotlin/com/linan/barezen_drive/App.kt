@@ -530,6 +530,19 @@ fun App() {
             is Screen.Transfers -> TransferCenterScreen(
                 lane = current.lane,
                 onBack = pop,
+                onGoUpload = {
+                    // Leave the pushed screen first, then hand the bottom strip
+                    // to the files tab: uploading starts from the file list.
+                    if (stack.size > 1) stack = stack.dropLast(1)
+                    tab = MainTab.FILES
+                },
+                onRetry = { id ->
+                    scope.launch {
+                        // Null when the row is not retryable (album batch, or
+                        // it was cleared while the tap was in flight).
+                        runCatching { uploader.retryFailed(id) }
+                    }
+                },
                 actions = {
                     // The album lane owns the sync settings: master switch,
                     // WiFi/charging conditions and the per-album list all live
