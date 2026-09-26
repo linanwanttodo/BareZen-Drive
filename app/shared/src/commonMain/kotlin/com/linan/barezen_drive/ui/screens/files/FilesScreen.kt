@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
@@ -449,27 +450,54 @@ fun FilesScreen(
                     },
                 )
                 HorizontalDivider()
-                // Breadcrumb: below the bar, same text size as the file rows.
+                // Breadcrumb: plain text links, not buttons. TextButton gave
+                // every crumb a chip's worth of height and horizontal padding,
+                // so the path read as a row of buttons and pushed the file list
+                // down. 14sp with a 6dp hit padding keeps the row ~28dp tall
+                // while staying comfortable to tap.
+                val crumbStyle = MaterialTheme.typography.bodyMedium
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(onClick = { onJumpTo(-1) }) {
-                        Text(LocalStrings.current.rootFolder, style = MaterialTheme.typography.bodyLarge)
-                    }
+                    Text(
+                        text = LocalStrings.current.rootFolder,
+                        style = crumbStyle,
+                        color = if (path.isEmpty()) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { onJumpTo(-1) }
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
                     path.forEachIndexed { i, f ->
-                        Text(" / ", style = MaterialTheme.typography.bodyLarge)
-                        TextButton(onClick = { onJumpTo(i) }) {
-                            Text(
-                                f.name,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
+                        val isLast = i == path.lastIndex
+                        Text(
+                            text = " / ",
+                            style = crumbStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = f.name,
+                            style = crumbStyle,
+                            color = if (isLast) {
+                                MaterialTheme.colorScheme.onSurface
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { onJumpTo(i) }
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
+                        )
                     }
                 }
             }
