@@ -146,6 +146,7 @@ internal fun UpdateCheckRow(
 
     if (downloadFailed) {
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { downloadFailed = false },
             title = { Text(LocalStrings.current.downloadFailed) },
             text = { Text(LocalStrings.current.checkFailedRetry) },
@@ -170,6 +171,7 @@ private fun UpdateResultDialog(
 ) {
     when (outcome) {
         is UpdateStatus.UpToDate -> AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = onDismiss,
             title = { Text(LocalStrings.current.checkForUpdates) },
             text = { Text(LocalStrings.current.upToDate(outcome.version)) },
@@ -179,6 +181,7 @@ private fun UpdateResultDialog(
         )
 
         is UpdateStatus.Available -> AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = onDismiss,
             title = { Text(LocalStrings.current.updateAvailable) },
             text = {
@@ -218,6 +221,7 @@ private fun UpdateResultDialog(
         )
 
         UpdateStatus.Failed -> AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = onDismiss,
             title = { Text(LocalStrings.current.checkForUpdates) },
             text = { Text(LocalStrings.current.checkFailedRetry) },
@@ -249,6 +253,7 @@ internal fun WebUpdatePrompt(
     }
     stale?.let { outcome ->
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { stale = null },
             title = { Text(LocalStrings.current.updateAvailable) },
             text = { Text(LocalStrings.current.reloadToUpdate(outcome.version)) },

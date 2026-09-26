@@ -798,6 +798,7 @@ fun FilesScreen(
             else -> ""
         }
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { deleting = null },
             title = { Text(if (isFolder) LocalStrings.current.deleteFolder else LocalStrings.current.deleteFile) },
             text = {
@@ -838,7 +839,7 @@ fun FilesScreen(
                         }
                         reload()
                     }
-                }) { Text(LocalStrings.current.actionDelete) }
+                }) { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text(LocalStrings.current.actionCancel) } },
         )
@@ -865,6 +866,7 @@ fun FilesScreen(
     // links and its flags all survive; skipping leaves everything untouched.
     overwritePrompt?.let { pick ->
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { resolveOverwrite(replace = false) },
             title = { Text(LocalStrings.current.overwriteTitle) },
             text = { Text(LocalStrings.current.overwriteMessage(pick.name)) },
@@ -883,6 +885,7 @@ fun FilesScreen(
 
     versionsFor?.let { file ->
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { versionsFor = null },
             title = { Text(LocalStrings.current.versionHistory) },
             text = {
@@ -1133,7 +1136,7 @@ private fun FolderTile(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text(LocalStrings.current.actionDelete) },
+                    text = { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
                     onClick = {
                         setMenuFor(null)
@@ -1299,7 +1302,7 @@ private fun FileTile(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text(LocalStrings.current.actionDelete) },
+                        text = { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) },
                         leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
                         onClick = {
                             setMenuFor(null)
@@ -1359,7 +1362,7 @@ private fun FolderRow(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text(LocalStrings.current.actionDelete) },
+                    text = { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
                     onClick = {
                         setMenuFor(null)
@@ -1502,7 +1505,7 @@ private fun FileRow(
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text(LocalStrings.current.actionDelete) },
+                    text = { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
                     onClick = {
                         setMenuFor(null)
@@ -1526,6 +1529,7 @@ private fun TextEntryDialog(
 ) {
     var text by remember(initial) { mutableStateOf(initial) }
     AlertDialog(
+        containerColor = MaterialTheme.colorScheme.surface,
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -1579,6 +1583,7 @@ private fun MoveDialog(
     }
 
     AlertDialog(
+        containerColor = MaterialTheme.colorScheme.surface,
         onDismissRequest = onDismiss,
         title = { Text(LocalStrings.current.moveToTitle(target.fileName)) },
         text = {
@@ -1702,6 +1707,7 @@ private fun ShareDialog(
     LaunchedEffect(targetId) { refresh() }
 
     AlertDialog(
+        containerColor = MaterialTheme.colorScheme.surface,
         onDismissRequest = onDismiss,
         title = { Text(if (isFolder) LocalStrings.current.shareFolder else LocalStrings.current.shareFile) },
         text = {
@@ -1853,6 +1859,7 @@ private fun UploadLocationDialog(
     }
 
     AlertDialog(
+        containerColor = MaterialTheme.colorScheme.surface,
         onDismissRequest = onDismiss,
         title = { Text(LocalStrings.current.pickUploadLocation) },
         text = {

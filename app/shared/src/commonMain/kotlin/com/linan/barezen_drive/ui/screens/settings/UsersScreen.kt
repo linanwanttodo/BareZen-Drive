@@ -149,6 +149,7 @@ fun UsersScreen(
 
     deleting?.let { user ->
         AlertDialog(
+            containerColor = MaterialTheme.colorScheme.surface,
             onDismissRequest = { deleting = null },
             title = { Text(LocalStrings.current.deleteUser) },
             text = {

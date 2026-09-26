@@ -478,6 +478,7 @@ fun SettingsScreen(
 
         if (confirmLogout) {
             AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
                 onDismissRequest = { confirmLogout = false },
                 title = { Text(LocalStrings.current.actionSignOut) },
                 text = { Text(LocalStrings.current.confirmLogoutQuestion) },
@@ -514,6 +515,7 @@ private fun AccountInfoDialog(
     }
 
     AlertDialog(
+        containerColor = MaterialTheme.colorScheme.surface,
         onDismissRequest = onDismiss,
         title = { Text(LocalStrings.current.accountInfo) },
         text = {

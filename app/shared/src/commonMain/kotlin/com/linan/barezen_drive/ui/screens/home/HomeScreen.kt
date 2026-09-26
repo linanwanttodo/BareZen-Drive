@@ -310,6 +310,7 @@ fun HomeScreen(
 
         confirmDelete?.let { list ->
             AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
                 onDismissRequest = { confirmDelete = null },
                 title = { Text(LocalStrings.current.deleteFile) },
                 text = { Text(LocalStrings.current.confirmDeleteCount(list.size)) },
@@ -322,7 +323,7 @@ fun HomeScreen(
                             if (failed > 0) snackbar.showSnackbar(I18n.strings.deleteFailed)
                             reload()
                         }
-                    }) { Text(LocalStrings.current.actionDelete) }
+                    }) { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
                     TextButton(onClick = { confirmDelete = null }) { Text(LocalStrings.current.actionCancel) }
