@@ -83,6 +83,10 @@ object FilesTable : Table("files") {
         index(customIndexName = "files_sha256_idx", isUnique = false, sha256)
         // Trash listing and the "live only" filter on every media query.
         index(customIndexName = "files_user_deleted_idx", isUnique = false, user, deletedAt)
+        // The refcount sweep asks "does any row still point at this blob?" for
+        // every key a delete touches, twice per delete chain. Without this the
+        // question is a full scan of the largest table in the schema.
+        index(customIndexName = "files_storage_key_idx", isUnique = false, storageKey)
     }
 }
 
@@ -133,6 +137,9 @@ object FileVersionsTable : Table("file_versions") {
     override val primaryKey = PrimaryKey(id)
     init {
         uniqueIndex(file, revision)
+        // Same refcount sweep as files: a version row keeps a blob alive, so
+        // the question is asked against this table too.
+        index(customIndexName = "file_versions_storage_key_idx", isUnique = false, storageKey)
     }
 }
 

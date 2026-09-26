@@ -63,7 +63,11 @@ object AuthService {
         return token to (System.currentTimeMillis() + REFRESH_TTL_MS)
     }
 
-    fun register(username: String, password: String): UserDto {
+    fun register(
+        username: String,
+        password: String,
+        hasher: (String) -> String = PasswordHasher::hash,
+    ): UserDto {
         if (!USERNAME_RE.matches(username)) {
             throw ApiException.badRequest("用户名需 3-32 位字母数字下划线", ErrorCodes.USERNAME_INVALID)
         }
@@ -73,21 +77,28 @@ object AuthService {
         if (password.encodeToByteArray().size > 72) {
             throw ApiException.badRequest("密码过长（最多 72 字节）", ErrorCodes.VALIDATION_ERROR)
         }
+        // Two short transactions with the KDF in between, never inside one:
+        // bcrypt at cost 10 is ~100ms of pure CPU, and the pool is 5 connections
+        // wide (DatabaseFactory), so hashing under a transaction parks a
+        // connection for the whole hash. The unique index is what actually
+        // enforces uniqueness - the pre-check is only to fail fast with a 409.
+        val taken = transaction(DatabaseFactory.db) {
+            UsersTable.selectAll().where { UsersTable.username eq username }.any()
+        }
+        if (taken) throw ApiException.conflict(ErrorCodes.USERNAME_TAKEN, "用户名已存在")
+        val hash = hasher(password)
+        val id = UUID.randomUUID()
+        val now = System.currentTimeMillis()
         return try {
             transaction(DatabaseFactory.db) {
-                if (UsersTable.selectAll().where { UsersTable.username eq username }.any()) {
-                    throw ApiException.conflict(ErrorCodes.USERNAME_TAKEN, "用户名已存在")
-                }
-                val id = UUID.randomUUID()
-                val now = System.currentTimeMillis()
                 UsersTable.insert {
                     it[UsersTable.id] = id
                     it[UsersTable.username] = username
-                    it[passwordHash] = PasswordHasher.hash(password)
+                    it[passwordHash] = hash
                     it[createdAt] = now
                 }
-                UserDto(id.toString(), username, epochToIso(now))
             }
+            UserDto(id.toString(), username, epochToIso(now))
         } catch (e: Exception) {
             // Two racing registers can both pass the SELECT above; the unique
             // index is the backstop, and the loser must read as the same 409
@@ -112,8 +123,19 @@ object AuthService {
         return runCatching { register(user, password) }.getOrNull()
     }
 
-    fun login(username: String, password: String): LoginResponse = transaction(DatabaseFactory.db) {
-        val row = UsersTable.selectAll().where { UsersTable.username eq username }.singleOrNull()
+    /**
+     * Read the stored hash in a short transaction, then verify outside it: a
+     * login burst must not be able to occupy every pooled connection with
+     * bcrypt work, or unrelated traffic waits on Hikari's timeout behind it.
+     */
+    fun login(
+        username: String,
+        password: String,
+        verifier: (String, String) -> Boolean = PasswordHasher::verify,
+    ): LoginResponse {
+        val row = transaction(DatabaseFactory.db) {
+            UsersTable.selectAll().where { UsersTable.username eq username }.singleOrNull()
+        }
         // A stored hash can never correspond to a >72-byte raw password (register
         // rejects those), so verify() would only throw; answer like a wrong password.
         val ok = when {
@@ -121,14 +143,14 @@ object AuthService {
                 // Burn one bcrypt verification against the dummy hash so the
                 // response timing matches an existing-username attempt; without
                 // this the fast 401 is a username-existence oracle.
-                PasswordHasher.verify(TIMING_DUMMY_PASSWORD, timingDummyHash)
+                verifier(TIMING_DUMMY_PASSWORD, timingDummyHash)
                 false
             }
             else -> password.encodeToByteArray().size <= 72 &&
-                PasswordHasher.verify(password, row[UsersTable.passwordHash])
+                verifier(password, row[UsersTable.passwordHash])
         }
         if (!ok || row == null) throw ApiException.unauthorized("用户名或密码错误")
-        issueTokens(row[UsersTable.id])
+        return issueTokens(row[UsersTable.id])
     }
 
     fun issueTokens(uid: UUID): LoginResponse = transaction(DatabaseFactory.db) {

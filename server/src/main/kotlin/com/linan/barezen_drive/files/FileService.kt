@@ -14,11 +14,15 @@ import com.linan.barezen_drive.db.UploadSessionsTable
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.Instant
 import java.util.UUID
 
 data class FileMeta(val id: UUID, val userId: UUID, val folderId: UUID?, val name: String, val size: Long, val mimeType: String?, val sha256: String, val storageKey: String, val hasThumbnail: Boolean)
+
+/** Keys per `IN (...)` batch in the refcount sweep - see orphanBlobKeys. */
+private const val REFCOUNT_BATCH = 500
 
 object FileService {
     private const val MILLIS_PER_DAY = 24L * 3600 * 1000
@@ -326,13 +330,29 @@ object FileService {
      * file (live or trashed) nor a version snapshot. Runs inside the caller's
      * transaction so the counting sees the very write that dropped the last
      * reference.
+     *
+     * Batched, not per key: this runs twice per delete chain (hardDelete, then
+     * the post-commit purge recount), so the per-key form turned a 1000-blob
+     * folder delete into 2000-4000 sequential round trips on a 5-connection
+     * pool. One `IN (...)` per table per batch answers the same question, and
+     * with the storage_key indexes it is an index-only scan. The batches exist
+     * because the parameter count is bounded - 500 varchar(512) parameters is
+     * well inside PostgreSQL's 65535 limit, and keeps the statement small
+     * enough that the planner still picks the index.
      */
     internal fun orphanBlobKeys(candidateKeys: List<String>): List<String> {
         if (candidateKeys.isEmpty()) return emptyList()
-        return candidateKeys.distinct().filter { key ->
-            FilesTable.selectAll().where { FilesTable.storageKey eq key }.count() == 0L &&
-                FileVersionsTable.selectAll().where { FileVersionsTable.storageKey eq key }.count() == 0L
+        val keys = candidateKeys.distinct()
+        val stillReferenced = HashSet<String>(keys.size)
+        for (batch in keys.chunked(REFCOUNT_BATCH)) {
+            val inFiles = SqlExpressionBuilder.run { FilesTable.storageKey inList batch }
+            FilesTable.select(FilesTable.storageKey).where { inFiles }
+                .forEach { stillReferenced += it[FilesTable.storageKey] }
+            val inVersions = SqlExpressionBuilder.run { FileVersionsTable.storageKey inList batch }
+            FileVersionsTable.select(FileVersionsTable.storageKey).where { inVersions }
+                .forEach { stillReferenced += it[FileVersionsTable.storageKey] }
         }
+        return keys.filter { it !in stillReferenced }
     }
 
     /** One batched DELETE for [rows], then the refcount sweep that decides which
