@@ -7,6 +7,7 @@ import com.linan.barezen_drive.core.dto.LoginResponse
 import com.linan.barezen_drive.core.dto.RefreshResponse
 import com.linan.barezen_drive.core.dto.UserDto
 import com.linan.barezen_drive.db.DatabaseFactory
+import com.linan.barezen_drive.system.ownerAccountId
 import com.linan.barezen_drive.db.RefreshTokensTable
 import com.linan.barezen_drive.db.UsersTable
 import org.jetbrains.exposed.sql.ResultRow
@@ -50,11 +51,16 @@ object AuthService {
 
     private fun epochToIso(ms: Long): String = Instant.ofEpochMilli(ms).toString()
 
-    internal fun toUserDto(r: ResultRow) = UserDto(
-        r[UsersTable.id].toString(),
-        r[UsersTable.username],
-        epochToIso(r[UsersTable.createdAt]),
-    )
+    /**
+     * [isOwner] is resolved here rather than trusted from the row: ownership is
+     * "earliest account", and the client needs it to hide owner-only rows
+     * instead of offering a button that answers 403.
+     */
+    internal fun toUserDto(r: ResultRow): UserDto {
+        val id = r[UsersTable.id]
+        val owner = transaction(DatabaseFactory.db) { ownerAccountId() }
+        return UserDto(id.toString(), r[UsersTable.username], epochToIso(r[UsersTable.createdAt]), id == owner)
+    }
 
     private fun newRefreshToken(): Pair<String, Long> {
         val bytes = ByteArray(32)

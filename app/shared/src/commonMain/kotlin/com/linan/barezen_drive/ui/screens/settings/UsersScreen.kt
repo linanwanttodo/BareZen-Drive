@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.AdminUserDto
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
+import com.linan.barezen_drive.ui.component.EmptyState
 import com.linan.barezen_drive.ui.media.formatDateTime
 import kotlinx.coroutines.launch
 import androidx.compose.material3.CircularProgressIndicator
@@ -90,11 +92,20 @@ fun UsersScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
             when {
-                error != null -> Column(Modifier.padding(16.dp)) {
-                    Text(error!!, color = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = { error = null; reload() }) { Text(LocalStrings.current.actionRetry) }
-                }
+                // A 403 here is a permission answer, not a failure to retry: the
+                // old block offered "重试" for it, which could never succeed, on
+                // a page that was otherwise one red line and a lot of white
+                // space. Icon + sentence + a way out, per the empty-state spec.
+                error != null -> EmptyState(
+                    icon = Icons.Default.Lock,
+                    title = LocalStrings.current.ownerOnlyTitle,
+                    subtitle = error,
+                    modifier = Modifier.fillMaxSize(),
+                    // Retry only for transport failures: a rejected permission
+                    // has nothing to retry, and offering it implied otherwise.
+                    actionLabel = if (error!!.contains("仅实例所有者")) null else LocalStrings.current.actionRetry,
+                    onAction = { error = null; reload() },
+                )
                 list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }

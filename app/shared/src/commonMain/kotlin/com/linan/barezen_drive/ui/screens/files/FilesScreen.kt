@@ -1350,7 +1350,7 @@ private fun FolderRow(
                 onClick = onOpen,
                 onLongClick = { setMenuFor(folder) },
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -1420,7 +1420,10 @@ private fun FileRow(
                 onClick = { if (selection != null) onToggleSelect() else onOpen() },
                 onLongClick = onToggleSelect,
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            // 8dp vertical: 40dp thumbnail + two text lines + 1dp divider comes
+            // to 64dp, the top of the 56-64dp row band. At 10dp the row
+            // measured 68dp and the whole column read loose on a desktop width.
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selection == null && hovered) {

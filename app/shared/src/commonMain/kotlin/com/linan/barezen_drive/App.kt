@@ -163,6 +163,10 @@ fun App() {
     var glassBlur by remember { mutableStateOf(prefs.glassBlurEnabled) }
     var albumAutoSync by remember { mutableStateOf(prefs.albumAutoSync) }
     var currentUserId by remember { mutableStateOf<String?>(null) }
+    // Whether this account owns the instance. The owner-only settings rows are
+    // hidden without it: they used to be offered to every account and answered
+    // 403 with a bare red line as the whole page.
+    var isOwner by remember { mutableStateOf(false) }
     // Browse-first: the app opens on the main page even signed out; a
     // centered prompt links to login. TokenStorage stays the source of truth.
     var signedIn by remember {
@@ -218,7 +222,12 @@ fun App() {
         // fail, and the settings server card reads these - a one-shot probe
         // would leave the registration toggle hidden for the whole session.
         LaunchedEffect(TokenStorage.accessToken) {
-            currentUserId = files.me().getOrNull()?.id
+            // One call, two answers: who we are, and whether we may manage the
+            // instance. The settings rows key off the flag so a guest is never
+            // offered a page that can only answer 403.
+            val me = files.me().getOrNull()
+            currentUserId = me?.id
+            isOwner = me?.isOwner == true
             // Logout / account switch: never carry the previous account's
             // thumbnails across (in-memory cache + negative entries).
             thumbs.clear()
@@ -485,6 +494,7 @@ fun App() {
                 },
                 onOpenSource = { push(Screen.OpenSource) },
                 onOpenUsers = { push(Screen.Users) },
+                isOwner = isOwner,
                 onOpenShareManager = { push(Screen.ShareManager) },
                 onOpenTrash = { push(Screen.Trash) },
                 onOpenArchive = { push(Screen.Archive) },
