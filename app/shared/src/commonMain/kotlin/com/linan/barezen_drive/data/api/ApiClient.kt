@@ -195,12 +195,17 @@ class ApiClient(
 
     private val http: HttpClient = engineOverride
         ?.let { engine -> HttpClient(engine) { commonConfig() } }
-        ?: HttpClient { commonConfig() }
+        ?: platformHttpEngine()
+            ?.let { engine -> HttpClient(engine) { commonConfig() } }
+            ?: HttpClient { commonConfig() }
 
     // Separate, long-lived client for bulk byte transfer (upload chunks and
     // downloads) so they are never subject to the short request timeout the
     // JSON API uses. Token refresh is identical (same store), only the timeout
     // profile differs.
+    // The bulk-transfer client deliberately does NOT get the platform cache:
+    // upload chunks and downloads are one-shot bodies that must never be
+    // replayed from a cache.
     private val stream: HttpClient = engineOverride
         ?.let { engine -> HttpClient(engine) { commonConfig(streaming = true) } }
         ?: HttpClient { commonConfig(streaming = true) }
