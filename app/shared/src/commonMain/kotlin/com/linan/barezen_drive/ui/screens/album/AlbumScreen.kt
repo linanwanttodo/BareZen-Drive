@@ -251,6 +251,8 @@ fun AlbumScreen(
     // explicit flag covers the "select" button on that bar: entering selection
     // with nothing picked yet must still show checkmarks on every tile.
     val selected = remember { mutableStateMapOf<String, FileDto>() }
+    // Pending batch delete, waiting for the confirmation dialog.
+    var confirmDelete by remember { mutableStateOf<List<FileDto>?>(null) }
     var selecting by remember { mutableStateOf(false) }
     val selectionMode = selecting || selected.isNotEmpty()
     fun clearSelection() {
@@ -608,24 +610,14 @@ fun AlbumScreen(
                             }
                             clearSelection()
                         }
+                        // Confirm before deleting: a sweep across the grid puts
+                        // dozens of photos into the selection, and one stray tap
+                        // used to remove all of them with no confirmation - the
+                        // only destructive action in the app that had none. The
+                        // wording says "to the trash" because the delete is soft
+                        // and the photos stay recoverable for 30 days.
                         BarAction(Icons.Default.Delete, LocalStrings.current.actionDelete, tint = MaterialTheme.colorScheme.error) {
-                            scope.launch {
-                                val failed = selected.values.count { repo.deleteFile(it.id).isFailure }
-                                val hadSelection = selected.isNotEmpty()
-                                clearSelection()
-                                if (hadSelection) {
-                                    generation++
-                                    loading = false
-                                    loaded = emptyList(); cursor = null; exhausted = false; error = null
-                                    loadMore()
-                                }
-                                // Plain delete is a soft delete: say so, so the user
-                                // knows the recovery path exists.
-                                snackbar.showSnackbar(
-                                    if (failed > 0) I18n.strings.deleteFailed
-                                    else I18n.strings.movedToTrash,
-                                )
-                            }
+                            confirmDelete = selected.values.toList()
                         }
                     }
                     }
@@ -894,11 +886,17 @@ fun AlbumScreen(
                         }
                     }
                 }
+                // The date layout rendered this footer unconditionally, so after
+                // the last page it kept a spinner under the final photo and read
+                // as "still loading" forever. All three layouts now render the
+                // footer and let it switch to an end-of-list marker instead of
+                // an indicator that never stops.
                 item(key = "loading") {
                     AlbumLoadMoreFooter(
                         pageToken = loaded,
                         error = error,
                         loading = loading,
+                        exhausted = exhausted && loaded.isNotEmpty(),
                         onRequest = { loadMore() },
                         onRetry = { error = null; loadMore() },
                     )
@@ -948,16 +946,15 @@ fun AlbumScreen(
                             onLongClick = { selected[flat[i].id] = flat[i] },
                         )
                     }
-                    if (!exhausted) {
-                        item(key = "footer", span = { GridItemSpan(maxLineSpan) }) {
-                            AlbumLoadMoreFooter(
-                                pageToken = loaded,
-                                error = error,
-                                loading = loading,
-                                onRequest = { loadMore() },
-                                onRetry = { error = null; loadMore() },
-                            )
-                        }
+                    item(key = "footer", span = { GridItemSpan(maxLineSpan) }) {
+                        AlbumLoadMoreFooter(
+                            pageToken = loaded,
+                            error = error,
+                            loading = loading,
+                            exhausted = exhausted && loaded.isNotEmpty(),
+                            onRequest = { loadMore() },
+                            onRetry = { error = null; loadMore() },
+                        )
                     }
                 }
             }
@@ -1020,16 +1017,15 @@ fun AlbumScreen(
                             )
                         }
                     }
-                    if (!exhausted) {
-                        item(key = "loading", span = StaggeredGridItemSpan.FullLine) {
-                            AlbumLoadMoreFooter(
-                                pageToken = loaded,
-                                error = error,
-                                loading = loading,
-                                onRequest = { loadMore() },
-                                onRetry = { error = null; loadMore() },
-                            )
-                        }
+                    item(key = "loading", span = StaggeredGridItemSpan.FullLine) {
+                        AlbumLoadMoreFooter(
+                            pageToken = loaded,
+                            error = error,
+                            loading = loading,
+                            exhausted = exhausted && loaded.isNotEmpty(),
+                            onRequest = { loadMore() },
+                            onRetry = { error = null; loadMore() },
+                        )
                     }
                 }
                 // The overlay is suppressed while the section's own in-flow header
@@ -1065,6 +1061,35 @@ fun AlbumScreen(
                 }
             }
         }
+        }
+
+        confirmDelete?.let { list ->
+            AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
+                onDismissRequest = { confirmDelete = null },
+                title = { Text(LocalStrings.current.deleteFile) },
+                text = { Text(LocalStrings.current.confirmMoveToTrashCount(list.size)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmDelete = null
+                        scope.launch {
+                            val failed = list.count { repo.deleteFile(it.id).isFailure }
+                            clearSelection()
+                            generation++
+                            loading = false
+                            loaded = emptyList(); cursor = null; exhausted = false; error = null
+                            loadMore()
+                            snackbar.showSnackbar(
+                                if (failed > 0) I18n.strings.deleteFailed
+                                else I18n.strings.movedToTrash,
+                            )
+                        }
+                    }) { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDelete = null }) { Text(LocalStrings.current.actionCancel) }
+                },
+            )
         }
 
         shareUrl?.let { url ->
@@ -1152,6 +1177,7 @@ private fun AlbumLoadMoreFooter(
     pageToken: Any,
     error: String?,
     loading: Boolean,
+    exhausted: Boolean = false,
     onRequest: () -> Unit,
     onRetry: () -> Unit,
 ) {
@@ -1159,13 +1185,22 @@ private fun AlbumLoadMoreFooter(
         Modifier.fillMaxWidth().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        LaunchedEffect(pageToken) { onRequest() }
+        // The last page must not keep asking for another one.
+        LaunchedEffect(pageToken, exhausted) { if (!exhausted) onRequest() }
         error?.let { err ->
             Text(err, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
             Spacer(Modifier.height(4.dp))
             TextButton(onClick = onRetry) { Text(LocalStrings.current.actionRetry) }
         } ?: run {
-            CircularProgressIndicator(Modifier.size(28.dp))
+            if (exhausted) {
+                Text(
+                    LocalStrings.current.albumAllLoaded,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                CircularProgressIndicator(Modifier.size(28.dp))
+            }
         }
     }
 }
