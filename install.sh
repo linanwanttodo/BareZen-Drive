@@ -15,6 +15,60 @@
 #   bash install.sh --dir /opt/barezen --version latest
 set -euo pipefail
 
+# The documented usage pipes this script into bash, and in that mode stdin *is*
+# the script: a plain `read` consumes the script's own remaining text instead of
+# the user's answer. Reproducible with any script past bash's ~8KB read buffer -
+# the first prompt never prints and every later answer arrives one step late.
+# Reading the terminal explicitly makes `curl … | bash` behave like
+# `bash install.sh`; with no terminal at all (CI, `printf … | bash`) it falls
+# back to stdin so scripted installs still work.
+TTY_IN=/dev/tty
+# `-r` is not enough: the device node exists and is readable even with no
+# controlling terminal (CI, `bash < script`), where opening it fails. Probe it
+# by actually opening it, and fall back to stdin when that fails.
+if ! { true > /dev/tty; } 2>/dev/null; then TTY_IN=/dev/stdin; fi
+
+# ask <prompt> <varname> - one visible line of input
+ask() {
+  local __reply=""
+  if IFS= read -r -p "$1" __reply < "$TTY_IN"; then
+    printf -v "$2" '%s' "$__reply"
+  else
+    printf -v "$2" '%s' ""
+  fi
+}
+
+# ask_secret <prompt> <varname> - same, without echoing (passwords)
+ask_secret() {
+  local __reply=""
+  if IFS= read -r -s -p "$1" __reply < "$TTY_IN"; then
+    printf -v "$2" '%s' "$__reply"
+  else
+    printf -v "$2" '%s' ""
+  fi
+}
+
+# Self-contained help: `$0` is `bash` when the script arrives on stdin, so the
+# header comment cannot be the only copy.
+usage() {
+  cat <<'USAGE'
+BareZen-Drive interactive installer.
+
+One wizard, seven steps:
+  1. language (script i18n)
+  2. install type (web static / server / both)
+  3. admin account + password (seeded on the server's first boot)
+  4. service port
+  5. domain (blank = http://<host-ip>:<port>)
+  6. HTTPS with automatic certificate issuance and renewal (Caddy)
+  7. prints the deployed address and Successful!
+
+Usage:
+  curl -fsSL https://raw.githubusercontent.com/linanwanttodo/BareZen-Drive/master/install.sh | bash
+  bash install.sh --dir /opt/barezen --version latest
+USAGE
+}
+
 REPO_RAW="https://raw.githubusercontent.com/linanwanttodo/BareZen-Drive/master"
 GITHUB_REPO="linanwanttodo/BareZen-Drive"
 INSTALL_DIR="/opt/barezen"
@@ -142,7 +196,7 @@ for c in curl sed awk unzip; do
 done
 
 if ! command -v docker >/dev/null 2>&1; then
-  read -r -p "$(t docker_install)" docker_choice
+  ask "$(t docker_install)" docker_choice
   case "${docker_choice:-Y}" in
     n|N|no|NO) err "Docker is required: https://docs.docker.com/engine/install/" ;;
   esac
@@ -159,9 +213,9 @@ fi
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dir) INSTALL_DIR="$2"; shift 2 ;;
-    --version) IMAGE_TAG="$2"; shift 2 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    --dir) [ $# -ge 2 ] || err "missing value for --dir (see --help)"; INSTALL_DIR="$2"; shift 2 ;;
+    --version) [ $# -ge 2 ] || err "missing value for --version (see --help)"; IMAGE_TAG="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
     *) err "unknown option: $1 (see --help)" ;;
   esac
 done
@@ -174,7 +228,7 @@ echo
 echo "$(t lang)"
 echo "  1) 中文"
 echo "  2) English"
-read -r -p "> " lang_choice
+ask "> " lang_choice
 case "${lang_choice:-1}" in 2) L=en ;; *) L=zh ;; esac
 [ "$lang_choice" = "2" ] && t lang_set >/dev/null
 echo
@@ -182,7 +236,7 @@ echo
 # ---- step 2: install type ----
 echo "$(t type)"
 t type_web; t type_server; t type_both
-read -r -p "> " type_choice
+ask "> " type_choice
 case "${type_choice:-3}" in
   1) INSTALL_TYPE="web" ;;
   2) INSTALL_TYPE="server" ;;
@@ -196,12 +250,12 @@ ADMIN_PASS=""
 if [ "$INSTALL_TYPE" != "web" ]; then
   log "$(t admin)"
   while true; do
-    read -r -p "$(t admin_user)" ADMIN_USER
+    ask "$(t admin_user)" ADMIN_USER
     [[ "$ADMIN_USER" =~ ^[a-zA-Z0-9_]{3,32}$ ]] && break
     [ "$L" = zh ] && echo "用户名格式不正确，请重试。" || echo "Invalid username, try again."
   done
   while true; do
-    read -r -s -p "$(t admin_pass)" ADMIN_PASS; echo
+    ask_secret "$(t admin_pass)" ADMIN_PASS; echo
     [ ${#ADMIN_PASS} -ge 8 ] && break
     [ "$L" = zh ] && echo "密码至少 8 位，请重试。" || echo "At least 8 characters, try again."
   done
@@ -215,7 +269,7 @@ fi
 
 # ---- step 4: port ----
 while true; do
-  read -r -p "$(t port) [8080]: " input_port
+  ask "$(t port) [8080]: " input_port
   PORT="${input_port:-8080}"
   # Trim surrounding blanks so " 8080 " is accepted rather than silently reset.
   PORT="$(printf '%s' "$PORT" | tr -d '[:space:]')"
@@ -232,7 +286,7 @@ done
 echo
 
 # ---- step 5: domain ----
-read -r -p "$(t domain) " DOMAIN
+ask "$(t domain)" DOMAIN
 DOMAIN="${DOMAIN%%/}"
 echo
 
@@ -241,7 +295,7 @@ echo
 # certificate for a bare IP, so stay on plain HTTP when no domain was given.
 USE_HTTPS="no"
 if [ -n "$DOMAIN" ]; then
-  read -r -p "$(t cert)" cert_choice
+  ask "$(t cert)" cert_choice
   case "${cert_choice:-Y}" in n|N|no|NO) USE_HTTPS="no" ;; *) USE_HTTPS="yes" ;; esac
 else
   echo "$(t cert_skip)"
