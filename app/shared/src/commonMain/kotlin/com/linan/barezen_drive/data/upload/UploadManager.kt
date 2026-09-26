@@ -98,6 +98,16 @@ class UploadManager(
         } else {
             null
         }
+        // Keep the source beside the row so a failed single-file upload can be
+        // retried from the transfer centre. Album batches report one aggregate
+        // row for a whole queue, so they keep no handle (the sync worker owns
+        // its own source list and retries on its next pass).
+        transferId?.let {
+            com.linan.barezen_drive.data.transfer.TransferCenter.rememberRetryHandle(
+                it,
+                com.linan.barezen_drive.data.transfer.RetryHandle(file, folderId, overwrite),
+            )
+        }
         try {
             val result = doUpload(file, folderId, transferId, cachedSha256, onHashed, overwrite)
             if (transferId != null) {
@@ -120,6 +130,31 @@ class UploadManager(
             throw e
         } finally {
             activeUploadId = null
+        }
+    }
+
+    /**
+     * Re-runs a failed single-file upload from the transfer centre.
+     *
+     * The row that failed is updated in place instead of spawning a second
+     * one: the user clicked "retry" on that row, so a new row would just be a
+     * duplicate of the same work. Returns null when the row is not retryable
+     * (album batch, or the row was cleared in the meantime).
+     */
+    suspend fun retryFailed(transferId: String): Result<FileDto>? {
+        val handle = com.linan.barezen_drive.data.transfer.TransferCenter.retryHandle(transferId) ?: return null
+        com.linan.barezen_drive.data.transfer.TransferCenter.progress(transferId, 0, handle.file.size)
+        com.linan.barezen_drive.data.transfer.TransferCenter.clearError(transferId)
+        return try {
+            val result = doUpload(handle.file, handle.folderId, transferId, null, null, handle.overwrite)
+            result.fold(
+                onSuccess = { com.linan.barezen_drive.data.transfer.TransferCenter.done(transferId, it.id) },
+                onFailure = { com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, it.message ?: "failed") },
+            )
+            result
+        } catch (e: CancellationException) {
+            com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, "cancelled")
+            throw e
         }
     }
 

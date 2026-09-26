@@ -1,5 +1,6 @@
 package com.linan.barezen_drive.ui.screens.trash
 
+import com.linan.barezen_drive.ui.component.EmptyState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -149,11 +150,11 @@ fun TrashScreen(
                 }
             }
             files.isEmpty() -> Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(strings.trashEmpty, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(6.dp))
-                    Text(strings.autoCleanupHint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                EmptyState(
+                    icon = Icons.Default.DeleteSweep,
+                    title = strings.trashEmpty,
+                    subtitle = strings.autoCleanupHint,
+                )
             }
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 150.dp),

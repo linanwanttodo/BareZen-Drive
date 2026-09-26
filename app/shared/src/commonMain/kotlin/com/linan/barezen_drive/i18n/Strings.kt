@@ -282,6 +282,10 @@ interface Strings {
     val actionUnarchive: String
     val actionArchive: String
     val autoCleanupHint: String
+    /** Empty-state copy: archive/trash/transfer need a second line of context. */
+    val archiveEmptyHint: String
+    val transferEmptyHint: String
+    val actionGoUpload: String
     val deletedForever: String
     val trashEmptied: String
     val today: String
