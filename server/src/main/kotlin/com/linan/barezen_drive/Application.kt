@@ -55,6 +55,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
+/** Ceiling for JSON request bodies; upload chunks are exempt (see the Setup intercept). */
+private const val MAX_JSON_BODY = 1L * 1024 * 1024
+
 fun main() {
     val cfg = AppConfig.fromEnv()
     val storage: StorageProvider = when (cfg.storageBackend) {
@@ -141,6 +144,39 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
             challenge { _, _ ->
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse(ApiError(ErrorCodes.TOKEN_INVALID, "未登录或 token 无效")))
             }
+        }
+    }
+    // --- Response hardening + a body ceiling, before routing -----------------
+    // Both sit in Setup so they apply to 404s and error responses too: a
+    // header that only some responses carry is a header an attacker routes
+    // around.
+    intercept(ApplicationCallPipeline.Setup) {
+        call.response.headers.append("X-Content-Type-Options", "nosniff", safeOnly = false)
+        // The web bundle is a Compose/Wasm app: it needs eval-class script
+        // rights for the wasm module and blob workers (skiko), inline styles for
+        // the stylesheet Compose injects, and blob:/data: images for thumbnails
+        // and the wallpaper. object-src 'none' is the load-bearing part - it
+        // blocks the plugin-based <object>/<embed> execution path that a
+        // file:// upload could otherwise reach.
+        call.response.headers.append(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; " +
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; " +
+                "media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; " +
+                "worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'",
+            safeOnly = false,
+        )
+        // JSON payloads here are small DTOs (register, rename, share create);
+        // 1 MiB is far above any of them. Upload chunks are exempt by design -
+        // they are legitimately up to 20 MiB and are streamed, not buffered.
+        val declaredLength = call.request.contentLength()
+        val isJson = call.request.contentType()?.match(ContentType.Application.Json) == true
+        if (isJson && declaredLength != null && declaredLength > MAX_JSON_BODY) {
+            call.respond(
+                HttpStatusCode.PayloadTooLarge,
+                ErrorResponse(ApiError(ErrorCodes.VALIDATION_ERROR, "请求体过大")),
+            )
+            finish()
         }
     }
     routing {
