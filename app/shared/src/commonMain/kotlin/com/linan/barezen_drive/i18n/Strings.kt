@@ -232,6 +232,7 @@ interface Strings {
     val allMedia: String
     val selectAll: String
     val userManagement: String
+    val ownerOnlyTitle: String
     val userManagementHint: String
     val you: String
     fun fileCount(n: Long): String

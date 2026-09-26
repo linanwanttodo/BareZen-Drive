@@ -283,10 +283,6 @@ class ApiClient(
         }.body()
     }
 
-    suspend fun me(): Result<UserDto> = runApi {
-        http.get("$baseUrl/api/me").body()
-    }
-
     /** Name search across the account's files (search tab). */
     suspend fun search(query: String): Result<RecentFilesResponse> = runApi {
         http.get("$baseUrl/api/search") {
@@ -426,6 +422,11 @@ class ApiClient(
             contentType(ContentType.Image.JPEG)
             setBody(bytes)
         }
+    }
+
+    /** Current account, including whether it owns the instance. */
+    suspend fun me(): Result<UserDto> = runApi {
+        http.get("$baseUrl/api/me").body()
     }
 
     suspend fun thumbnailBytes(id: String): Result<ByteArray> = runApi {

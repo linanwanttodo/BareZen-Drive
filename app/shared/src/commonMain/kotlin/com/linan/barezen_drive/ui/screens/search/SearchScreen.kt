@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -19,6 +20,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -74,13 +76,19 @@ fun SearchScreen(
     var searchError by remember { mutableStateOf<String?>(null) }
 
     // Debounced live search: every keystroke waits 300ms, then queries.
+    // `searching` spans the debounce as well as the request: without it the
+    // page sits on the previous results (or blank) for the whole round trip and
+    // a slow link looks like the app ignored the input.
+    var searching by remember { mutableStateOf(false) }
     LaunchedEffect(query) {
         delay(300.milliseconds)
         if (query.isBlank()) {
             results = null
             searchError = null
+            searching = false
             return@LaunchedEffect
         }
+        searching = true
         // A failed query must read as a failure, not as "no results".
         files.search(query.trim()).fold(
             onSuccess = {
@@ -92,6 +100,7 @@ fun SearchScreen(
                 searchError = e.message?.takeIf { it.isNotBlank() } ?: I18n.strings.loadFailed
             },
         )
+        searching = false
     }
 
     Scaffold(
@@ -135,6 +144,18 @@ fun SearchScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             )
+            // 2dp line right under the field: a hairline, not a spinner - the
+            // page keeps its previous results visible underneath, which is what
+            // makes the wait legible instead of blank.
+            if (searching && query.isNotBlank()) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color.Transparent,
+                )
+            }
             val shown = results
             val err = searchError
             when {

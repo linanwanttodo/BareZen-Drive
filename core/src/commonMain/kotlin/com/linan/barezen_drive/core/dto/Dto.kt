@@ -2,7 +2,20 @@ package com.linan.barezen_drive.core.dto
 
 import kotlinx.serialization.Serializable
 
-@Serializable data class UserDto(val id: String, val username: String, val createdAt: String)
+/**
+ * `isOwner` is the client's only permission signal: the instance owner is the
+ * account that may reach the admin endpoints (user management, the registration
+ * toggle), and without it the settings page offered rows that answer 403.
+ * Defaulted so the register/login paths can keep constructing it before the
+ * ownership lookup has run.
+ */
+@Serializable
+data class UserDto(
+    val id: String,
+    val username: String,
+    val createdAt: String,
+    val isOwner: Boolean = false,
+)
 @Serializable data class LoginRequest(val username: String, val password: String)
 @Serializable data class RegisterRequest(val username: String, val password: String)
 @Serializable data class RefreshRequest(val refreshToken: String)

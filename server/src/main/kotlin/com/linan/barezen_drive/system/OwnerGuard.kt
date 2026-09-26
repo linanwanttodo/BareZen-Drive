@@ -18,12 +18,17 @@ import kotlinx.coroutines.withContext
  * when extra accounts were let in through an open registration window:
  * they are guests, never administrators.
  */
-internal fun ownerId(): UUID? = transaction(DatabaseFactory.db) {
-    UsersTable.selectAll()
-        .orderBy(UsersTable.createdAt to SortOrder.ASC, UsersTable.id to SortOrder.ASC)
-        .limit(1)
-        .firstOrNull()?.get(UsersTable.id)
-}
+internal fun ownerId(): UUID? = transaction(DatabaseFactory.db) { ownerAccountId() }
+
+/**
+ * The one definition of "owner": the earliest account, ties broken by id so the
+ * answer cannot flip between two accounts created in the same millisecond.
+ * Callers already run inside (or open) a transaction - this only reads.
+ */
+internal fun ownerAccountId(): UUID? = UsersTable.selectAll()
+    .orderBy(UsersTable.createdAt to SortOrder.ASC, UsersTable.id to SortOrder.ASC)
+    .limit(1)
+    .firstOrNull()?.get(UsersTable.id)
 
 /**
  * Guards the owner-only endpoints: user management and the registration toggle.

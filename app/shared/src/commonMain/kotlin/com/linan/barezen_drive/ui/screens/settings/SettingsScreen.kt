@@ -159,6 +159,8 @@ fun SettingsScreen(
     onClearWallpaper: () -> Unit,
     onOpenSource: () -> Unit,
     onOpenUsers: () -> Unit = {},
+    /** Instance owner: the user-management row is hidden for everyone else. */
+    isOwner: Boolean = false,
     onOpenShareManager: () -> Unit,
     onOpenTrash: () -> Unit = {},
     onOpenArchive: () -> Unit = {},
@@ -379,15 +381,21 @@ fun SettingsScreen(
             }
             }
 
+            // Both rows in this section are owner-only. They used to be listed
+            // for every account, so a guest tapped "用户管理" and got a page
+            // whose whole content was a red 403 line: permission was checked
+            // after the navigation instead of before it. The whole section goes
+            // - a header over nothing is its own kind of noise.
+            if (isOwner) {
             GlassSectionHeader(LocalStrings.current.settingsServer)
             GlassCard {
-                SettingsRow(
-                    title = LocalStrings.current.userManagement,
-                    subtitle = LocalStrings.current.userManagementHint,
-                    onClick = onOpenUsers,
-                    trailing = { Icon(Icons.Default.Person, contentDescription = null) },
-                )
-                HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                    SettingsRow(
+                        title = LocalStrings.current.userManagement,
+                        subtitle = LocalStrings.current.userManagementHint,
+                        onClick = onOpenUsers,
+                        trailing = { Icon(Icons.Default.Person, contentDescription = null) },
+                    )
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                 if (registrationOpen != null) {
                     SettingsRow(
                         title = LocalStrings.current.openRegistration,
@@ -420,6 +428,7 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
             }
 
             GlassSectionHeader(LocalStrings.current.actionShare)

@@ -35,6 +35,9 @@ class AuthRepository(
      * while the server URL field is being edited, and the stored base URL must
      * only change on a real login/register.
      */
+    /** Owner flag for permission-aware UI (see UserDto.isOwner). */
+    suspend fun me(): Result<UserDto> = api.me()
+
     suspend fun registrationStatus(host: String): Result<Boolean> {
         val probed = if (host.isBlank()) null else normalizeHost(host)
         return api.registrationStatus(probed).map { it.open }
