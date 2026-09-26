@@ -190,6 +190,10 @@ fun AlbumScreen(
     // touch the upload, which is owned by the LaunchedEffect below and mirrored
     // into the transfer centre. A new batch re-opens it.
     var uploadDialogVisible by remember { mutableStateOf(true) }
+    // Photos whose upload failed, kept so the dialog can offer a retry instead
+    // of dropping them silently. [failedReason] is the first error message.
+    var failedUploads by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
+    var failedReason by remember { mutableStateOf("") }
     val progress by uploader.progress.collectAsState()
     // This device's own album folder: uploads always target it. Kept apart
     // from albumFolderId (the currently *browsed* scope: a device folder, a
@@ -453,6 +457,12 @@ fun AlbumScreen(
         }
         val picks = pendingUploads
         uploadDialogVisible = true
+        failedUploads = emptyList()
+        // Failures are collected instead of dropped: `upload` returns a Result
+        // that used to be discarded, so a photo that failed to upload left no
+        // trace at all - the dialog vanished with the batch and the grid simply
+        // did not show the photo, which reads as "the app lost it".
+        val failures = mutableListOf<Pair<PickedFile, String>>()
         picks.forEach { picked ->
             // Photos carry their phone-album name; the matching category
             // folder is created on first upload (null = straight into the
@@ -462,10 +472,19 @@ fun AlbumScreen(
                 ?: target
             // Album-initiated uploads list on the album transfer page, not
             // the file one: the lane split is by where the work belongs.
+            // launch + join (not a direct call) so the dialog's cancel button
+            // can still abort the file in flight; the Result is captured from
+            // inside the child so a failure is not thrown away.
+            var outcome: Result<com.linan.barezen_drive.core.dto.FileDto>? = null
             uploadJob = launch {
-                uploader.upload(picked, perFile, lane = com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)
+                outcome = uploader.upload(picked, perFile, lane = com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)
             }
             uploadJob?.join()
+            uploadJob = null
+            // A cancelled file stays out of the list: the user asked it to stop.
+            outcome?.exceptionOrNull()?.let {
+                failures += picked to (it.message ?: it::class.simpleName.orEmpty())
+            }
         }
         uploadJob = null
         pendingUploads = emptyList()
@@ -476,6 +495,15 @@ fun AlbumScreen(
         cursor = null
         exhausted = false
         loadMore()
+        if (failures.isNotEmpty()) {
+            failedUploads = failures.map { it.first }
+            failedReason = failures.first().second
+            // The dialog stays open on the failed state instead of vanishing
+            // with the batch; "retry" re-queues exactly those files.
+            uploadDialogVisible = true
+        } else {
+            snackbar.showSnackbar(I18n.strings.uploadDoneCount(picks.size))
+        }
     }
 
 
@@ -1116,7 +1144,47 @@ fun AlbumScreen(
         // hides the shortcut - the transfer centre keeps the row and its stop
         // button, so the batch is never trapped behind a dialog the user cannot
         // close.
-        if (pendingUploads.isNotEmpty() && uploadDialogVisible) {
+        // Failed state first: the batch is over, so there is no progress left to
+        // report - the only useful thing this dialog can say is what went wrong
+        // and how to try again.
+        if (failedUploads.isNotEmpty() && uploadDialogVisible) {
+            AlertDialog(
+                containerColor = MaterialTheme.colorScheme.surface,
+                onDismissRequest = { uploadDialogVisible = false },
+                title = { Text(LocalStrings.current.uploadFailedTitle) },
+                text = {
+                    Column {
+                        Text(
+                            LocalStrings.current.uploadFailedCount(failedUploads.size),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (failedReason.isNotBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                failedReason,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        // Re-queue exactly the failed photos; the LaunchedEffect
+                        // keyed on pendingUploads picks them up again.
+                        val retry = failedUploads
+                        failedUploads = emptyList()
+                        uploadDialogVisible = false
+                        pendingUploads = retry
+                    }) { Text(LocalStrings.current.actionRetry) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { uploadDialogVisible = false }) {
+                        Text(LocalStrings.current.actionClose)
+                    }
+                },
+            )
+        } else if (pendingUploads.isNotEmpty() && uploadDialogVisible) {
             val p = progress
             AlertDialog(
                 containerColor = MaterialTheme.colorScheme.surface,
@@ -1131,16 +1199,27 @@ fun AlbumScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Spacer(Modifier.height(10.dp))
-                        LinearProgressIndicator(
-                            progress = { p.fraction.toFloat() },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "${(p.fraction * 100).toInt()}% · $speedText",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        if (p.phase == com.linan.barezen_drive.data.upload.UploadManager.Phase.FAILED) {
+                            // A failure can also land while the batch continues
+                            // with the next photo: show it instead of a bar that
+                            // will never advance.
+                            Text(
+                                p.error?.message ?: LocalStrings.current.uploadFailedRetry,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                progress = { p.fraction.toFloat() },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "${(p.fraction * 100).toInt()}% · $speedText",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 },
                 dismissButton = {
