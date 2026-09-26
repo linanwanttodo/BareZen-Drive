@@ -45,6 +45,7 @@ import com.linan.barezen_drive.ui.media.formatDateTime
 import kotlinx.coroutines.launch
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
+import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 
 /**
  * Central share management: every active link across all files and folders
@@ -73,6 +74,7 @@ fun ShareManagerScreen(
     LaunchedEffect(Unit) { refresh() }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(

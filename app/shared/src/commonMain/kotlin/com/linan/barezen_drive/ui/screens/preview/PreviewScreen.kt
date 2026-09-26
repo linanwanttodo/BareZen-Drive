@@ -56,6 +56,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.Button
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 
 /**
  * Full-screen preview. The pager swipes across the whole collection like a
@@ -92,6 +93,7 @@ fun PreviewScreen(
     var archived by remember(file.id) { mutableStateOf(file.archivedAt != null) }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(

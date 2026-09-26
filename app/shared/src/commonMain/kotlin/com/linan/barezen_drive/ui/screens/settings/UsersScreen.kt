@@ -39,6 +39,7 @@ import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.media.formatDateTime
 import kotlinx.coroutines.launch
 import androidx.compose.material3.CircularProgressIndicator
+import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 
 /**
  * Owner-facing account list: who registered, how much they store, and a
@@ -69,6 +70,7 @@ fun UsersScreen(
     LaunchedEffect(Unit) { reload() }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         topBar = {
             TopAppBar(
                 title = { Text(LocalStrings.current.userManagement) },

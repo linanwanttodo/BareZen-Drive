@@ -38,7 +38,6 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.linan.barezen_drive.ui.glass.LiquidBottomTab
 import com.linan.barezen_drive.ui.glass.LiquidBottomTabs
 import com.linan.barezen_drive.i18n.LocalStrings
-import androidx.compose.ui.graphics.ImageBitmap
 
 /**
  * App-wide tab destinations, in fixed order: home (album + recent), file
@@ -113,7 +112,6 @@ private val BottomBarInsetsSides = WindowInsetsSides.Horizontal + WindowInsetsSi
 fun MainShell(
     selected: MainTab,
     onSelect: (MainTab) -> Unit,
-    wallpaperBitmap: ImageBitmap?,
     glassBarEnabled: Boolean = true,
     /**
      * False while a tab owns the bottom strip itself - the album tab inside a
@@ -149,11 +147,11 @@ fun MainShell(
                     .fillMaxSize()
                     .layerBackdrop(backdrop),
             ) {
-                WallpaperLayer(wallpaperBitmap)
                 // Full-bleed: content flows BEHIND the floating glass bar so
                 // the backdrop has something to refract. Each tab screen
                 // reserves its own bottom clearance (bar height + margins +
-                // safe insets) inside its scroll container.
+                // safe insets) inside its scroll container. The wallpaper is
+                // drawn by the App root, behind this whole shell.
                 Box(Modifier.fillMaxSize()) { content() }
             }
             if (!showTabBar) {
@@ -228,11 +226,15 @@ fun MainShell(
         }
     } else if (!showTabBar) {
         Box(Modifier.fillMaxSize()) {
-            WallpaperLayer(wallpaperBitmap)
             content()
         }
     } else {
         NavigationSuiteScaffold(
+            // Transparent so the App-root wallpaper layer shows through. The
+            // default container color is opaque and would cover it - which is
+            // why the wallpaper used to be painted inside this scaffold
+            // instead of at the root.
+            containerColor = Color.Transparent,
             navigationSuiteItems = {
                 MainTab.entries.forEach { tab ->
                     item(
@@ -245,7 +247,6 @@ fun MainShell(
             },
         ) {
             Box(Modifier.fillMaxSize()) {
-                WallpaperLayer(wallpaperBitmap)
                 content()
             }
         }

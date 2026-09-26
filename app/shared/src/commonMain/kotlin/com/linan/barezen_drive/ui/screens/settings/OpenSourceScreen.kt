@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.platform.openInBrowser
 import com.linan.barezen_drive.i18n.LocalStrings
+import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 
 private const val GITHUB_PROFILE_URL = "https://github.com/linanwanttodo"
 
@@ -57,6 +58,7 @@ private val OPEN_SOURCE_ENTRIES = listOf(
 @Composable
 fun OpenSourceScreen(onBack: () -> Unit) {
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         topBar = {
             TopAppBar(
                 title = { Text(LocalStrings.current.openSourceNotices) },
