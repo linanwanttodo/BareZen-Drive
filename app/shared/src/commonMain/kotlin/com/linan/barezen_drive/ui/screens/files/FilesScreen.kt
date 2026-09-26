@@ -102,6 +102,8 @@ import com.linan.barezen_drive.data.upload.UploadManager
 import com.linan.barezen_drive.platform.PickedFile
 import com.linan.barezen_drive.platform.rememberFilePicker
 import com.linan.barezen_drive.platform.rememberFileSaver
+import com.linan.barezen_drive.ui.component.SkeletonList
+import com.linan.barezen_drive.ui.component.onHoverChanged
 import com.linan.barezen_drive.ui.media.FileThumbnail
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.media.formatDateTime
@@ -634,9 +636,9 @@ fun FilesScreen(
                         }
                     }
                 }
-                ui == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+                // Skeleton rows, not a spinner: the folder keeps its shape so
+                // the list does not visibly jump when the rows land.
+                ui == null -> SkeletonList(modifier = Modifier.fillMaxSize().padding(top = 8.dp))
                 ui.folders.isEmpty() && ui.files.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(LocalStrings.current.folderEmpty, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -1393,9 +1395,13 @@ private fun FileRow(
     onToggleSelect: () -> Unit = {},
 ) {
     val isSelected = selection?.contains(file.id) == true
+    // Desktop has no long-press, so the checkbox shows on hover as well: it is
+    // the only way a mouse user can start a multi-select here.
+    var hovered by remember(file.id) { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .onHoverChanged { hovered = it }
             .combinedClickable(
                 onClick = { if (selection != null) onToggleSelect() else onOpen() },
                 onLongClick = onToggleSelect,
@@ -1403,7 +1409,17 @@ private fun FileRow(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        FileThumbnail(file, thumbs, edge = 40.dp)
+        if (selection == null && hovered) {
+            IconButton(onClick = onToggleSelect, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    Icons.Default.RadioButtonUnchecked,
+                    contentDescription = LocalStrings.current.actionSelect,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            FileThumbnail(file, thumbs, edge = 40.dp)
+        }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1496,6 +1512,17 @@ private fun FileRow(
                 )
                 // Only offered for files: a folder has no content of its own to
                 // revision, and the server has no version endpoints for one.
+                // Multi-select entry that works with a mouse: long-press is a
+                // touch gesture and the row checkbox only appears on hover,
+                // so without this the feature is unreachable on desktop.
+                DropdownMenuItem(
+                    text = { Text(LocalStrings.current.actionSelect) },
+                    leadingIcon = { Icon(Icons.Default.CheckCircle, contentDescription = null) },
+                    onClick = {
+                        setMenuFor(null)
+                        onToggleSelect()
+                    },
+                )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.versionHistory) },
                     leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },

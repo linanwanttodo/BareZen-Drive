@@ -1,6 +1,7 @@
 package com.linan.barezen_drive.ui.screens.trash
 
 import com.linan.barezen_drive.ui.component.EmptyState
+import com.linan.barezen_drive.ui.component.SkeletonList
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -139,9 +140,10 @@ fun TrashScreen(
         },
     ) { pad ->
         when {
-            loading && files.isEmpty() -> Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
+            loading && files.isEmpty() -> SkeletonList(
+                modifier = Modifier.fillMaxSize().padding(pad).padding(top = 8.dp),
+                rows = 6,
+            )
             error != null && files.isEmpty() -> Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(error ?: strings.loadFailed, color = MaterialTheme.colorScheme.error)
