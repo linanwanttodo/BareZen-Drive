@@ -75,7 +75,12 @@ fun Route.adminUserRoutes(storage: StorageProvider) {
                 ?: throw ApiException.badRequest("用户 ID 非法", ErrorCodes.VALIDATION_ERROR)
             // The owner account carries the instance's administration; deleting
             // it would hand the instance to whichever account registered next.
-            if (target == ownerId()) throw ApiException.badRequest("所有者账号不可删除")
+            // ownerId() opens a blocking JDBC transaction; the ownership guard
+            // above already hopped to IO, so reuse that dispatcher here instead
+            // of querying on the request thread.
+            if (target == withContext(Dispatchers.IO) { ownerId() }) {
+                throw ApiException.badRequest("所有者账号不可删除")
+            }
             val (blobKeys, sessionIds) = withContext(Dispatchers.IO) {
                 val sessionIds = mutableListOf<UUID>()
                 val blobs = transaction(DatabaseFactory.db) {

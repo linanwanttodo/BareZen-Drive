@@ -7,6 +7,8 @@ import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The instance owner is the first account ever created: earliest createdAt,
@@ -23,7 +25,14 @@ internal fun ownerId(): UUID? = transaction(DatabaseFactory.db) {
         .firstOrNull()?.get(UsersTable.id)
 }
 
-/** Guards the owner-only endpoints: user management and the registration toggle. */
-internal fun requireOwner(userId: UUID) {
-    if (userId != ownerId()) throw ApiException.forbidden("仅实例所有者可执行此操作")
+/**
+ * Guards the owner-only endpoints: user management and the registration toggle.
+ *
+ * `suspend` because ownerId() opens a blocking JDBC transaction; every caller
+ * runs on the request pipeline, so without the IO hop a slow query here would
+ * occupy the event-loop thread that also has to serve everybody else.
+ */
+internal suspend fun requireOwner(userId: UUID) {
+    val owner = withContext(Dispatchers.IO) { ownerId() }
+    if (userId != owner) throw ApiException.forbidden("仅实例所有者可执行此操作")
 }
