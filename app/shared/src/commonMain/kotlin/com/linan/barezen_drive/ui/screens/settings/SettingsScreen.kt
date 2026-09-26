@@ -70,6 +70,7 @@ import com.linan.barezen_drive.platform.openInBrowser
 import com.linan.barezen_drive.ui.theme.ThemeMode
 import com.linan.barezen_drive.ui.theme.avatarColor
 import com.linan.barezen_drive.ui.theme.avatarLetter
+import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.AlertDialog
@@ -150,7 +151,8 @@ fun SettingsScreen(
     currentVersion: String,
     checkUpdate: suspend () -> com.linan.barezen_drive.data.update.UpdateStatus,
     registrationOpen: Boolean?,
-    onRegistrationOpenChange: (Boolean) -> Unit,
+    /** Applies the change and answers whether the server accepted it. */
+    onRegistrationOpenChange: suspend (Boolean) -> Boolean,
     wallpaperEnabled: Boolean,
     onWallpaperToggle: (Boolean) -> Unit,
     onPickWallpaper: () -> Unit,
@@ -163,6 +165,10 @@ fun SettingsScreen(
     onLogout: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
+    val scope = rememberCoroutineScope()
+    // Inline (not a toast): a rejected setting silently reverting is exactly
+    // the case a disappearing message cannot explain.
+    var registrationError by remember { mutableStateOf<String?>(null) }
     var showAccountInfo by remember { mutableStateOf(false) }
     // Sign-out drops the session and forces re-entry of credentials; confirm
     // first so a stray tap cannot trigger it.
@@ -388,9 +394,31 @@ fun SettingsScreen(
                         subtitle = if (registrationOpen) LocalStrings.current.openRegistrationOnHint
                         else LocalStrings.current.openRegistrationOffHint,
                         trailing = {
-                            Switch(checked = registrationOpen, onCheckedChange = onRegistrationOpenChange)
+                            // suspend callback, not fire-and-forget: the switch
+                            // flips optimistically and the parent rolls it back
+                            // when the server says no. Without the result the
+                            // rollback was invisible - the switch sprang back and
+                            // nothing said why.
+                            Switch(
+                                checked = registrationOpen,
+                                onCheckedChange = { next ->
+                                    scope.launch {
+                                        registrationError =
+                                            if (onRegistrationOpenChange(next)) null
+                                            else I18n.strings.settingRejected
+                                    }
+                                },
+                            )
                         },
                     )
+                    registrationError?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 16.dp, top = 2.dp),
+                        )
+                    }
                 }
             }
 

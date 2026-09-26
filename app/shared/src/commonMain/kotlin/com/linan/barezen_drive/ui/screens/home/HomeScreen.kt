@@ -320,7 +320,12 @@ fun HomeScreen(
                         scope.launch {
                             var failed = 0
                             list.forEach { f -> if (repo.deleteFile(f.id).isFailure) failed++ }
-                            if (failed > 0) snackbar.showSnackbar(I18n.strings.deleteFailed)
+                            // Success was silent here while a single delete
+                            // reports; same operation, same wording, both ways.
+                            snackbar.showSnackbar(
+                                if (failed > 0) I18n.strings.deleteFailed
+                                else I18n.strings.deletedCount(list.size),
+                            )
                             reload()
                         }
                     }) { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) }

@@ -455,11 +455,17 @@ fun App() {
                 checkUpdate = { com.linan.barezen_drive.data.update.UpdateChecker.check(files) },
                 registrationOpen = registrationOpen,
                 onRegistrationOpenChange = { open ->
-                // Optimistic flip; the server answer is the truth.
+                // Optimistic flip, then the server's answer is the truth. The
+                // result is handed back so the row can say the change was
+                // rejected instead of springing back without explanation.
                 registrationOpen = open
-                scope.launch {
-                registrationOpen = files.setRegistrationOpen(open)
-                .getOrNull()?.open ?: open
+                val applied = files.setRegistrationOpen(open)
+                if (applied.isFailure) {
+                    registrationOpen = !open
+                    false
+                } else {
+                    registrationOpen = applied.getOrNull()?.open ?: open
+                    true
                 }
                 },
                 wallpaperEnabled = wallpaperEnabled,
