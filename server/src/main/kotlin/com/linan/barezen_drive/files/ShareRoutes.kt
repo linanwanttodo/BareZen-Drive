@@ -78,16 +78,19 @@ fun Route.sharePublicRoutes(storage: StorageProvider) {
             if (range == null || range.startsWith("bytes=0-")) {
                 withContext(Dispatchers.IO) { ShareService.recordDownload(share) }
             }
-            val contentType = meta.mimeType?.let { mime ->
-                runCatching { ContentType.parse(mime) }.getOrNull()
-            } ?: ContentType.Application.OctetStream
+            // Same reasoning as /api/files/{id}/content, and this route is the
+            // more exposed of the two: it needs no token at all, only the share
+            // link, so an uploaded evil.html is one link away from executing on
+            // the netdisk origin.
+            val safe = safeFileContent(meta.mimeType, meta.name)
+            safe.disposition?.let { call.response.headers.append(HttpHeaders.ContentDisposition, it) }
             // exists() guard: a share outliving a pruned blob must answer 404, not 500.
             val key = meta.storageKey
             if (!withContext(Dispatchers.IO) { storage.exists(key) }) {
                 throw com.linan.barezen_drive.api.ApiException.notFound("文件内容不存在")
             }
             // PartialContent plugin handles Range/206/416 on this streamed body.
-            call.respond(FileStream(withContext(Dispatchers.IO) { storage.get(key) }, meta.size, contentType))
+            call.respond(FileStream(withContext(Dispatchers.IO) { storage.get(key) }, meta.size, safe.type))
         }
 
         get("/files/{fid}/thumbnail") {
@@ -107,9 +110,16 @@ fun Route.sharePublicRoutes(storage: StorageProvider) {
     }
 }
 
-/** Shared guard for every public endpoint: hex-format check first, then lookup. */
-private fun resolve(call: ApplicationCall): ResolvedShare {
+/**
+ * Shared guard for every public endpoint: hex-format check first, then lookup.
+ *
+ * `suspend` + Dispatchers.IO because resolveToken opens a blocking JDBC
+ * transaction: this is the unauthenticated hot path (a media player fires a
+ * Range request per seek), and on a 1C host a single blocked event-loop thread
+ * stalls every other request behind it.
+ */
+private suspend fun resolve(call: ApplicationCall): ResolvedShare {
     val token = call.parameters["token"] ?: throw com.linan.barezen_drive.api.ApiException.notFound("链接无效或已过期")
     if (!TOKEN_RE.matches(token)) throw com.linan.barezen_drive.api.ApiException.notFound("链接无效或已过期")
-    return ShareService.resolveToken(token)
+    return withContext(Dispatchers.IO) { ShareService.resolveToken(token) }
 }

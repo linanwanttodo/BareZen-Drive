@@ -3,6 +3,8 @@ package com.linan.barezen_drive.files
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.storage.StorageProvider
 import com.linan.barezen_drive.storage.thumbKey
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 
@@ -28,11 +30,17 @@ private val log = LoggerFactory.getLogger("BlobPurge")
  */
 suspend fun deleteStoredBlobs(storage: StorageProvider, keys: List<String>) {
     if (keys.isEmpty()) return
-    val stillOrphan = transaction(DatabaseFactory.db) { FileService.orphanBlobKeys(keys) }
-    stillOrphan.forEach { key ->
-        runCatching {
-            storage.delete(key)
-            storage.delete(thumbKey(key.substringAfterLast('/')))
-        }.onFailure { log.warn("blob cleanup failed for {}", key, it) }
+    // The IO hop lives here rather than at each of the nine call sites: the
+    // recount is a blocking JDBC transaction and the unlink is blocking file IO,
+    // so a caller that forgets the wrap parks the request thread (or, for the
+    // event-loop callers, the thread every other request needs).
+    withContext(Dispatchers.IO) {
+        val stillOrphan = transaction(DatabaseFactory.db) { FileService.orphanBlobKeys(keys) }
+        stillOrphan.forEach { key ->
+            runCatching {
+                storage.delete(key)
+                storage.delete(thumbKey(key.substringAfterLast('/')))
+            }.onFailure { log.warn("blob cleanup failed for {}", key, it) }
+        }
     }
 }

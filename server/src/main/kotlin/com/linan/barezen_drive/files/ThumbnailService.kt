@@ -21,7 +21,9 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
+import javax.imageio.ImageReadParam
 import kotlin.io.path.deleteIfExists
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -192,24 +194,60 @@ object ThumbnailService {
     }
 
     /** Pure-Java image fallback: decode, downscale to fit 512x512, re-encode JPEG. */
+    /**
+     * Source-decimation factors for a cover of [targetEdge] px.
+     *
+     * The point is heap, not speed: a full decode of a 24MP photo materialises
+     * ~96MB and a 64MP one ~256MB, which is the entire default heap on a 1G
+     * host. Decoding every Nth pixel instead costs a fraction of that and still
+     * leaves more pixels than the 512px cover needs, so quality is unchanged
+     * after the downscale.
+     *
+     * Both axes get the same factor (decimating them differently would distort
+     * the photo) and it is a power of two, because readers are only obliged to
+     * honour powers of two. Capped at 16: past that the cover would be an
+     * upscale of a thumbnail and the source guard already refuses anything
+     * larger anyway.
+     */
+    internal fun subsamplingFor(width: Long, height: Long, targetEdge: Int): Pair<Int, Int> {
+        if (width <= 0 || height <= 0 || targetEdge <= 0) return 1 to 1
+        val longEdge = max(width, height)
+        if (longEdge <= targetEdge) return 1 to 1
+        // Largest power of two that still leaves at least targetEdge pixels.
+        var factor = 1
+        while (factor < 16 && ceil(longEdge.toDouble() / (factor * 2)) >= targetEdge) factor *= 2
+        return factor to factor
+    }
+
     private fun imageIoCover(source: Path): ByteArray? = try {
         ImageIO.setUseCache(false)
-        // Bounds pass first: refuse to materialize a decompression bomb before
-        // actually decoding pixels.
+        // Bounds and decimation decided in one pass over the header, then the
+        // reader decodes the subsampled grid directly - the full raster is
+        // never materialised.
         val input = ImageIO.createImageInputStream(source.toFile()) ?: return null
         val readers = ImageIO.getImageReaders(input)
-        if (!readers.hasNext()) return null
+        if (!readers.hasNext()) {
+            input.close()
+            return null
+        }
         val reader = readers.next()
         reader.input = input
-        try {
+        val img = try {
             val w = reader.getWidth(0).toLong()
             val h = reader.getHeight(0).toLong()
+            // Refuse a decompression bomb before decoding any pixels.
             if (w <= 0 || h <= 0 || w * h > MAX_SOURCE_PIXELS) return null
+            val (fx, fy) = subsamplingFor(w, h, MAX_EDGE)
+            // A default read param with no cache: the decimation below is the
+            // only transformation, and a null param would mean a full decode.
+            val param: ImageReadParam = reader.defaultReadParam
+                ?: throw javax.imageio.IIOException("reader without a read param")
+            if (fx > 1 || fy > 1) param.setSourceSubsampling(fx, fy, 0, 0)
+            reader.read(0, param)
         } finally {
             reader.dispose()
             input.close()
-        }
-        val img = ImageIO.read(source.toFile()) ?: return null
+        } ?: return null
         if (img.width <= 0 || img.height <= 0) null else {
             val scale = min(1f, MAX_EDGE.toFloat() / max(img.width, img.height))
             val w = max(1, (img.width * scale).roundToInt())

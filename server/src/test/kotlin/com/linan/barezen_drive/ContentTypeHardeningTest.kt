@@ -158,4 +158,64 @@ class ContentTypeHardeningTest {
             "an oversized body must be refused up front, not after buffering it",
         )
     }
+
+    /**
+     * The public share link is the more exposed of the two content routes: it
+     * needs no account at all, only the link, so the hardening has to hold on
+     * this path too - not just on the authenticated one.
+     */
+    @Test
+    fun publicShareContentIsAlsoServedAsAttachment() = testApplication {
+        setup()
+        val id = upload(
+            "<html><body><script>fetch('/api/me')</script></body></html>".encodeToByteArray(),
+            "shared-evil.html",
+            "text/html",
+        )
+        val created = client.post("/api/shares") {
+            header(HttpHeaders.Authorization, auth)
+            contentType(ContentType.Application.Json)
+            setBody("""{"fileId":"$id"}""")
+        }
+        assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
+        // The create response hands out the one and only copy of the token,
+        // inside the share url (/s/<token>).
+        val token = Regex("""/s/([0-9a-f]+)""").find(created.bodyAsText())!!.groupValues[1]
+
+        // No Authorization header on purpose: this is the anonymous path.
+        val res = client.get("/api/public/shares/$token/files/$id/content")
+
+        assertEquals(HttpStatusCode.OK, res.status, res.bodyAsText())
+        assertEquals(
+            ContentType.Application.OctetStream,
+            res.contentType()?.withoutParameters(),
+            "the public share route must not inline an executable type either",
+        )
+        assertTrue(
+            res.headers[HttpHeaders.ContentDisposition].orEmpty().startsWith("attachment", ignoreCase = true),
+            "expected attachment on the public route, got '${res.headers[HttpHeaders.ContentDisposition]}'",
+        )
+        assertEquals("nosniff", res.headers["X-Content-Type-Options"])
+    }
+
+    @Test
+    fun publicShareStillServesImagesInline() = testApplication {
+        setup()
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+        val id = upload(png, "shared-ok.png", "image/png")
+        val created = client.post("/api/shares") {
+            header(HttpHeaders.Authorization, auth)
+            contentType(ContentType.Application.Json)
+            setBody("""{"fileId":"$id"}""")
+        }
+        // The create response hands out the one and only copy of the token,
+        // inside the share url (/s/<token>).
+        val token = Regex("""/s/([0-9a-f]+)""").find(created.bodyAsText())!!.groupValues[1]
+
+        val res = client.get("/api/public/shares/$token/files/$id/content")
+
+        assertEquals(HttpStatusCode.OK, res.status, res.bodyAsText())
+        assertEquals(ContentType.Image.PNG, res.contentType()?.withoutParameters())
+        assertNull(res.headers[HttpHeaders.ContentDisposition], "inline media needs no attachment")
+    }
 }
