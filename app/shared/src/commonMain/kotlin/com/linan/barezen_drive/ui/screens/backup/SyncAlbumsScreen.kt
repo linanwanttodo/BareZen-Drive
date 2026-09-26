@@ -40,6 +40,7 @@ import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.platform.BackupBucket
 import com.linan.barezen_drive.platform.BackupPauseReason
 import com.linan.barezen_drive.platform.MediaSync
+import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 
 /**
  * Album backup hub - the single home of everything album-sync related, kept
@@ -101,6 +102,7 @@ fun SyncAlbumsScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         topBar = {
             TopAppBar(
                 title = { Text(strings.backupAlbumsTitle) },

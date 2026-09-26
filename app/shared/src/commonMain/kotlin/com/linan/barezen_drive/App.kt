@@ -53,6 +53,7 @@ import com.linan.barezen_drive.ui.screens.backup.SyncAlbumsScreen
 import com.linan.barezen_drive.ui.media.ThumbnailLoader
 import com.linan.barezen_drive.ui.shell.MainShell
 import com.linan.barezen_drive.ui.shell.MainTab
+import com.linan.barezen_drive.ui.shell.WallpaperLayer
 import barezen_drive.app.shared.generated.resources.Res
 import barezen_drive.app.shared.generated.resources.barezen_logo_on_white
 import com.linan.barezen_drive.ui.AvatarButton
@@ -96,6 +97,7 @@ import kotlin.time.Duration.Companion.milliseconds
  * created once inside remember {} at the App root and passed down as
  * constructor parameters.
  */
+
 private sealed interface Screen {
     data object Login : Screen
     data object Main : Screen
@@ -187,6 +189,19 @@ fun App() {
                 .fillMaxSize()
                 .background(scheme.background),
         ) {
+        // Wallpaper lives at the composition root, not inside MainShell: the
+        // pushed screens (settings / transfers / trash / archive / users) are
+        // rendered by the backstack below, outside the shell, so a shell-owned
+        // layer left them on the flat theme background.
+        //
+        // No extra scrim here on purpose: every screen paints its own surface
+        // at LocalPanelAlpha (0.6 while a wallpaper is set) and that panel is
+        // the readability floor. Stacking a root scrim on top of it washed the
+        // wallpaper out on the tab pages - the very look the shell layout had
+        // before this change.
+        if (wallpaperEnabled && wallpaperBitmap != null) {
+            WallpaperLayer(wallpaperBitmap)
+        }
         // Single instances for the whole app lifetime of the composition.
         val api = remember { ApiClient() }
         val auth = remember { AuthRepository(api, TokenStorage) }
@@ -359,7 +374,6 @@ fun App() {
                 MainShell(
                     selected = tab,
                     onSelect = { tab = it },
-                    wallpaperBitmap = wallpaperBitmap.takeIf { wallpaperEnabled },
                     glassBarEnabled = glassBlur,
                     showTabBar = !(tab == MainTab.ALBUM && albumInCollection),
                 ) {

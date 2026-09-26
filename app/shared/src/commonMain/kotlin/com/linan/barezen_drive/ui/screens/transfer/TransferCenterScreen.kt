@@ -56,6 +56,7 @@ import com.linan.barezen_drive.data.transfer.TransferPhase
 import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.media.ThumbnailHub
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
+import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 
 /**
  * One lane of the transfer centre: album work (sync batches plus manual
@@ -100,6 +101,7 @@ fun TransferCenterScreen(
 
     val strings = LocalStrings.current
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
         topBar = {
             TopAppBar(
                 title = {
