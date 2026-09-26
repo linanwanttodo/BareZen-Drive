@@ -21,6 +21,10 @@ actual object AppPreferences {
             get() = readString("files_view_mode")?.toIntOrNull() ?: 0
             set(v) = writeString("files_view_mode", v.toString())
 
+        override var serverFieldExpanded: Boolean
+            get() = readString("server_field_expanded") == "1"
+            set(v) = writeString("server_field_expanded", if (v) "1" else "0")
+
         override var wallpaperEnabled: Boolean
             get() = readString("wallpaper_enabled") == "1"
             set(v) = writeString("wallpaper_enabled", if (v) "1" else "0")

@@ -13,6 +13,10 @@ actual object AppPreferences {
             get() = prefs.getInt("files_view_mode", 0)
             set(v) = prefs.edit().putInt("files_view_mode", v).apply()
 
+        override var serverFieldExpanded: Boolean
+            get() = prefs.getBoolean("server_field_expanded", false)
+            set(v) = prefs.edit().putBoolean("server_field_expanded", v).apply()
+
         override var wallpaperEnabled: Boolean
             get() = prefs.getBoolean("wallpaper_enabled", false)
             set(v) = prefs.edit().putBoolean("wallpaper_enabled", v).apply()

@@ -101,6 +101,15 @@ interface Strings {
     /** Soft delete: the files land in the trash, where they stay 30 days. */
     fun confirmMoveToTrashCount(count: Int): String
     val albumAllLoaded: String
+    val connectionSettings: String
+    /** Past-tense results, not the action labels that triggered them. */
+    val folderDeleted: String
+    fun deletedCount(count: Int): String
+    val unarchived: String
+    /** Distinct from shareScreen's shareLinkCreated, which announces that the
+     *  full address is shown only once. */
+    val shareLinkReady: String
+    val settingRejected: String
     val uploadFailedTitle: String
     fun uploadFailedCount(count: Int): String
     fun uploadDoneCount(count: Int): String

@@ -239,9 +239,18 @@ fun FilesScreen(
     }
 
     fun toggleArchived(file: FileDto) {
+        val archiving = file.archivedAt == null
         scope.launch {
-            repo.setArchived(file.id, file.archivedAt == null).fold(
-                onSuccess = { reload() },
+            repo.setArchived(file.id, archiving).fold(
+                onSuccess = {
+                    // Past tense, and the right one: the menu label doubles as
+                    // both "归档" and "取消归档", so reusing it would show a
+                    // button name as if it were a result.
+                    snackbar.showSnackbar(
+                        if (archiving) I18n.strings.archived else I18n.strings.unarchived,
+                    )
+                    reload()
+                },
                 onFailure = { snackbar.showSnackbar(I18n.strings.operationFailed) },
             )
         }
@@ -838,6 +847,10 @@ fun FilesScreen(
                         when {
                             failed > 0 -> snackbar.showSnackbar(I18n.strings.deleteFailed)
                             movedToTrash -> snackbar.showSnackbar(I18n.strings.movedToTrash)
+                            // A folder delete is permanent, so it used to be the
+                            // one delete with no receipt at all - the row vanished
+                            // and nothing said whether it worked.
+                            else -> snackbar.showSnackbar(I18n.strings.folderDeleted)
                         }
                         reload()
                     }
@@ -860,6 +873,7 @@ fun FilesScreen(
             targetId = id,
             onDismiss = { shareTarget = null },
             onError = { e -> scope.launch { snackbar.showSnackbar(msg(e, I18n.strings.operationFailed)) } },
+            onCreated = { scope.launch { snackbar.showSnackbar(I18n.strings.shareLinkReady) } },
         )
     }
 
@@ -1701,6 +1715,8 @@ private fun ShareDialog(
     targetId: String,
     onDismiss: () -> Unit,
     onError: (Throwable) -> Unit,
+    /** A link was created: the caller owns the toast (this dialog has no host). */
+    onCreated: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var existing by remember { mutableStateOf<List<ShareDto>>(emptyList()) }
@@ -1802,6 +1818,10 @@ private fun ShareDialog(
                                         copied = false
                                         creating = false
                                         refresh()
+                                        // The link is only visible inside this
+                                        // dialog; once it is closed there was no
+                                        // sign the link had been made at all.
+                                        onCreated()
                                     },
                                     onFailure = {
                                         creating = false

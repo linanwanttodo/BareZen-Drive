@@ -8,6 +8,15 @@ interface AppPrefs {
     /** File list view mode: 0 = list (default), 1 = grid. */
     var filesViewMode: Int
 
+    /**
+     * Whether the login form shows the server-address field. False by default:
+     * a self-hosted address is noise for most people (the web build already
+     * knows where it is served from) and it pushed the real fields down the
+     * page. Sticky, because someone who had to open it once will have to do it
+     * again on every login otherwise.
+     */
+    var serverFieldExpanded: Boolean
+
     /** Wallpaper mode: 0 = none (flat color, default), 1 = user image. */
     var wallpaperEnabled: Boolean
 

@@ -1,6 +1,7 @@
 package com.linan.barezen_drive.ui.screens.login
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,11 +17,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -29,9 +33,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -76,6 +81,9 @@ fun LoginScreen(
     var showPassword by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    // Sticky: someone who had to open it once has to do it again on every
+    // login otherwise.
+    var showConnection by remember { mutableStateOf(AppPreferences.get().serverFieldExpanded) }
     val scope = rememberCoroutineScope()
 
     // Surface (not a plain .background modifier): it seeds LocalContentColor
@@ -142,28 +150,26 @@ fun LoginScreen(
                         }.getOrDefault(true)
                     }
                     if (registrationOpen) {
-                        TabRow(selectedTabIndex = mode) {
-                            Tab(mode == 0, { mode = 0 }) { Text(LocalStrings.current.actionSignIn, Modifier.padding(12.dp)) }
-                            Tab(mode == 1, { mode = 1 }) { Text(LocalStrings.current.actionRegister, Modifier.padding(12.dp)) }
+                        // Segmented control, not a TabRow: the tab label and the
+                        // submit button below both read "登录", and a TabRow only
+                        // marks the selection with a 2dp underline - weak enough
+                        // that the first tap lands on the tab instead of the form
+                        // (it did, during the automated walkthrough). A segmented
+                        // button shows the selection as a filled surface.
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            SegmentedButton(
+                                selected = mode == 0,
+                                onClick = { mode = 0 },
+                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                            ) { Text(LocalStrings.current.actionSignIn) }
+                            SegmentedButton(
+                                selected = mode == 1,
+                                onClick = { mode = 1 },
+                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                            ) { Text(LocalStrings.current.actionRegister) }
                         }
                         Spacer(Modifier.height(16.dp))
                     }
-                    OutlinedTextField(
-                        value = host,
-                        onValueChange = { host = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(LocalStrings.current.fieldServerUrlHint) },
-                        supportingText = {
-                            Text(
-                                if (isWebPlatform()) LocalStrings.current.serverUrlWebHint
-                                else LocalStrings.current.serverUrlDeviceHint,
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        },
-                        singleLine = true,
-                        shape = MaterialTheme.shapes.large,
-                    )
-                    Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = username,
                         onValueChange = { username = it },
@@ -172,7 +178,6 @@ fun LoginScreen(
                         singleLine = true,
                         shape = MaterialTheme.shapes.large,
                     )
-                    Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
@@ -195,6 +200,55 @@ fun LoginScreen(
                             }
                         },
                     )
+                    // Server address folded away by default: it is meaningless
+                    // noise for anyone who opened the app from its own URL (and
+                    // for the web build, which knows where it is served from),
+                    // and it pushed the two fields that matter down the page.
+                    Spacer(Modifier.height(4.dp))
+                    // A chevron, because the label is also a state readout: with
+                    // it the row reads as a disclosure control rather than as a
+                    // stray link.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.small)
+                            .clickable {
+                                val next = !showConnection
+                                showConnection = next
+                                AppPreferences.get().serverFieldExpanded = next
+                            }
+                            .padding(vertical = 6.dp, horizontal = 4.dp),
+                    ) {
+                        Text(
+                            LocalStrings.current.connectionSettings,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Icon(
+                            if (showConnection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    if (showConnection) {
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = host,
+                            onValueChange = { host = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text(LocalStrings.current.fieldServerUrlHint) },
+                            supportingText = {
+                                Text(
+                                    if (isWebPlatform()) LocalStrings.current.serverUrlWebHint
+                                    else LocalStrings.current.serverUrlDeviceHint,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.large,
+                        )
+                    }
                     error?.let {
                         Spacer(Modifier.height(8.dp))
                         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
@@ -242,7 +296,11 @@ fun LoginScreen(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp),
+                            .height(48.dp),
+                        // 8dp per the global radius scale, not M3's 20dp
+                        // pill default: this is the page's primary action and
+                        // should not read as a chip.
+                        shape = RoundedCornerShape(8.dp),
                     ) {
                         Text(
                             when {
