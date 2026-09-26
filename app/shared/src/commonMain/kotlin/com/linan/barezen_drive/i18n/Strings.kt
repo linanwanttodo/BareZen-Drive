@@ -101,6 +101,9 @@ interface Strings {
     /** Soft delete: the files land in the trash, where they stay 30 days. */
     fun confirmMoveToTrashCount(count: Int): String
     val albumAllLoaded: String
+    val uploadFailedTitle: String
+    fun uploadFailedCount(count: Int): String
+    fun uploadDoneCount(count: Int): String
     /** Soft-delete wording: the file lands in the trash, not gone forever. */
     fun confirmDeleteFile(name: String): String
     fun confirmDeleteFiles(count: Int): String
