@@ -174,11 +174,12 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
         } else {
             withContext(Dispatchers.IO) { FileService.getFileMeta(call.userId, id) }
         }
-        // mimeType is stored verbatim from the client; a malformed value must not turn
-        // every download of this file into a 500. Fall back to octet-stream instead.
-        val contentType = meta.mimeType?.let { mime ->
-            runCatching { ContentType.parse(mime) }.getOrNull()
-        } ?: ContentType.Application.OctetStream
+        // The stored mimeType came from the uploading client, so it cannot be
+        // served back as-is: anything a browser can execute (html, svg, js) has
+        // to leave as a download. Media and PDF stay inline for the viewer.
+        // See safeFileContent for the whitelist and the reasoning.
+        val safe = safeFileContent(meta.mimeType, meta.name)
+        safe.disposition?.let { call.response.headers.append(HttpHeaders.ContentDisposition, it) }
         // Range handling is delegated to the installed PartialContent plugin: no Range
         // header stays a plain 200; a byte range becomes 206 + Content-Range; an
         // unsatisfiable range becomes 416 with "bytes */total". The plugin slices the
@@ -190,7 +191,7 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
         if (!withContext(Dispatchers.IO) { storage.exists(key) }) {
             throw com.linan.barezen_drive.api.ApiException.notFound("文件内容不存在")
         }
-        call.respond(FileStream(withContext(Dispatchers.IO) { storage.get(key) }, meta.size, contentType))
+        call.respond(FileStream(withContext(Dispatchers.IO) { storage.get(key) }, meta.size, safe.type))
     }
 }
 
