@@ -88,6 +88,8 @@ object StringsZh : Strings {
     override fun uploadFailedNamed(name: String): String = "上传失败：$name"
     override fun confirmDelete(name: String): String = "确定删除 \"$name\" 吗？此操作不可撤销。"
     override fun confirmDeleteCount(count: Int): String = "确定删除选中的 $count 个文件吗？此操作不可撤销。"
+    override fun confirmMoveToTrashCount(count: Int): String = "确定删除选中的 $count 张照片吗？它们会移入回收站，30 天后自动清理。"
+    override val albumAllLoaded: String = "没有更多了"
     override fun confirmDeleteFile(name: String): String = "确定删除 \"$name\" 吗？文件将移入回收站，30 天后自动清除。"
     override fun confirmDeleteFiles(count: Int): String = "确定删除选中的 $count 个文件吗？它们将移入回收站，30 天后自动清除。"
     override fun moveToTitle(fileName: String): String = "移动 \"$fileName\" 到"

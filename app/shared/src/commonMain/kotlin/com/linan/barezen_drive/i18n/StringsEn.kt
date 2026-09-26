@@ -88,6 +88,8 @@ object StringsEn : Strings {
     override fun uploadFailedNamed(name: String): String = "Upload failed: $name"
     override fun confirmDelete(name: String): String = "Delete \"$name\"? This cannot be undone."
     override fun confirmDeleteCount(count: Int): String = "Delete $count selected files? This cannot be undone."
+    override fun confirmMoveToTrashCount(count: Int): String = "Move $count selected photos to the trash? They are removed after 30 days."
+    override val albumAllLoaded: String = "No more photos"
     override fun confirmDeleteFile(name: String): String = "Move \"$name\" to the trash? It stays recoverable for 30 days."
     override fun confirmDeleteFiles(count: Int): String = "Move $count selected files to the trash? They stay recoverable for 30 days."
     override fun moveToTitle(fileName: String): String = "Move \"$fileName\" to"
