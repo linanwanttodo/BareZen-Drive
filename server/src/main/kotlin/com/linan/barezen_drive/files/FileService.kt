@@ -32,25 +32,72 @@ object FileService {
 
     private fun nameOk(name: String) = name.isNotBlank() && name.length <= 255 && !name.contains('/')
 
-    fun contents(userId: UUID, folderId: String): ContentsResponse = transaction(DatabaseFactory.db) {
-        val parent: UUID? = if (folderId == "root") null else {
-            val id = folderId.toUuidOrBadRequest()
-            FoldersTable.selectAll().where { (FoldersTable.id eq id) and (FoldersTable.user eq userId) }.singleOrNull()
-                ?: throw ApiException.notFound("文件夹不存在")
-            id
+    /**
+     * Folder listing. [limit] opts into paging the file list: without it the
+     * whole folder comes back, which is what the album's category and platform
+     * lookups expect. With it, files are cut at [limit] in the same name order
+     * the unpaged answer used, and the last row's "<name-lowercased>:<id>" is
+     * handed back as [ContentsResponse.nextCursor] - the cursor shape the album
+     * endpoint already uses, so a file renamed mid-scroll is skipped or repeated
+     * by at most one row instead of vanishing.
+     *
+     * Folders are never paged: there are orders of magnitude fewer of them, and
+     * a client that could not see a folder would be worse off than one that
+     * re-requests files.
+     */
+    fun contents(userId: UUID, folderId: String, limit: Int? = null, cursor: String? = null): ContentsResponse =
+        transaction(DatabaseFactory.db) {
+            val parent: UUID? = if (folderId == "root") null else {
+                val id = folderId.toUuidOrBadRequest()
+                FoldersTable.selectAll().where { (FoldersTable.id eq id) and (FoldersTable.user eq userId) }.singleOrNull()
+                    ?: throw ApiException.notFound("文件夹不存在")
+                id
+            }
+            val folders = (if (parent == null) {
+                FoldersTable.selectAll().where { (FoldersTable.user eq userId) and FoldersTable.parent.isNull() }
+            } else {
+                FoldersTable.selectAll().where { (FoldersTable.user eq userId) and (FoldersTable.parent eq parent) }
+            }).map { it.toFolderDto() }
+            var q = if (parent == null) {
+                FilesTable.selectAll().where { (FilesTable.user eq userId) and FilesTable.folder.isNull() and (FilesTable.deletedAt eq 0L) }
+            } else {
+                FilesTable.selectAll().where { (FilesTable.user eq userId) and (FilesTable.folder eq parent) and (FilesTable.deletedAt eq 0L) }
+            }
+            // A malformed cursor restarts from the top, same as the album page:
+            // better an extra page than an empty folder.
+            val after = cursor?.let { parseFileCursor(it) }
+            if (after != null) {
+                val (name, id) = after
+                val nameCol = FilesTable.name.lowerCase()
+                q = q.andWhere {
+                    (nameCol greater name) or ((nameCol eq name) and (FilesTable.id greater id))
+                }
+            }
+            val ordered = q.orderBy(FilesTable.name.lowerCase() to SortOrder.ASC, FilesTable.id to SortOrder.ASC)
+            val rows = if (limit == null) {
+                ordered.map { it.toFileDto() }
+            } else {
+                // limit + 1 rows so "is there more" is answered by the query
+                // rather than by a second count.
+                ordered.limit(limit + 1).map { it.toFileDto() }
+            }
+            val page = if (limit != null && rows.size > limit) rows.take(limit) else rows
+            val next = if (limit != null && rows.size > limit && page.isNotEmpty()) {
+                val last = page.last()
+                "${last.name.lowercase()}:${last.id}"
+            } else {
+                null
+            }
+            val cur = parent?.let { pid -> FoldersTable.selectAll().where { FoldersTable.id eq pid }.single().toFolderDto() }
+            ContentsResponse(cur, folders.sortedBy { it.name.lowercase() }, page, next)
         }
-        val folders = (if (parent == null) {
-            FoldersTable.selectAll().where { (FoldersTable.user eq userId) and FoldersTable.parent.isNull() }
-        } else {
-            FoldersTable.selectAll().where { (FoldersTable.user eq userId) and (FoldersTable.parent eq parent) }
-        }).map { it.toFolderDto() }
-        val files = (if (parent == null) {
-            FilesTable.selectAll().where { (FilesTable.user eq userId) and FilesTable.folder.isNull() and (FilesTable.deletedAt eq 0L) }
-        } else {
-            FilesTable.selectAll().where { (FilesTable.user eq userId) and (FilesTable.folder eq parent) and (FilesTable.deletedAt eq 0L) }
-        }).map { it.toFileDto() }
-        val cur = parent?.let { pid -> FoldersTable.selectAll().where { FoldersTable.id eq pid }.single().toFolderDto() }
-        ContentsResponse(cur, folders.sortedBy { it.name.lowercase() }, files.sortedBy { it.name.lowercase() })
+
+    /** "<name-lowercased>:<uuid>"; null when the value does not parse. */
+    private fun parseFileCursor(raw: String): Pair<String, UUID>? {
+        val cut = raw.lastIndexOf(':')
+        if (cut <= 0) return null
+        val id = runCatching { UUID.fromString(raw.substring(cut + 1)) }.getOrNull() ?: return null
+        return raw.substring(0, cut) to id
     }
 
     /** Folders and files share one sibling namespace: a clash on either side is a conflict.

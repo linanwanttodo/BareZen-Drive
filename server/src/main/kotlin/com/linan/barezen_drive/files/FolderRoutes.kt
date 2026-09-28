@@ -14,7 +14,16 @@ import kotlinx.coroutines.withContext
 fun Route.folderRoutes(storage: StorageProvider) {
     route("/api/folders") {
         get("/{id}/contents") {
-            call.respond(withContext(Dispatchers.IO) { FileService.contents(call.userId, call.parameters["id"]!!) })
+            // No limit -> the whole folder (unchanged contract for the callers
+            // that only read `folders`). A limit is clamped so a hostile or
+            // fat-fingered value cannot ask for a million rows.
+            val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 1000)
+            val cursor = call.request.queryParameters["cursor"]
+            call.respond(
+                withContext(Dispatchers.IO) {
+                    FileService.contents(call.userId, call.parameters["id"]!!, limit, cursor)
+                },
+            )
         }
         post {
             val req = call.receive<CreateFolderRequest>()

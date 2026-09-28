@@ -303,8 +303,12 @@ class ApiClient(
         http.get("$baseUrl/api/users/$userId/avatar").bodyAsBytes()
     }
 
-    suspend fun contents(folderId: String): Result<ContentsResponse> = runApi {
-        http.get("$baseUrl/api/folders/$folderId/contents").body()
+    /** `limit` omitted = the whole folder (used by the album's folder lookups). */
+    suspend fun contents(folderId: String, limit: Int? = null, cursor: String? = null): Result<ContentsResponse> = runApi {
+        http.get("$baseUrl/api/folders/$folderId/contents") {
+            limit?.let { parameter("limit", it) }
+            cursor?.let { parameter("cursor", it) }
+        }.body()
     }
 
     suspend fun recentFiles(limit: Int = 12): Result<RecentFilesResponse> = runApi {

@@ -103,6 +103,7 @@ interface Strings {
     /** Soft delete: the files land in the trash, where they stay 30 days. */
     fun confirmMoveToTrashCount(count: Int): String
     val albumAllLoaded: String
+    val loadMore: String
     val connectionSettings: String
     /** Past-tense results, not the action labels that triggered them. */
     val folderDeleted: String

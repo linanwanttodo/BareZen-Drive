@@ -92,6 +92,7 @@ object StringsEn : Strings {
     override fun confirmDeleteCount(count: Int): String = "Delete $count selected files? This cannot be undone."
     override fun confirmMoveToTrashCount(count: Int): String = "Move $count selected photos to the trash? They are removed after 30 days."
     override val albumAllLoaded: String = "No more photos"
+    override val loadMore: String = "Load more"
     override val connectionSettings: String = "Connection settings (server address)"
     override val folderDeleted: String = "Folder deleted"
     override fun deletedCount(count: Int): String = "Deleted $count files"

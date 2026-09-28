@@ -34,7 +34,18 @@ data class UserDto(
     /** ISO-8601 soft-delete time; null when not in trash. */
     val deletedAt: String? = null,
 )
-@Serializable data class ContentsResponse(val folder: FolderDto?, val folders: List<FolderDto>, val files: List<FileDto>)
+/**
+ * Folder listing. `nextCursor` is non-null only when the caller asked for a
+ * `limit` and more files exist - unpaged callers (album category lookups) get
+ * the whole folder exactly as before, so paging is opt-in.
+ */
+@Serializable
+data class ContentsResponse(
+    val folder: FolderDto?,
+    val folders: List<FolderDto>,
+    val files: List<FileDto>,
+    val nextCursor: String? = null,
+)
 @Serializable data class CreateFolderRequest(val parentId: String? = null, val name: String)
 @Serializable data class RenameFolderRequest(val name: String)
 @Serializable data class UpdateFileRequest(val name: String? = null, val folderId: String? = null)
