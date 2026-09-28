@@ -14,12 +14,15 @@ import org.w3c.files.Blob
 import kotlin.js.toJsArray
 
 @Composable
-actual fun rememberFileSaver(onDone: (String?) -> Unit): (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit {
+actual fun rememberFileSaver(
+    onDone: (FileSaveRequest, String?) -> Unit,
+    onProgress: (FileSaveRequest, Long) -> Unit,
+): (FileSaveRequest) -> Unit {
     val scope = rememberCoroutineScope()
-    return { name, _, open ->
+    return { req ->
         scope.launch {
             try {
-                val ch = open()
+                val ch = req.open()
                 // Each chunk becomes a Blob part directly; the Blob constructor
                 // concatenates natively at save time. The old code held the
                 // chunk list, merged everything into one ByteArray and then
@@ -32,6 +35,7 @@ actual fun rememberFileSaver(onDone: (String?) -> Unit): (name: String, mime: St
                 // in memory instead of three.
                 val parts = ArrayList<JsAny?>()
                 val buf = ByteArray(1 shl 16)
+                var written = 0L
                 while (true) {
                     val n = ch.readAvailable(buf, 0, buf.size)
                     if (n == -1) break
@@ -39,19 +43,21 @@ actual fun rememberFileSaver(onDone: (String?) -> Unit): (name: String, mime: St
                     val view = Int8Array(chunk.size)
                     for (i in chunk.indices) view[i] = chunk[i]
                     parts.add(view)
+                    written += n
+                    onProgress(req, written)
                 }
                 val blob = Blob(parts.toTypedArray().toJsArray())
                 val url = URL.createObjectURL(blob)
                 val a = document.createElement("a").unsafeCast<HTMLAnchorElement>()
                 a.href = url
-                a.download = name
+                a.download = req.name
                 document.body?.appendChild(a)
                 a.click()
                 a.parentNode?.removeChild(a)
                 URL.revokeObjectURL(url)
-                onDone(name)
+                onDone(req, req.name)
             } catch (t: Throwable) {
-                onDone(null)
+                onDone(req, null)
             }
         }
     }

@@ -71,7 +71,7 @@ import io.ktor.utils.io.ByteReadChannel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import com.linan.barezen_drive.platform.rememberFileSaver
+import com.linan.barezen_drive.data.transfer.rememberDownloadSaver
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.ui.component.FileTransferEntryIcon
 import com.linan.barezen_drive.ui.shell.BottomBarClearance
@@ -111,8 +111,8 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     // One shared saver for the home tab; download failures surface through
     // this screen's snackbar, same as the files screen.
-    val saver = rememberFileSaver { ok ->
-        if (ok == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    val saver = rememberDownloadSaver(repo) {
+        snackbar.showSnackbar(I18n.strings.downloadFailed)
     }
     // Pending batch delete from the selection bar; confirmed through a dialog
     // like the files screen does - a bare tap must never destroy data.
@@ -210,7 +210,7 @@ fun HomeScreen(
                     IconButton(onClick = {
                         selected.forEach { id ->
                             recentList.firstOrNull { it.id == id }?.let {
-                                saver(it.name, it.mimeType) { repo.download(it.id) }
+                                saver(it)
                             }
                         }
                         selected = emptySet()

@@ -143,7 +143,7 @@ class UploadManager(
      */
     suspend fun retryFailed(transferId: String): Result<FileDto>? {
         val handle = com.linan.barezen_drive.data.transfer.TransferCenter.retryHandle(transferId) ?: return null
-        com.linan.barezen_drive.data.transfer.TransferCenter.progress(transferId, 0, handle.file.size)
+        com.linan.barezen_drive.data.transfer.TransferCenter.progress(transferId, 0, handle.file.size, reset = true)
         com.linan.barezen_drive.data.transfer.TransferCenter.clearError(transferId)
         return try {
             val result = doUpload(handle.file, handle.folderId, transferId, null, null, handle.overwrite)
