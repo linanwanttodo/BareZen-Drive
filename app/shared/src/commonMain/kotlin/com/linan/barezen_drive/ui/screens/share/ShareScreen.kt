@@ -55,6 +55,7 @@ import com.linan.barezen_drive.core.dto.SharedFileDto
 import com.linan.barezen_drive.core.dto.SharedFolderDto
 import com.linan.barezen_drive.core.dto.SharedInfoResponse
 import com.linan.barezen_drive.data.repo.FilesRepository
+import com.linan.barezen_drive.platform.FileSaveRequest
 import com.linan.barezen_drive.platform.rememberFileSaver
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.ui.media.formatDateTime
@@ -130,11 +131,32 @@ private fun SharedFileView(
 ) {
     val scope = rememberCoroutineScope()
     val snackbar = SnackbarHostState()
-    val saver = rememberFileSaver { result ->
-        // A failed or cancelled save must not look like success.
-        if (result == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
-    }
+    // A guest has no transfer centre to look at, so this one keeps the plain
+    // saver and reports through the screen's own snackbar. It still has to
+    // build a FileSaveRequest now that the request carries the size and the
+    // caller's key.
+    val saver = rememberFileSaver(
+        onDone = { _, saved ->
+            if (saved == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+        },
+        onProgress = { _, _ -> },
+    )
     val fileId = info.fileId ?: return InvalidShare(onExit)
+    // Shared-file download: the guest side has no FileDto, so the request is
+    // built from the share info. `size` is what the share endpoint reports, and
+    // 0 simply means "unknown" - the platform then reports progress without a
+    // percentage.
+    fun saveShared() {
+        saver(
+            FileSaveRequest(
+                id = fileId,
+                name = info.name.ifBlank { "download" },
+                mime = info.mimeType,
+                size = info.size ?: 0L,
+                open = { repo.sharedDownload(token, fileId) },
+            ),
+        )
+    }
     // Only images preview inline; everything else offers a plain download.
     val isImage = info.mimeType?.startsWith("image/") == true
 
@@ -150,7 +172,7 @@ private fun SharedFileView(
                 },
                 actions = {
                     IconButton(onClick = {
-                        saver(info.name, info.mimeType) { repo.sharedDownload(token, fileId) }
+                        saveShared()
                     }) {
                         Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload)
                     }
@@ -197,7 +219,7 @@ private fun SharedFileView(
                 }
                 Spacer(Modifier.height(20.dp))
                 TextButton(onClick = {
-                    saver(info.name, info.mimeType) { repo.sharedDownload(token, fileId) }
+                    saveShared()
                 }) { Text(LocalStrings.current.downloadFile) }
             }
         }
@@ -343,14 +365,21 @@ private fun SharedFileRow(
     snackbar: SnackbarHostState,
 ) {
     val scope = rememberCoroutineScope()
-    val saver = rememberFileSaver { result ->
-        if (result == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
-    }
+    val saver = rememberFileSaver(
+        onDone = { _, saved ->
+            if (saved == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+        },
+        onProgress = { _, _ -> },
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = {
-                saver(file.name, file.mimeType) { repo.sharedDownload(token, file.id) }
+                saver(
+                    FileSaveRequest(file.id, file.name, file.mimeType, file.size) {
+                        repo.sharedDownload(token, file.id)
+                    },
+                )
             })
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -366,7 +395,11 @@ private fun SharedFileRow(
             )
         }
         IconButton(onClick = {
-            saver(file.name, file.mimeType) { repo.sharedDownload(token, file.id) }
+            saver(
+                FileSaveRequest(file.id, file.name, file.mimeType, file.size) {
+                    repo.sharedDownload(token, file.id)
+                },
+            )
         }) {
             Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload)
         }

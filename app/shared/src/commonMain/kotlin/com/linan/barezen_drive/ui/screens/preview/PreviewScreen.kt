@@ -50,7 +50,7 @@ import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.media.formatDateTime
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.platform.copyToClipboard
-import com.linan.barezen_drive.platform.rememberFileSaver
+import com.linan.barezen_drive.data.transfer.rememberDownloadSaver
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.Button
@@ -79,9 +79,9 @@ fun PreviewScreen(
     val file = files.getOrNull(index) ?: return
     val scope = rememberCoroutineScope()
     val snackbar = SnackbarHostState()
-    val saver = rememberFileSaver { result ->
-        // The saver reports null when the write failed or was cancelled.
-        if (result == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    // The row itself carries the detail; the screen only says it failed.
+    val saver = rememberDownloadSaver(repo) {
+        snackbar.showSnackbar(I18n.strings.downloadFailed)
     }
 
     var showInfo by remember { mutableStateOf(false) }
@@ -124,7 +124,7 @@ fun PreviewScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                 ) {
                     IconButton(onClick = {
-                        saver(file.name, file.mimeType) { repo.download(file.id) }
+                        saver(file)
                     }) {
                         Icon(Icons.Default.Download, contentDescription = LocalStrings.current.actionDownload)
                     }
@@ -301,7 +301,7 @@ private fun InfoLine(label: String, value: String) {
 }
 
 @Composable
-private fun Unsupported(file: FileDto, repo: FilesRepository, saver: (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit) {
+private fun Unsupported(file: FileDto, repo: FilesRepository, onDownload: (FileDto) -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(file.name, style = MaterialTheme.typography.titleMedium)
@@ -314,7 +314,7 @@ private fun Unsupported(file: FileDto, repo: FilesRepository, saver: (name: Stri
             Spacer(Modifier.height(12.dp))
             // The explicit action replaces the old tap-to-download surprise.
             Button(
-                onClick = { saver(file.name, file.mimeType) { repo.download(file.id) } },
+                onClick = { onDownload(file) },
                 colors = com.linan.barezen_drive.ui.theme.filledButtonColors(),
             ) {
                 Text(LocalStrings.current.actionDownload)

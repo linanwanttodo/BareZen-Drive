@@ -36,26 +36,36 @@ private class CreateDocumentTyped :
 }
 
 @Composable
-actual fun rememberFileSaver(onDone: (String?) -> Unit): (name: String, mime: String?, open: suspend () -> ByteReadChannel) -> Unit {
+actual fun rememberFileSaver(
+    onDone: (FileSaveRequest, String?) -> Unit,
+    onProgress: (FileSaveRequest, Long) -> Unit,
+): (FileSaveRequest) -> Unit {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var pending by remember { mutableStateOf<Pair<String, suspend () -> ByteReadChannel>?>(null) }
+    var pending by remember { mutableStateOf<FileSaveRequest?>(null) }
     val launcher = rememberLauncherForActivityResult(CreateDocumentTyped()) { uri ->
         val p = pending
         pending = null
         if (uri == null || p == null) {
-            onDone(null)
+            // Cancelled at the document picker: nothing was copied, so the
+            // caller closes its row as cancelled rather than as a failure.
+            if (p != null) onDone(p, null)
             return@rememberLauncherForActivityResult
         }
         scope.launch {
             val ok = try {
                 ctx.contentResolver.openOutputStream(uri)?.use { out ->
-                    val ch = p.second()
+                    val ch = p.open()
                     val buf = ByteArray(1 shl 16)
+                    var written = 0L
                     while (true) {
                         val n = ch.readAvailable(buf, 0, buf.size)
                         if (n == -1) break
                         out.write(buf, 0, n)
+                        written += n
+                        // Reported per chunk: a large file used to be minutes of
+                        // nothing at all after the dialog closed.
+                        onProgress(p, written)
                     }
                     out.flush()
                     true
@@ -63,11 +73,11 @@ actual fun rememberFileSaver(onDone: (String?) -> Unit): (name: String, mime: St
             } catch (t: Throwable) {
                 false
             }
-            onDone(if (ok) uri.toString() else null)
+            onDone(p, if (ok) uri.toString() else null)
         }
     }
-    return { name, mime, open ->
-        pending = name to open
-        launcher.launch(name to mime.orEmpty().ifBlank { "application/octet-stream" })
+    return { req ->
+        pending = req
+        launcher.launch(req.name to req.mime.orEmpty().ifBlank { "application/octet-stream" })
     }
 }

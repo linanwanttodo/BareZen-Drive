@@ -101,7 +101,7 @@ import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.upload.UploadManager
 import com.linan.barezen_drive.platform.PickedFile
 import com.linan.barezen_drive.platform.rememberFilePicker
-import com.linan.barezen_drive.platform.rememberFileSaver
+import com.linan.barezen_drive.data.transfer.rememberDownloadSaver
 import com.linan.barezen_drive.ui.component.SkeletonList
 import com.linan.barezen_drive.ui.component.onHoverChanged
 import com.linan.barezen_drive.ui.media.FileThumbnail
@@ -410,8 +410,8 @@ fun FilesScreen(
     val picker = rememberFilePicker { picks ->
         if (picks.isNotEmpty()) pendingUploads = picks
     }
-    val saver = rememberFileSaver { ok ->
-        if (ok == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    val saver = rememberDownloadSaver(repo) {
+        snackbar.showSnackbar(I18n.strings.downloadFailed)
     }
 
     // Upload flow: pick the destination FIRST, then the files. The chosen
@@ -614,7 +614,7 @@ fun FilesScreen(
                     IconButton(onClick = {
                         sel.forEach { id ->
                             ui.files.firstOrNull { it.id == id }?.let {
-                                saver(it.name, it.mimeType) { repo.download(it.id) }
+                                saver(it)
                             }
                         }
                         selectedFiles.value = emptySet()
@@ -706,7 +706,7 @@ fun FilesScreen(
                     onDeleteFolder = { deleting = it },
                     onShareFolder = { shareTarget = it },
                     onOpenFile = { openOrPreview(it, ui.files, onPreview, repo) },
-                    onDownloadFile = { saver(it.name, it.mimeType) { repo.download(it.id) } },
+                    onDownloadFile = { saver(it) },
                     onRenameFile = { renameTarget = Triple(false, it.id, it.name) },
                     onMoveFile = { moveTarget = MoveTarget(it.id, it.folderId, it.name) },
                     onDeleteFile = { deleting = it },
@@ -747,7 +747,7 @@ fun FilesScreen(
                             onOpen = {
                                 openOrPreview(file, ui.files, onPreview, repo)
                             },
-                            onDownload = { saver(file.name, file.mimeType) { repo.download(file.id) } },
+                            onDownload = { saver(file) },
                             onRename = { renameTarget = Triple(false, file.id, file.name) },
                             onMove = { moveTarget = MoveTarget(file.id, file.folderId, file.name) },
                             onDelete = { deleting = file },

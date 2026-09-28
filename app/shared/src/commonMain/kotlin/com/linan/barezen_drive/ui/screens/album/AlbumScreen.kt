@@ -116,7 +116,7 @@ import com.linan.barezen_drive.i18n.LocalStrings
 import com.linan.barezen_drive.ui.component.EmptyState
 import com.linan.barezen_drive.ui.component.SkeletonGrid
 import com.linan.barezen_drive.platform.copyToClipboard
-import com.linan.barezen_drive.platform.rememberFileSaver
+import com.linan.barezen_drive.data.transfer.rememberDownloadSaver
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -512,8 +512,8 @@ fun AlbumScreen(
     }
 
 
-    val saver = rememberFileSaver { result ->
-        if (result == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+    val saver = rememberDownloadSaver(repo) {
+        snackbar.showSnackbar(I18n.strings.downloadFailed)
     }
     var shareUrl by remember { mutableStateOf<String?>(null) }
     // Every photo currently loaded across pages; powers "select all" and the
@@ -636,11 +636,7 @@ fun AlbumScreen(
                             }
                         }
                         BarAction(Icons.Default.Download, LocalStrings.current.actionDownload) {
-                            selected.values.forEach { file ->
-                                saver(file.name, file.mimeType) {
-                                    repo.download(file.id)
-                                }
-                            }
+                            selected.values.forEach(saver)
                             clearSelection()
                         }
                         // Confirm before deleting: a sweep across the grid puts

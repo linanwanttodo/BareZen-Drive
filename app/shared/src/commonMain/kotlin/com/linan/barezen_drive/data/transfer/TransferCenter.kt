@@ -170,19 +170,28 @@ object TransferCenter {
         update(id) { it.copy(error = null, phase = TransferPhase.RUNNING, bytesDone = 0) }
     }
 
-    fun progress(id: String, done: Long, total: Long, text: String? = null) {
+    /**
+     * @param reset starts the count from zero even if the row already advanced -
+     *   a retry re-sends the whole file, and without this the bar would sit at
+     *   the previous attempt's position while the bytes go up from nothing.
+     */
+    fun progress(id: String, done: Long, total: Long, text: String? = null, reset: Boolean = false) {
         var title = ""
         var fraction: Float? = null
         var notify = true
         update(id) {
             val t = if (total > 0) total else it.bytesTotal
+            // Never rewind. A re-sent chunk, a retried range or two writers on
+            // the same row would otherwise walk the bar backwards, and a bar
+            // that goes backwards is worse than no bar: it reads as a bug.
+            val advanced = if (reset) done else maxOf(done, it.bytesDone)
             title = it.name
-            fraction = if (t > 0) (done.toFloat() / t).coerceIn(0f, 1f) else null
+            fraction = if (t > 0) (advanced.toFloat() / t).coerceIn(0f, 1f) else null
             // Sync batches never own a shade entry (the foreground backup
             // notification is the single source) - re-showing here would
             // resurrect the duplicate the start() path just removed.
             notify = it.kind != TransferKind.SYNC
-            it.copy(bytesDone = done, bytesTotal = t, statusText = text ?: it.statusText)
+            it.copy(bytesDone = advanced, bytesTotal = t, statusText = text ?: it.statusText)
         }
         if (notify) {
             runCatching { com.linan.barezen_drive.platform.TransferNotifier.showProgress(id, title, text, fraction) }
@@ -225,6 +234,20 @@ object TransferCenter {
         } else {
             runCatching { com.linan.barezen_drive.platform.TransferNotifier.showFinished(id, item.name, error, ok = false) }
         }
+    }
+
+    /**
+     * Drops a row that never really started - the user left the save dialog, so
+     * no bytes moved and there is nothing to report. Failing it would show a
+     * red row for a download they deliberately stopped, and leaving it running
+     * would show a bar that never moves.
+     */
+    fun discard(id: String) {
+        cancelledIds.remove(id)
+        val item = _items.value.firstOrNull { it.id == id } ?: return
+        if (item.phase == TransferPhase.DONE || item.phase == TransferPhase.FAILED) return
+        _items.value = _items.value.filterNot { it.id == id }
+        runCatching { com.linan.barezen_drive.platform.TransferNotifier.dismiss(id) }
     }
 
     /** Removes finished rows of one lane (the "clear" action on the done tab). */
