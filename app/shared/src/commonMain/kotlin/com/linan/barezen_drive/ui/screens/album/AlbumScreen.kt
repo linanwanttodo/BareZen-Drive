@@ -11,6 +11,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
@@ -18,10 +19,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -110,6 +113,8 @@ import kotlin.time.Clock
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.i18n.LocalStrings
+import com.linan.barezen_drive.ui.component.EmptyState
+import com.linan.barezen_drive.ui.component.SkeletonGrid
 import com.linan.barezen_drive.platform.copyToClipboard
 import com.linan.barezen_drive.platform.rememberFileSaver
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -802,11 +807,25 @@ fun AlbumScreen(
                 if (collectionsLoading) {
                     CircularProgressIndicator()
                 } else {
+                    // Column count from the available width, with the whole grid
+                    // capped and centred: a single 2-column grid made each tile
+                    // 658px on a 1440px window - half the screen for one album,
+                    // and a wall of grey next to it. Phones keep 2, tablets 3,
+                    // desktop 4 with the row never wider than ~1040dp so tiles
+                    // stay near the 240dp target instead of stretching.
+                    BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    val columns = when {
+                        maxWidth < 600.dp -> 2
+                        maxWidth < 1000.dp -> 3
+                        else -> 4
+                    }
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        columns = GridCells.Fixed(columns),
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .widthIn(max = 1040.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                         // Top rides under the transparent bar on first show,
                         // then scrolls behind it; bottom clears the floating
                         // glass bar, like files/home.
@@ -833,6 +852,7 @@ fun AlbumScreen(
                             })
                         }
                     }
+                    }
                 }
             }
             // Initial load failed (pages already on screen report through the
@@ -842,16 +862,21 @@ fun AlbumScreen(
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = { error = null; loadMore() }) { Text(LocalStrings.current.actionRetry) }
             }
-            loaded.isEmpty() && loading -> Centered { CircularProgressIndicator() }
-            loaded.isEmpty() -> Centered {
-                Text(LocalStrings.current.noPhotos, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (timelineMode) {
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = { timelineMode = false }) {
-                        Text(LocalStrings.current.backToCollections)
-                    }
-                }
-            }
+            // The photo grid used to show a bare centred spinner, then swapped to
+            // a photo grid: on a slow connection the page reads as empty rather
+            // than as loading. Skeleton tiles keep the grid's shape.
+            loaded.isEmpty() && loading -> SkeletonGrid()
+            loaded.isEmpty() -> EmptyState(
+                icon = Icons.Default.PhotoLibrary,
+                title = LocalStrings.current.noPhotos,
+                subtitle = if (timelineMode) LocalStrings.current.noPhotosHint else null,
+                modifier = Modifier.fillMaxSize(),
+                // The useful action on an empty timeline is adding photos, not
+                // going back - the back affordance is already in the top bar and
+                // on the system back gesture.
+                actionLabel = LocalStrings.current.actionAddPhotos,
+                onAction = { imagePicker() },
+            )
             // Dated layout: day sections of uniform squares.
             gridVisible && viewMode == 2 -> LazyColumn(
                 modifier = Modifier
@@ -1391,7 +1416,9 @@ private fun CollectionCoverTile(
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(MaterialTheme.shapes.medium)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+                // A flat brand tint, not surfaceVariant: the grey block read as
+                // "photo failed to load" rather than "this album has no cover".
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
             contentAlignment = Alignment.Center,
         ) {
             val bmp = bitmap

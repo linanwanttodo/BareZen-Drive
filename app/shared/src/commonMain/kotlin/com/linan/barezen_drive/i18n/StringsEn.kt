@@ -54,6 +54,8 @@ object StringsEn : Strings {
     override val seeAll: String = "See all"
     override val noRecentFiles: String = "No recent files"
     override val noPhotos: String = "No photos yet"
+    override val noPhotosHint: String = "This album has no photos yet - upload some from your device"
+    override val actionAddPhotos: String = "Add photos"
     override val serverStatus: String = "Server status"
     override val metricMemory: String = "Memory"
     override val metricDiskFree: String = "Free disk"

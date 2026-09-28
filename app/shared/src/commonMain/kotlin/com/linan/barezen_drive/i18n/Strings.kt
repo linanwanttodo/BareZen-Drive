@@ -63,6 +63,8 @@ interface Strings {
     val seeAll: String
     val noRecentFiles: String
     val noPhotos: String
+    val noPhotosHint: String
+    val actionAddPhotos: String
     val serverStatus: String
     val metricMemory: String
     val metricDiskFree: String

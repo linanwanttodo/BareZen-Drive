@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -21,8 +22,12 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ErrorOutline
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
+import com.linan.barezen_drive.ui.component.EmptyState
+import com.linan.barezen_drive.ui.component.SkeletonList
 import io.ktor.utils.io.toByteArray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -40,8 +45,11 @@ private const val TEXT_PREVIEW_LIMIT = 256 * 1024
 fun TextViewer(file: FileDto, repo: FilesRepository) {
     var text by remember(file.id) { mutableStateOf<String?>(null) }
     var error by remember(file.id) { mutableStateOf(false) }
+    // Bumped by the retry button; the effect keys on it so a retry re-runs the
+    // fetch instead of re-rendering the same failure.
+    var retrySignal by remember(file.id) { mutableIntStateOf(0) }
 
-    LaunchedEffect(file.id) {
+    LaunchedEffect(file.id, retrySignal) {
         // An empty file has no valid byte range; requesting one would answer
         // 416. Hand back empty text without touching the network.
         if (file.size == 0L) {
@@ -73,17 +81,33 @@ fun TextViewer(file: FileDto, repo: FilesRepository) {
                     .padding(horizontal = 12.dp, vertical = 6.dp),
             )
         }
-        val body = content ?: if (error) LocalStrings.current.loadFailed else null
+        // A failed load used to be rendered *as the document*: the error string
+        // went into the same SelectionText as the file body, so the user read
+        // "load failed" as the file's contents with no way to tell and a retry
+        // link nowhere. Failure gets its own block, and the body stays empty.
+        if (content == null && error) {
+            EmptyState(
+                icon = Icons.Outlined.ErrorOutline,
+                title = LocalStrings.current.loadFailed,
+                modifier = Modifier.fillMaxSize(),
+                actionLabel = LocalStrings.current.actionRetry,
+                onAction = {
+                    error = false
+                    text = null
+                    retrySignal++
+                },
+            )
+            return@Column
+        }
+        val body = content
         if (body != null) {
             val vertical = rememberScrollState()
             val horizontal = rememberScrollState()
             SelectionText(body, vertical, horizontal)
-        } else if (content == null && !error) {
-            Text(
-                LocalStrings.current.loading,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(16.dp),
-            )
+        } else {
+            // Skeleton lines, not the word "loading" in the body position - the
+            // body is either the file or empty, never a status message.
+            SkeletonList(modifier = Modifier.fillMaxSize(), rows = 8)
         }
     }
 }

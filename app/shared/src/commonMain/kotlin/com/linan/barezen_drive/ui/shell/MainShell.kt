@@ -21,6 +21,8 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
+import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
@@ -229,12 +231,28 @@ fun MainShell(
             content()
         }
     } else {
+        // Same tint the tab pages use for their Scaffold container, so the rail
+        // and the content meet without a seam (see the colors() call below).
+        val panel = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current)
         NavigationSuiteScaffold(
             // Transparent so the App-root wallpaper layer shows through. The
             // default container color is opaque and would cover it - which is
             // why the wallpaper used to be painted inside this scaffold
             // instead of at the root.
             containerColor = Color.Transparent,
+            // The rail brings its own container color and it defaults to an
+            // opaque surface, so on a wide window it painted a near-white
+            // column next to the 0.6-tinted content: a hard vertical edge at
+            // the rail/content boundary, the same defect #29 described
+            // horizontally. Give it the same panel tint as the tab pages so the
+            // two meet without a seam.
+            navigationSuiteColors = NavigationSuiteDefaults.colors(
+                navigationRailContainerColor = panel,
+                // The rail's content stays on-surface: with a translucent
+                // container the default contentColorFor() would pick a
+                // contrast color for the old opaque surface instead.
+                navigationRailContentColor = MaterialTheme.colorScheme.onSurface,
+            ),
             navigationSuiteItems = {
                 MainTab.entries.forEach { tab ->
                     item(
