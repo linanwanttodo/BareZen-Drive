@@ -92,6 +92,7 @@ object StringsZh : Strings {
     override fun confirmDeleteCount(count: Int): String = "确定删除选中的 $count 个文件吗？此操作不可撤销。"
     override fun confirmMoveToTrashCount(count: Int): String = "确定删除选中的 $count 张照片吗？它们会移入回收站，30 天后自动清理。"
     override val albumAllLoaded: String = "没有更多了"
+    override val loadMore: String = "加载更多"
     override val connectionSettings: String = "连接设置（服务器地址）"
     override val folderDeleted: String = "文件夹已删除"
     override fun deletedCount(count: Int): String = "已删除 $count 个文件"

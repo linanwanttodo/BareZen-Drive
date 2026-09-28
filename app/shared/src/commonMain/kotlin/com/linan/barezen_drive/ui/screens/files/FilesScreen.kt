@@ -116,7 +116,19 @@ import kotlin.time.Duration.Companion.milliseconds
 
 private const val ROOT_FOLDER_ID = "root"
 
-private data class ContentsUi(val folders: List<FolderDto>, val files: List<FileDto>)
+/**
+ * One folder's listing. [nextCursor] is non-null while more files exist: the
+ * list shows a load-more footer and keeps appending, instead of downloading a
+ * ten-thousand-file folder in one response and rebinding every row on scroll.
+ */
+/** Rows per request; the same page size the album grid uses. */
+private const val PAGE_SIZE = 200
+
+private data class ContentsUi(
+    val folders: List<FolderDto>,
+    val files: List<FileDto>,
+    val nextCursor: String? = null,
+)
 
 private data class MoveTarget(val fileId: String, val fromFolderId: String?, val fileName: String)
 
@@ -177,6 +189,10 @@ fun FilesScreen(
     val folderId = path.lastOrNull()?.id ?: ROOT_FOLDER_ID
 
     var state by remember(path) { mutableStateOf<ContentsUi?>(null) }
+    // Paging: 200 rows a page, matching the album page. Appending keeps the
+    // rows already on screen (and their scroll position) untouched.
+    var loadingMore by remember(path) { mutableStateOf(false) }
+    var loadMoreError by remember(path) { mutableStateOf<String?>(null) }
     var loadError by remember(path) { mutableStateOf<String?>(null) }
     var showNewFolder by remember { mutableStateOf(false) }
     var pendingUploads by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
@@ -213,16 +229,45 @@ fun FilesScreen(
 
     fun reload() {
         scope.launch {
-            repo.contents(folderId).fold(
+            repo.contents(folderId, PAGE_SIZE).fold(
                 onSuccess = {
                     // At the root level the dedicated album folder is pinned first.
                     val folders = if (folderId == ROOT_FOLDER_ID) {
                         it.folders.sortedByDescending { f -> f.name == AlbumFolder.ROOT_NAME }
                     } else it.folders
-                    state = ContentsUi(folders, it.files)
+                    state = ContentsUi(folders, it.files, it.nextCursor)
                     loadError = null
+                    loadMoreError = null
                 },
                 onFailure = { loadError = msg(it, I18n.strings.loadFailed); snackbar.showSnackbar(loadError ?: I18n.strings.loadFailed) },
+            )
+        }
+    }
+
+    /** Fetches the next page and appends it; the list is never rebuilt. */
+    fun loadMore() {
+        val cursor = state?.nextCursor ?: return
+        if (loadingMore) return
+        loadingMore = true
+        loadMoreError = null
+        scope.launch {
+            repo.contents(folderId, PAGE_SIZE, cursor).fold(
+                onSuccess = { page ->
+                    val current = state ?: return@fold
+                    // Append, de-duplicated by id: a file renamed between pages
+                    // can shift the cursor and hand back a row we already show.
+                    val known = current.files.mapTo(HashSet()) { it.id }
+                    state = current.copy(
+                        files = current.files + page.files.filter { known.add(it.id) },
+                        nextCursor = page.nextCursor,
+                    )
+                    loadingMore = false
+                },
+                onFailure = {
+                    // The rows already loaded stay put; the footer offers a retry.
+                    loadMoreError = msg(it, I18n.strings.loadFailed)
+                    loadingMore = false
+                },
             )
         }
     }
@@ -720,6 +765,35 @@ fun FilesScreen(
                             },
                         )
                         HorizontalDivider()
+                    }
+                    // Load-more footer. Reached by scrolling, not by a button:
+                    // the next page is already known to exist, so making the user
+                    // ask for it would just be a slower version of the same list.
+                    if (ui.nextCursor != null || loadMoreError != null) {
+                        item(key = "more") {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                when {
+                                    loadMoreError != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            loadMoreError!!,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.error,
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        TextButton(onClick = { loadMore() }) { Text(LocalStrings.current.actionRetry) }
+                                    }
+                                    loadingMore -> CircularProgressIndicator(Modifier.size(24.dp))
+                                    else -> TextButton(onClick = { loadMore() }) {
+                                        Text(LocalStrings.current.loadMore)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 }
