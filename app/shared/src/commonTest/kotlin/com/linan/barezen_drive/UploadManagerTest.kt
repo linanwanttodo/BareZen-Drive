@@ -182,10 +182,19 @@ class UploadManagerTest {
         api.failChunk(index = 1, times = 9) // every attempt of chunk 1 fails
         val mgr = UploadManager(api, backoffBaseMs = 10)
 
+        // Claim the row THIS upload created. TransferCenter is a process-wide
+        // singleton and push() prepends (newest first), so "the last FAILED row"
+        // is the OLDEST failed row - any earlier test that left one behind (a
+        // download row, another upload) would be picked up here, and a download
+        // row has no retry handle. Diffing against a snapshot says what the test
+        // means instead of depending on what ran before it.
+        val before = com.linan.barezen_drive.data.transfer.TransferCenter.items.value
+            .mapTo(HashSet()) { it.id }
         val first = mgr.upload(FakePickedFile(data), null)
         assertTrue(first.isFailure, "first upload should fail: $first")
         val failedId = com.linan.barezen_drive.data.transfer.TransferCenter.items.value
-            .last { it.phase == com.linan.barezen_drive.data.transfer.TransferPhase.FAILED }.id
+            .first { it.id !in before && it.phase == com.linan.barezen_drive.data.transfer.TransferPhase.FAILED }
+            .id
         assertTrue(
             com.linan.barezen_drive.data.transfer.TransferCenter.retryHandle(failedId) != null,
             "a failed single-file upload must keep a retry handle",
