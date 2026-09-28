@@ -6,7 +6,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,7 +81,7 @@ fun SkeletonList(
                         .size(leadingSize)
                         .alpha(pulse)
                         .background(
-                            androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                            MaterialTheme.colorScheme.surfaceVariant,
                             shape,
                         ),
                 )
@@ -91,7 +93,7 @@ fun SkeletonList(
                             .height(14.dp)
                             .alpha(pulse * 0.9f)
                             .background(
-                                androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                MaterialTheme.colorScheme.surfaceVariant,
                                 shape,
                             ),
                     )
@@ -102,9 +104,55 @@ fun SkeletonList(
                             .height(10.dp)
                             .alpha(pulse * 0.7f)
                             .background(
-                                androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant,
+                                MaterialTheme.colorScheme.surfaceVariant,
                                 RoundedCornerShape(4.dp),
                             ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Grid-shaped loading placeholder, for surfaces whose content is a photo grid.
+ * Same reasoning as [SkeletonList]: a centred spinner leaves the page empty and
+ * then the tiles arrive all at once, which reads as a jump rather than a load.
+ */
+@Composable
+fun SkeletonGrid(
+    modifier: Modifier = Modifier,
+    columns: Int = 4,
+    rows: Int = 3,
+    spacing: Dp = 4.dp,
+) {
+    val transition = rememberInfiniteTransition(label = "skeletonGrid")
+    val pulse by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.75f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "skeletonGridAlpha",
+    )
+    val shape = RoundedCornerShape(6.dp)
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(spacing),
+    ) {
+        repeat(rows) { r ->
+            Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                repeat(columns) { c ->
+                    // Vary the pulse per tile so the block does not look like a
+                    // single flat sheet.
+                    val a = (pulse + ((r * columns + c) % 3) * 0.08f).coerceIn(0.3f, 0.85f)
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .aspectRatio(1f)
+                            .alpha(a)
+                            .background(MaterialTheme.colorScheme.surfaceVariant, shape),
                     )
                 }
             }

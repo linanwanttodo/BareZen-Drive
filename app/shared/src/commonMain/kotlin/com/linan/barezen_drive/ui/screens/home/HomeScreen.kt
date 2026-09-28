@@ -5,15 +5,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -49,6 +52,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -511,21 +515,26 @@ private fun MetricChip(
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(value, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (usageFraction != null) {
-            Spacer(Modifier.height(4.dp))
-            Box(Modifier.size(20.dp)) {
-                Canvas(Modifier.fillMaxSize()) {
-                    val stroke = 2.5.dp.toPx()
-                    drawArc(
-                        color = track,
-                        startAngle = -90f, sweepAngle = 360f, useCenter = false,
-                        style = Stroke(stroke, cap = StrokeCap.Round),
-                    )
-                    drawArc(
-                        color = progress,
-                        startAngle = -90f, sweepAngle = 360f * usageFraction.coerceIn(0f, 1f), useCenter = false,
-                        style = Stroke(stroke, cap = StrokeCap.Round),
-                    )
-                }
+            Spacer(Modifier.height(6.dp))
+            // A 3dp bar, not a 20dp ring. The ring was drawn under the number
+            // with no percentage beside it, so a 5% CPU read as "still loading"
+            // rather than "5%": an arc that barely leaves the track looks exactly
+            // like a spinner that has not finished. A bar reads as a quantity at
+            // a glance and matches the two text-only columns next to it.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(CircleShape)
+                    .background(track),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(usageFraction.coerceIn(0f, 1f))
+                        .clip(CircleShape)
+                        .background(progress),
+                )
             }
         }
     }

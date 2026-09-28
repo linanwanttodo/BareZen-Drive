@@ -54,6 +54,8 @@ object StringsZh : Strings {
     override val seeAll: String = "查看全部"
     override val noRecentFiles: String = "暂无最近文件"
     override val noPhotos: String = "暂无照片"
+    override val noPhotosHint: String = "这个相册还没有照片，可以从设备相册上传"
+    override val actionAddPhotos: String = "从相册上传"
     override val serverStatus: String = "服务器状态"
     override val metricMemory: String = "内存"
     override val metricDiskFree: String = "磁盘剩余"
