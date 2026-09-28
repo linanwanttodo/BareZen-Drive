@@ -122,6 +122,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -241,6 +242,9 @@ fun AlbumScreen(
     // Staggered-grid scroll state for the waterfall. It cannot host a sticky
     // header, so its day label is an overlay derived from the first visible item.
     val staggeredState = rememberLazyStaggeredGridState()
+    // The dated layout had no state object, so its scroll position could not be
+    // read or restored at all; the merge above needs both.
+    val dateState = rememberLazyListState()
     fun setColumnCount(n: Int) {
         val c = n.coerceIn(2, 6)
         if (c != columns) {
@@ -439,12 +443,76 @@ fun AlbumScreen(
         // Covers ("newest photo of each folder") moved with the upload even when
         // the folder list did not, so the landing has to be rebuilt either way.
         collectionsTick++
-        generation++
-        loading = false
-        loaded = emptyList()
-        cursor = null
-        exhausted = false
-        loadMore()
+
+        // Anchor the photo that is currently under the user's eyes, so the
+        // merge below can put it back where it was.
+        val anchorId: String?
+        val anchorOffset: Int
+        val anchorIndex: Int
+        when {
+            viewMode == 1 -> {
+                val first = gridState.layoutInfo.visibleItemsInfo.firstOrNull()
+                anchorId = first?.key as? String
+                anchorOffset = gridState.firstVisibleItemScrollOffset
+                anchorIndex = gridState.firstVisibleItemIndex
+            }
+            viewMode == 2 -> {
+                // The dated layout keys its rows by position, not by file, so the
+                // anchor is the index itself: prepended photos push everything
+                // down by their own count.
+                anchorId = null
+                anchorOffset = dateState.firstVisibleItemScrollOffset
+                anchorIndex = dateState.firstVisibleItemIndex
+            }
+            else -> {
+                val first = staggeredState.layoutInfo.visibleItemsInfo.firstOrNull()
+                anchorId = first?.key as? String
+                anchorOffset = staggeredState.firstVisibleItemScrollOffset
+                anchorIndex = staggeredState.firstVisibleItemIndex
+            }
+        }
+
+        // Refresh the head of the list and MERGE, instead of clearing and
+        // re-reading page one. A backup bumps the revision once per photo, so
+        // the old code blanked the grid every 400ms and dropped the user back at
+        // the newest photo while they were looking at something else. The album
+        // is ordered newest-first, so the arrivals are exactly the rows in front
+        // of everything already loaded.
+        val myGen = generation
+        scope.launch {
+            loading = true
+            repo.album(PAGE_SIZE, null, activeCategory ?: albumFolderId, favorite = favoriteOnly).fold(
+                onSuccess = { page ->
+                    if (myGen != generation) return@fold
+                    val known = loaded.mapTo(HashSet()) { it.id }
+                    val arrived = page.files.filter { known.add(it.id) }
+                    loaded = arrived + loaded
+                    // cursor/exhausted deliberately survive: the cursor is
+                    // "older than <timestamp>", which still means the same thing
+                    // after new photos landed, and keeping it avoids re-reading
+                    // pages the user has already seen.
+                    loading = false
+                    error = null
+                    // Put the anchor back under the user's eyes.
+                    if (arrived.isNotEmpty()) {
+                        if (anchorId != null) {
+                            val idx = loaded.indexOfFirst { it.id == anchorId }
+                            if (idx >= 0) {
+                                if (viewMode == 1) gridState.scrollToItem(idx, anchorOffset)
+                                else staggeredState.scrollToItem(idx, anchorOffset)
+                            }
+                        } else if (viewMode == 2) {
+                            dateState.scrollToItem(anchorIndex + arrived.size, anchorOffset)
+                        }
+                    }
+                },
+                onFailure = {
+                    // Keep what is on screen: a failed refresh is not a reason to
+                    // empty the album.
+                    if (myGen == generation) loading = false
+                },
+            )
+        }
     }
 
     // Upload the picked photos sequentially into THIS DEVICE's album folder;
@@ -875,6 +943,7 @@ fun AlbumScreen(
             )
             // Dated layout: day sections of uniform squares.
             gridVisible && viewMode == 2 -> LazyColumn(
+                state = dateState,
                 modifier = Modifier
                     .fillMaxSize()
                     .pinchToColumnCount(
