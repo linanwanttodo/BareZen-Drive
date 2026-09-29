@@ -220,6 +220,13 @@ object ShareLinksTable : Table("share_links") {
         // Active (non-revoked) links per target for "one active share" queries.
         index(customIndexName = "share_target_idx", isUnique = false, file, folder)
     }
+    init {
+        // Every share query leads with user_id, including the management list
+        // that filters nothing but the owner. Without this the unfiltered list
+        // is a full scan of share_links; the fileId/folderId variants already
+        // had share_target_idx, but the "all my links" page had no index at all.
+        index(customIndexName = "share_links_user_idx", isUnique = false, user)
+    }
 }
 
 // Owner-managed server settings as key/value rows. New booleans are added here

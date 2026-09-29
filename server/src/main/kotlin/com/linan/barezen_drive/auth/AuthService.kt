@@ -7,7 +7,8 @@ import com.linan.barezen_drive.core.dto.LoginResponse
 import com.linan.barezen_drive.core.dto.RefreshResponse
 import com.linan.barezen_drive.core.dto.UserDto
 import com.linan.barezen_drive.db.DatabaseFactory
-import com.linan.barezen_drive.system.ownerAccountId
+import com.linan.barezen_drive.system.ServerSettingsService
+import com.linan.barezen_drive.system.ownerId
 import com.linan.barezen_drive.db.RefreshTokensTable
 import com.linan.barezen_drive.db.UsersTable
 import org.jetbrains.exposed.sql.ResultRow
@@ -53,14 +54,26 @@ object AuthService {
 
     /**
      * [isOwner] is resolved here rather than trusted from the row: ownership is
-     * "earliest account", and the client needs it to hide owner-only rows
-     * instead of offering a button that answers 403.
+     * a fixed id in the settings table, and the client needs it to hide
+     * owner-only rows instead of offering a button that answers 403.
+     *
+     * ownerId() (not the transaction-scoped read) because this runs on every
+     * login and every /api/me: the answer is cached in process, and on an
+     * instance that predates the setting the call is also what pins the owner.
      */
     internal fun toUserDto(r: ResultRow): UserDto {
         val id = r[UsersTable.id]
-        val owner = transaction(DatabaseFactory.db) { ownerAccountId() }
-        return UserDto(id.toString(), r[UsersTable.username], epochToIso(r[UsersTable.createdAt]), id == owner)
+        return toUserDto(id, r[UsersTable.username], epochToIso(r[UsersTable.createdAt]))
     }
+
+    /**
+     * The same mapping for a row that was just written and has not been read
+     * back. Register needs it because the row it returns is created inside the
+     * insert, and the owner flag has to reflect the claim that happened in the
+     * same breath.
+     */
+    private fun toUserDto(id: UUID, username: String, createdAtIso: String): UserDto =
+        UserDto(id.toString(), username, createdAtIso, id == ownerId())
 
     private fun newRefreshToken(): Pair<String, Long> {
         val bytes = ByteArray(32)
@@ -104,7 +117,19 @@ object AuthService {
                     it[createdAt] = now
                 }
             }
-            UserDto(id.toString(), username, epochToIso(now))
+            // Fix the owner the moment the first account exists. Whoever created
+            // it is the installer, not a stranger: registration is closed until
+            // an account exists, so the only ways in are the install wizard and
+            // a request from the host itself. Doing it here rather than on the
+            // first owner-scoped read means the answer is the same whether or
+            // not anybody has opened the admin page yet, and the CAS in
+            // claimOwner keeps two racing registrations from both claiming it.
+            ServerSettingsService.claimOwner(id)
+            // Built after the claim, and through the same DTO mapper every other
+            // response uses: the first account is the owner, and a register
+            // response that said isOwner=false would hide every owner-only row
+            // until the client's next /api/me call happened to correct it.
+            toUserDto(id, username, epochToIso(now))
         } catch (e: Exception) {
             // Two racing registers can both pass the SELECT above; the unique
             // index is the backstop, and the loser must read as the same 409
@@ -119,14 +144,19 @@ object AuthService {
     /**
      * Creates the owner account from the BOOTSTRAP_ADMIN_USER/PASSWORD env
      * pair when the install wizard pre-configured one and no user exists yet.
-     * The first account owns the instance, so this seed becomes it. Returns
-     * null when users already exist or the pair is unset or invalid.
+     * The first account owns the instance, so this seed becomes it.
+     *
+     * `Result.success(null)` means "nothing to do" - the pair is unset, or the
+     * instance already has accounts. A *failure* is a real problem: the seed did
+     * not happen and the instance may have no account at all, which used to be
+     * swallowed twice over (here and at the call site) and left a deployed
+     * server that looked healthy and that nobody could log into.
      */
-    fun bootstrapAdmin(user: String?, password: String?): UserDto? {
-        if (user.isNullOrBlank() || password.isNullOrBlank()) return null
+    fun bootstrapAdmin(user: String?, password: String?): Result<UserDto?> {
+        if (user.isNullOrBlank() || password.isNullOrBlank()) return Result.success(null)
         val hasUsers = transaction(DatabaseFactory.db) { UsersTable.selectAll().limit(1).any() }
-        if (hasUsers) return null
-        return runCatching { register(user, password) }.getOrNull()
+        if (hasUsers) return Result.success(null)
+        return runCatching { register(user, password) }
     }
 
     /**

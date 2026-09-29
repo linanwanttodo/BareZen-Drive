@@ -21,8 +21,14 @@ import kotlinx.coroutines.withContext
 fun Route.trashRoutes(storage: StorageProvider) {
     route("/api/trash") {
         get {
-            val files = withContext(Dispatchers.IO) { FileService.listTrash(call.userId) }
-            call.respond(TrashResponse(files))
+            // Paged: the trash can hold every photo the account ever deleted, and
+            // one response carrying all of them is what made opening this screen
+            // expensive after a bulk delete. `limit` is capped so a caller
+            // cannot ask the server to rebuild the old unbounded response.
+            val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 100
+            val cursor = call.request.queryParameters["cursor"]
+            val page = withContext(Dispatchers.IO) { FileService.listTrash(call.userId, limit, cursor) }
+            call.respond(TrashResponse(page.files, page.nextCursor))
         }
         post("/{id}/restore") {
             val id = call.parameters["id"]!!.toUuidOrBadRequest()

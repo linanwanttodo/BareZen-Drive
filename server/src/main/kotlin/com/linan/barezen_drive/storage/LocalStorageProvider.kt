@@ -24,7 +24,13 @@ class LocalStorageProvider(private val root: Path) : StorageProvider {
         // Every public path goes through resolvePath so a hostile key can never
         // escape the storage root, not even through put/delete/exists.
         val target = resolvePath(key)
-        if (Files.exists(target)) { channel.discard(); return@withContext }
+        // A blob key is the content hash: an existing key already holds exactly
+        // these bytes, so a re-PUT is a retry and skipping it is the point (it
+        // saves writing the whole file again). A cover or avatar key is a
+        // mutable slot instead (isMutableKey), and its stored bytes are meant to
+        // be replaced - otherwise the first cover ever uploaded could never be
+        // corrected.
+        if (!isMutableKey(key) && Files.exists(target)) { channel.discard(); return@withContext }
         Files.createDirectories(target.parent)
         val tmp = Files.createTempFile(target.parent, "put-", ".tmp")
         try {
@@ -40,7 +46,9 @@ class LocalStorageProvider(private val root: Path) : StorageProvider {
             // the same content key both pass the exists() check above, and the
             // loser's ATOMIC_MOVE alone would throw FileAlreadyExistsException
             // (a 500) even though the winning bytes are identical - keys are
-            // content-addressed, so replacing same with same is a no-op.
+            // content-addressed, so replacing same with same is a no-op. It is
+            // also what makes an overwriting cover write land in one step, so a
+            // reader never sees a half-written cover.
             Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } catch (t: Throwable) {
             Files.deleteIfExists(tmp); throw t

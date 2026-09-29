@@ -353,6 +353,10 @@ INSTALL_TYPE=web
 WEB_PORT=${PORT}
 APP_DOMAIN=${DOMAIN}
 USE_HTTPS=${USE_HTTPS}
+# The app is reached directly here (no reverse proxy in front of it), so there
+# is nothing to trust and nothing to forward. Left empty on purpose: the
+# server only reads X-Forwarded-For from a peer inside TRUST_PROXY_CIDRS.
+TRUST_PROXY_CIDRS=
 EOF
   else
     DB_PASS="$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)"
@@ -367,6 +371,13 @@ POSTGRES_PASSWORD=${DB_PASS}
 SERVER_PORT=${PORT}
 APP_DOMAIN=${DOMAIN}
 USE_HTTPS=${USE_HTTPS}
+# Caddy terminates TLS in its own container on this compose network, so the
+# application sees the proxy as a 172.16/12 peer and X-Forwarded-For as
+# Caddy's doing. Without this the rate limiter buckets by Caddy's single
+# address: one visitor spending the login budget locks out everyone else.
+# Narrow it to this network's bridge range if you know it; 172.16.0.0/12 is
+# the safe upper bound for a stock Docker bridge.
+TRUST_PROXY_CIDRS=${TRUST_PROXY_CIDRS:-172.16.0.0/12}
 BOOTSTRAP_ADMIN_USER=${ADMIN_USER}
 BOOTSTRAP_ADMIN_PASSWORD=${ADMIN_PASS}
 EOF

@@ -24,12 +24,12 @@ class BootstrapAdminTest {
         // Force the module to run so the database connection exists.
         client.get("/api/version")
 
-        val seeded = AuthService.bootstrapAdmin("wizard", "password123")
+        val seeded = AuthService.bootstrapAdmin("wizard", "password123").getOrThrow()
         assertNotNull(seeded)
         assertEquals("wizard", seeded.username)
 
         // A second call must not create anything: the instance is no longer fresh.
-        assertNull(AuthService.bootstrapAdmin("other", "password123"))
+        assertNull(AuthService.bootstrapAdmin("other", "password123").getOrThrow())
 
         // The seeded credentials log in.
         val login = AuthService.login("wizard", "password123")
@@ -38,7 +38,7 @@ class BootstrapAdminTest {
 
     @Test
     fun ignoresUnsetPair() {
-        assertNull(AuthService.bootstrapAdmin(null, null))
-        assertNull(AuthService.bootstrapAdmin("", ""))
+        assertNull(AuthService.bootstrapAdmin(null, null).getOrThrow())
+        assertNull(AuthService.bootstrapAdmin("", "").getOrThrow())
     }
 }

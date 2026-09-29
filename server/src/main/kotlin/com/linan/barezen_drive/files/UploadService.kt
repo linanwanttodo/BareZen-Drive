@@ -28,22 +28,31 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 
 object UploadService {
+    private val log = LoggerFactory.getLogger(UploadService::class.java)
+
     private const val MIB = 1024L * 1024
     const val DEFAULT_CHUNK = 5L * MIB
     const val MIN_CHUNK = MIB
     const val MAX_CHUNK = 20L * MIB
     private const val SESSION_TTL_MILLIS = 24L * 3600 * 1000
+
+    /** Sessions per DELETE statement in the expired sweep; see cleanupExpired. */
+    private const val SESSION_DELETE_BATCH = 500
 
     /** Fire-and-forget cover generation after a complete; never fails the upload. */
     private val bgScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -71,6 +80,23 @@ object UploadService {
         }
         return row
     }
+
+    /**
+     * Size of the content already stored under [key], or null when nothing
+     * references it and the blob is not on local disk.
+     *
+     * Dedup never takes the client's word for a size: it is the size a row that
+     * already holds these bytes recorded, else the blob's own length. The dedup
+     * branches (overwrite an existing name, claim a free one) have to agree on
+     * that, so it lives here instead of being written out twice.
+     *
+     * Callers must be inside a transaction (the row lookup needs one) and must
+     * have confirmed the blob exists.
+     */
+    private fun storedSizeForKey(key: String, storage: StorageProvider): Long? =
+        FilesTable.selectAll().where { FilesTable.storageKey eq key }
+            .firstOrNull()?.get(FilesTable.size)
+            ?: storage.resolvePath(key)?.toFile()?.length()?.takeIf { it > 0 }
 
     suspend fun initUpload(userId: UUID, req: UploadInitRequest, storage: StorageProvider): UploadInitResponse {
         if (req.name.isBlank() || req.name.contains('/') || req.name.length > 255) throw ApiException.badRequest("文件名非法")
@@ -114,10 +140,7 @@ object UploadService {
                             // Same dedup rule as a fresh instant row: the size of
                             // the *new* content comes from rows already holding
                             // this blob (or the blob itself), never the client.
-                            val storedSize = FilesTable.selectAll().where { FilesTable.storageKey eq key }
-                                .firstOrNull()?.get(FilesTable.size)
-                                ?: storage.resolvePath(key)?.toFile()?.length()?.takeIf { it > 0 }
-                                ?: req.size
+                            val storedSize = storedSizeForKey(key, storage) ?: req.size
                             val (orphans, snapshot) = VersionService.snapshotAndReplace(
                                 clash[FilesTable.id],
                                 clash[FilesTable.sha256], clash[FilesTable.storageKey], clash[FilesTable.size], clash[FilesTable.mimeType], clash[FilesTable.takenAt],
@@ -133,9 +156,7 @@ object UploadService {
                         else -> {
                             // Never trust a client-declared size for dedup: reuse the size
                             // already recorded for this content, or the stored blob length.
-                            val storedSize = FilesTable.selectAll().where { FilesTable.storageKey eq key }
-                                .firstOrNull()?.get(FilesTable.size)
-                                ?: storage.resolvePath(key)?.toFile()?.length()?.takeIf { it > 0 }
+                            val storedSize = storedSizeForKey(key, storage)
                             val id = UUID.randomUUID()
                             mapNameConflict {
                                 FilesTable.insert {
@@ -162,16 +183,31 @@ object UploadService {
                 }
             }
 
-        // Resume match: open session with the same user, folder, name and size.
-        // Expired rows are skipped: the cleanup job runs only every 6h, and handing
-        // back a dead session id would lock the client in 409 loops until then.
+        // Resume match: open session with the same user, folder, name, size AND
+        // content hash. Expired rows are skipped: the cleanup job runs only every
+        // 6h, and handing back a dead session id would lock the client in 409
+        // loops until then.
+        //
+        // The hash is part of the key because user+folder+name+size cannot tell
+        // two uploads apart: two clients (or one client twice) sending the same
+        // name and size landed in ONE session, both wrote the same `$i.part`
+        // slot, and the merge could end up a mixture of the two files. Same
+        // content means the same upload and may resume; different content gets a
+        // session of its own. A request without a hash only matches a session
+        // that had none either - it has told us nothing that could separate two
+        // hash-less uploads, so they keep the old behaviour rather than silently
+        // dropping half of a genuine resume.
         val nowMs = System.currentTimeMillis()
         val existing = transaction(DatabaseFactory.db) {
-            (if (parent == null)
-                UploadSessionsTable.selectAll().where { (UploadSessionsTable.user eq userId) and UploadSessionsTable.folder.isNull() and (UploadSessionsTable.name eq req.name) and (UploadSessionsTable.size eq req.size) and (UploadSessionsTable.status eq "open") and (UploadSessionsTable.expiresAt greater nowMs) }
-            else
-                UploadSessionsTable.selectAll().where { (UploadSessionsTable.user eq userId) and (UploadSessionsTable.folder eq parent) and (UploadSessionsTable.name eq req.name) and (UploadSessionsTable.size eq req.size) and (UploadSessionsTable.status eq "open") and (UploadSessionsTable.expiresAt greater nowMs) }
-            ).firstOrNull()
+            UploadSessionsTable.selectAll().where {
+                (UploadSessionsTable.user eq userId) and
+                    (UploadSessionsTable.name eq req.name) and
+                    (UploadSessionsTable.size eq req.size) and
+                    (UploadSessionsTable.status eq "open") and
+                    (UploadSessionsTable.expiresAt greater nowMs) and
+                    (if (parent == null) UploadSessionsTable.folder.isNull() else (UploadSessionsTable.folder eq parent)) and
+                    (if (sha == null) UploadSessionsTable.clientSha256.isNull() else (UploadSessionsTable.clientSha256 eq sha))
+            }.firstOrNull()
         }
         val sessionId = existing?.get(UploadSessionsTable.id) ?: UUID.randomUUID().also { sid ->
             transaction(DatabaseFactory.db) {
@@ -262,7 +298,7 @@ object UploadService {
             if (chunkSha != null && !chunkSha.equals(digest.digest().joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }, ignoreCase = true)) {
                 throw ApiException.badRequest("分块校验不符", ErrorCodes.CHUNK_INVALID)
             }
-            withContext(Dispatchers.IO) { publishChunk(staging, part) }
+            withContext(Dispatchers.IO) { moveIntoPlace(staging, part) }
         } finally {
             // Only the staging file belongs to this request: a rejected chunk must
             // never destroy a part an earlier attempt already published.
@@ -289,13 +325,39 @@ object UploadService {
         }
     }
 
-    private fun publishChunk(staging: java.nio.file.Path, target: File) {
+    private fun moveIntoPlace(staging: Path, target: File) {
         try {
             Files.move(staging, target.toPath(), StandardCopyOption.ATOMIC_MOVE)
         } catch (_: AtomicMoveNotSupportedException) {
             // Filesystems without atomic rename (some network mounts) still get
             // replace-existing, which is what the single-writer case needs.
             Files.move(staging, target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    /**
+     * Publishes the merge result by renaming it onto the blob key.
+     *
+     * The merge file and the blob both live under the storage root, so on a
+     * local backend the copy that followed the merge was a full read plus a
+     * full write of the file to arrive at bytes that were already on the right
+     * volume - three writes and two reads per complete, and ~3x the file size
+     * in peak disk. A rename is a directory entry update.
+     *
+     * Returns false when the caller must fall back to streaming: an object store
+     * (no local path at all), or a local store whose blob directory is on
+     * another volume than its tmp directory, where a rename is a copy
+     * underneath. Both keep the previous behaviour.
+     */
+    private fun promoteMergeByRename(storage: StorageProvider, mergeFile: File, key: String): Boolean {
+        val target = storage.resolvePath(key) ?: return false
+        return try {
+            Files.createDirectories(target.parent)
+            moveIntoPlace(mergeFile.toPath(), target.toFile())
+            true
+        } catch (e: IOException) {
+            log.debug("could not rename the merge file onto {}; falling back to a copy: {}", key, e.toString())
+            false
         }
     }
 
@@ -343,7 +405,12 @@ object UploadService {
             }
             val key = storage.blobKey(sha)
             if (!storage.exists(key)) {
-                FileInputStream(mergeFile).use { fis -> storage.put(key, fis.toByteReadChannel()) }
+                // Rename first, copy only when a rename is impossible: the merge
+                // file and the blob are on the same volume on a local store, so
+                // re-reading and re-writing the whole file here bought nothing.
+                if (!promoteMergeByRename(storage, mergeFile, key)) {
+                    FileInputStream(mergeFile).use { fis -> storage.put(key, fis.toByteReadChannel()) }
+                }
             }
             val hasThumb = storage.exists(thumbKey(sha))
             val overwrite = row[UploadSessionsTable.overwrite]
@@ -395,7 +462,13 @@ object UploadService {
                     size = total, mimeType = mime, sha256 = sha, storageKey = key,
                     hasThumbnail = false,
                 )
-                bgScope.launch { runCatching { ThumbnailService.ensureThumbnail(storage, meta) } }
+                bgScope.launch {
+                    // Fire and forget, so this is the only trace a cover failure
+                    // leaves: without it, a file with no cover, a full disk and
+                    // an ffmpeg timeout are indistinguishable from the outside.
+                    runCatching { ThumbnailService.ensureThumbnail(storage, meta) }
+                        .onFailure { log.warn("cover generation failed for file {} ({}): {}", fileDto.id, name, it.toString(), it) }
+                }
             }
             UploadCompleteResponse(fileDto, replacedVersion)
         } finally {
@@ -422,14 +495,22 @@ object UploadService {
                 .map { it[UploadSessionsTable.id] }
         }
         withContext(Dispatchers.IO) {
-            expired.forEach { sid ->
-                // Chunk rows reference the session (FK), so they go first.
+            if (expired.isNotEmpty()) {
+                // Batched: the sweep used to open a transaction and two DELETEs
+                // per session, so a backlog of a few hundred abandoned uploads
+                // spent a few hundred sequential round trips on the same 5
+                // connections the live requests need. Two statements per batch
+                // instead, and the staging directories go in the same loop as
+                // before (filesystem work, not round trips).
                 transaction(DatabaseFactory.db) {
-                    UploadChunksTable.deleteWhere { UploadChunksTable.session eq sid }
-                    UploadSessionsTable.deleteWhere { UploadSessionsTable.id eq sid }
+                    expired.chunked(SESSION_DELETE_BATCH).forEach { batch ->
+                        // Chunk rows reference the session (FK), so they go first.
+                        UploadChunksTable.deleteWhere { UploadChunksTable.session inList batch }
+                        UploadSessionsTable.deleteWhere { UploadSessionsTable.id inList batch }
+                    }
                 }
-                cleanupSessionDir(storage, sid)
             }
+            expired.forEach { sid -> cleanupSessionDir(storage, sid) }
             // Crash leftovers: complete() merges into merge-*.bin and the S3
             // provider stages into s3put-*.bin directly under tmpDir; a kill -9
             // skips their finally blocks and orphans the files. Sweep anything

@@ -91,18 +91,6 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
     }
 
     // Album order: capture time when known, else upload time.
-    fun sortTs(): ExpressionWithColumnType<Long> =
-        object : ExpressionWithColumnType<Long>() {
-            override val columnType = LongColumnType()
-            override fun toQueryBuilder(qb: QueryBuilder) {
-                qb.append("COALESCE(")
-                FilesTable.takenAt.toQueryBuilder(qb)
-                qb.append(", ")
-                FilesTable.updatedAt.toQueryBuilder(qb)
-                qb.append(")")
-            }
-        }
-
     get("/api/album") {
         // Media timeline: images and videos, newest first, keyset pagination on
         // (updated_at, id). Grouping is a client-side concern (local timezone).
@@ -119,38 +107,23 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
         // rows are never part of any of these views.
         val favoriteOnly = call.flagParam("favorite")
         val archivedOnly = call.flagParam("archived")
+        // A malformed cursor just restarts from the top.
+        val (cursorTs, cursorId) = cursor?.let { parseCursor(it) } ?: (null to null)
+        val rootId = rootParam?.toUuidOrBadRequest()
         val rows = withContext(Dispatchers.IO) {
             transaction(DatabaseFactory.db) {
-                val media = when (category) {
-                    "image" -> Op.build { FilesTable.mimeType.like("image/%") }
-                    "video" -> Op.build { FilesTable.mimeType.like("video/%") }
-                    // Screenshot is matched by the common camera-app names; the
-                    // escaped literals are ?? (CJK filesystems keep them).
-                    "screenshot" -> Op.build {
-                        FilesTable.name.like("%creenshot%") or FilesTable.name.like("%\u622a\u56fe%")
-                    }
-                    else -> Op.build { FilesTable.mimeType.like("image/%") or FilesTable.mimeType.like("video/%") }
-                }
-                var q = FilesTable.selectAll().where {
-                    (FilesTable.user eq call.userId) and media and (FilesTable.deletedAt eq 0L) and
-                        (if (archivedOnly) (FilesTable.archivedAt greater 0L) else (FilesTable.archivedAt eq 0L))
-                }
-                if (favoriteOnly) q = q.andWhere { FilesTable.isFavorite eq true }
-                if (rootParam != null) {
-                    val rootId = rootParam.toUuidOrBadRequest()
-                    val subtree = FileTree.descendants(call.userId, rootId)
-                    q = q.andWhere { (FilesTable.folder inList subtree) or (FilesTable.folder eq rootId) }
-                }
-                if (cursor != null) {
-                    // Format "<epochMillis>:<uuid>"; a malformed cursor just restarts from the top.
-                    parseCursor(cursor)?.let { (ms, id) ->
-                        q = q.andWhere {
-                            (sortTs() less ms) or
-                                ((sortTs() eq ms) and (FilesTable.id less id))
-                        }
-                    }
-                }
-                q.orderBy(sortTs() to SortOrder.DESC, FilesTable.id to SortOrder.DESC)
+                // Resolved inside the transaction: the subtree is a query of its own.
+                val subtree = rootId?.let { FileTree.descendants(call.userId, it) } ?: emptyList()
+                albumPageQuery(
+                    userId = call.userId,
+                    mediaFilter = albumMediaFilter(category),
+                    favoriteOnly = favoriteOnly,
+                    archivedOnly = archivedOnly,
+                    rootId = rootId,
+                    subtree = subtree,
+                    cursorTs = cursorTs,
+                    cursorId = cursorId,
+                )
                     .limit(limit + 1)
                     .map { (it[FilesTable.takenAt] ?: it[FilesTable.updatedAt]) to it.toFileDto() }
             }
@@ -174,24 +147,10 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
         } else {
             withContext(Dispatchers.IO) { FileService.getFileMeta(call.userId, id) }
         }
-        // The stored mimeType came from the uploading client, so it cannot be
-        // served back as-is: anything a browser can execute (html, svg, js) has
-        // to leave as a download. Media and PDF stay inline for the viewer.
-        // See safeFileContent for the whitelist and the reasoning.
-        val safe = safeFileContent(meta.mimeType, meta.name)
-        safe.disposition?.let { call.response.headers.append(HttpHeaders.ContentDisposition, it) }
-        // Range handling is delegated to the installed PartialContent plugin: no Range
-        // header stays a plain 200; a byte range becomes 206 + Content-Range; an
-        // unsatisfiable range becomes 416 with "bytes */total". The plugin slices the
-        // channel lazily, so range requests never buffer the whole file in memory.
-        // exists() guard: the row can reference a blob that no longer exists on
-        // disk (manual prune, half-completed purge); open only when present so a
-        // missing payload answers 404 instead of a 500 from FileInputStream.
-        val key = meta.storageKey
-        if (!withContext(Dispatchers.IO) { storage.exists(key) }) {
-            throw com.linan.barezen_drive.api.ApiException.notFound("文件内容不存在")
-        }
-        call.respond(FileStream(withContext(Dispatchers.IO) { storage.get(key) }, meta.size, safe.type))
+        // Content-type policy, the pruned-blob 404 and the open-once-then-close
+        // streaming all live in one place, shared with the public share route:
+        // see respondStoredFile.
+        call.respondStoredFile(storage, meta)
     }
 }
 
@@ -203,6 +162,90 @@ private fun ApplicationCall.flagParam(name: String): Boolean =
 private fun parseCursor(cursor: String): Pair<Long, UUID>? = runCatching {    val idx = cursor.lastIndexOf(':')
     cursor.substring(0, idx).toLong() to UUID.fromString(cursor.substring(idx + 1))
 }.getOrNull()
+
+/** Album ordering key: capture time when known, else upload time. */
+private fun albumSortTs(): ExpressionWithColumnType<Long> =
+    object : ExpressionWithColumnType<Long>() {
+        override val columnType = LongColumnType()
+        override fun toQueryBuilder(qb: QueryBuilder) {
+            qb.append("COALESCE(")
+            FilesTable.takenAt.toQueryBuilder(qb)
+            qb.append(", ")
+            FilesTable.updatedAt.toQueryBuilder(qb)
+            qb.append(")")
+        }
+    }
+
+/** Media-kind filter for the album timeline; a gallery selector in the UI. */
+private fun albumMediaFilter(category: String): Op<Boolean> = when (category) {
+    "image" -> Op.build { FilesTable.mimeType.like("image/%") }
+    "video" -> Op.build { FilesTable.mimeType.like("video/%") }
+    // Screenshot is matched by the common camera-app names; the
+    // escaped literals are ?? (CJK filesystems keep them).
+    "screenshot" -> Op.build {
+        FilesTable.name.like("%creenshot%") or FilesTable.name.like("%截图%")
+    }
+    else -> Op.build { FilesTable.mimeType.like("image/%") or FilesTable.mimeType.like("video/%") }
+}
+
+/**
+ * The album timeline query, in the order files_album_sort_idx describes:
+ * (user_id, COALESCE(taken_at, updated_at) DESC, id DESC). The trailing id is
+ * what makes the keyset cursor a total order, so a page boundary lands between
+ * two rows and the next page resumes exactly where this one stopped.
+ *
+ * The cursor is a single row comparison rather than the equivalent
+ * `(sort_ts < ?) OR (sort_ts = ? AND id < ?)` because only the row form becomes
+ * an index condition. The disjunctive form is a plain filter: PostgreSQL still
+ * orders by the index, but starts at its head and discards every row above the
+ * cursor, so page N of a scroll re-reads pages 1..N-1. Same rows, same order,
+ * one scan instead of N (50k-row library, EXPLAIN ANALYZE: 4.73 ms / 937
+ * buffers for the OR form against 0.12 ms / 12 buffers for the row form).
+ */
+internal fun albumPageQuery(
+    userId: UUID,
+    mediaFilter: Op<Boolean>,
+    favoriteOnly: Boolean,
+    archivedOnly: Boolean,
+    rootId: UUID?,
+    subtree: List<UUID>,
+    cursorTs: Long?,
+    cursorId: UUID?,
+): Query {
+    var q = FilesTable.selectAll().where {
+        (FilesTable.user eq userId) and mediaFilter and (FilesTable.deletedAt eq 0L) and
+            (if (archivedOnly) (FilesTable.archivedAt greater 0L) else (FilesTable.archivedAt eq 0L))
+    }
+    if (favoriteOnly) q = q.andWhere { FilesTable.isFavorite eq true }
+    if (rootId != null) {
+        q = q.andWhere { (FilesTable.folder inList subtree) or (FilesTable.folder eq rootId) }
+    }
+    if (cursorTs != null && cursorId != null) {
+        q = q.andWhere { AlbumCursorSeek(cursorTs, cursorId) }
+    }
+    return q.orderBy(albumSortTs() to SortOrder.DESC, FilesTable.id to SortOrder.DESC)
+}
+
+/**
+ * `(sort_ts, id) < (?, ?)` on the album sort key. Exposed has no row-comparison
+ * expression, so it is spelled out; the argument order has to match
+ * files_album_sort_idx exactly for the planner to turn it into an index seek.
+ */
+private class AlbumCursorSeek(private val ts: Long, private val id: UUID) : Op<Boolean>() {
+    override fun toQueryBuilder(qb: QueryBuilder) {
+        qb.append("(")
+        albumSortTs().toQueryBuilder(qb)
+        qb.append(", ")
+        FilesTable.id.toQueryBuilder(qb)
+        qb.append(") < (")
+        // Bound parameters, not literals: both come from the request, and the
+        // row form only becomes an index condition with parameters in place.
+        qb.registerArgument(LongColumnType(), ts)
+        qb.append(", ")
+        qb.registerArgument(FilesTable.id.columnType, id)
+        qb.append(")")
+    }
+}
 
 /**
  * True when the call carries a signature that binds exactly this file id

@@ -22,6 +22,9 @@ class AuthTest {
         jwtSecret = "test-secret-0123456789abcdef0123456789abcdef",
         storageDir = java.nio.file.Files.createTempDirectory("bz-auth").toString(),
         maxFileSize = 1L shl 30,
+        // Several cases here register a second account (or re-register), which a
+        // default instance only admits once the owner opens registration.
+        registrationOpen = true,
     )
 
     private fun ApplicationTestBuilder.setup() {

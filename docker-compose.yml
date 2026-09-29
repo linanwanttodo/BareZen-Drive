@@ -36,9 +36,28 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_PATH_STYLE: ${S3_PATH_STYLE:-false}
-      # Only turn this on when the container really sits behind a proxy that
-      # rewrites X-Forwarded-For; the auth rate limiter keys on it then.
+      # Reverse-proxy trust. Prefer TRUST_PROXY_CIDRS: TRUST_PROXY=true trusts
+      # X-Forwarded-For from ANY peer, which hands the auth rate limiter's
+      # buckets to anyone who can reach the port (one forged header per request
+      # is a fresh bucket). Set the CIDR list to the proxy's own network instead -
+      # with the Caddy HTTPS setup here that is the docker bridge range, since
+      # the app sees the proxy as 172.x and the header as Caddy's doing. Without
+      # it every visitor shares one bucket through the proxy, which is worse than
+      # not rate limiting at all. Direct deployments set nothing.
+      TRUST_PROXY_CIDRS: ${TRUST_PROXY_CIDRS:-}
+      # Legacy switch, kept so an existing .env keeps working. Ignored when
+      # TRUST_PROXY_CIDRS is set; the server logs a warning if it is true.
       TRUST_PROXY: ${TRUST_PROXY:-false}
+      # Registration is closed by default: the owner account is whoever exists
+      # first, so an open default means the first stranger to press register
+      # owns the instance. The owner reopens it from the settings screen.
+      REGISTRATION_OPEN: ${REGISTRATION_OPEN:-false}
+      # Connection pool. The defaults are deliberately conservative for a 1C/1G
+      # box; the timeout is what turns an exhausted pool into a fast error
+      # instead of a silent half-minute stall.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-30000}
+      DB_LEAK_DETECTION_MS: ${DB_LEAK_DETECTION_MS:-0}
       BOOTSTRAP_ADMIN_USER: ${BOOTSTRAP_ADMIN_USER:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
     volumes:

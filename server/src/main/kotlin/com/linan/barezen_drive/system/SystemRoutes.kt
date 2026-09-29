@@ -1,5 +1,8 @@
 package com.linan.barezen_drive.system
 
+import com.linan.barezen_drive.api.ApiException
+import com.linan.barezen_drive.api.Throttle
+import com.linan.barezen_drive.api.clientIp
 import com.linan.barezen_drive.auth.userId
 import com.linan.barezen_drive.config.AppConfig
 import com.linan.barezen_drive.core.dto.RegistrationSettingRequest
@@ -22,8 +25,26 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 
+/**
+ * Update-proxy budget per source address. A single install is a handful of
+ * devices; 30 requests in 5 minutes leaves room for every device to retry a
+ * flaky download (each retry is one request, including range requests) while
+ * still capping what the relay will fetch for one address.
+ */
+private const val UPDATE_PROXY_MAX_PER_WINDOW = 30
+private const val UPDATE_PROXY_WINDOW_MS = 300_000L
+
+/**
+ * Host metrics for the settings screen. Owner-only, like every other management
+ * surface: the payload is the machine's own profile (total CPU/memory/disk,
+ * uptime, live network throughput, read straight from /proc), and the
+ * registration switch that lets a stranger obtain an account is itself
+ * owner-only - so an authenticated guest could otherwise map the host's capacity
+ * and uptime without ever being invited.
+ */
 fun Route.systemRoutes(storageDir: String) {
     get("/api/server/stats") {
+        requireOwner(call.userId) // authentication AND ownership
         val stats = withContext(Dispatchers.IO) { SystemStatsService.snapshot(storageDir) }
         call.respond(stats)
     }
@@ -73,9 +94,24 @@ fun Route.versionRoutes(cfg: AppConfig) {
     }
 }
 
-/**Streams GitHub release packages through this server for update clients. */
+/**
+ * Update-package downloads for clients that cannot reach github.com themselves.
+ *
+ * Public by design - an updater has no session yet - which is exactly why it
+ * needs a limiter: without one, anyone who can reach the port can have this
+ * instance fetch and forward release assets over its own uplink, repeatedly,
+ * until the box is busy. The budget is per source address and generous enough
+ * for a fleet of devices and for the retries a resumable download makes, but it
+ * is a bound rather than an open relay.
+ */
 fun Route.proxyRoutes(cfg: AppConfig) {
     get("/api/updates/download/{tag}/{file}") {
+        // Before the path is even looked at: a rejected path must not be a free
+        // way to probe the route, and nothing above this line costs the upstream
+        // anything.
+        if (!Throttle.allow("update:" + call.clientIp(), UPDATE_PROXY_MAX_PER_WINDOW, UPDATE_PROXY_WINDOW_MS)) {
+            throw ApiException.rateLimited()
+        }
         val tag = call.parameters["tag"].orEmpty()
         val file = call.parameters["file"].orEmpty()
         val tagOk = tag.matches(Regex("[A-Za-z0-9._-]+"))

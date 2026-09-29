@@ -133,11 +133,15 @@ class S3StorageProvider(
 
     /**
      * Spools the channel through tmpDir (computing SHA-256 on the way) and PUTs
-     * the file. An existing key is left untouched - blobs are content-addressed
-     * and immutable, matching LocalStorageProvider's skip-if-present contract.
+     * the file. A key that already holds the same content is left untouched -
+     * blob keys are content-addressed and immutable, matching
+     * LocalStorageProvider's skip-if-present contract. A mutable slot (a cover
+     * or an avatar, isMutableKey) is overwritten instead: an S3 PUT replaces
+     * the object in one request, and "the first cover ever uploaded can never be
+     * corrected" is not a trade worth making to save that one round trip.
      */
     override suspend fun put(key: String, channel: ByteReadChannel): Unit = withContext(Dispatchers.IO) {
-        if (exists(key)) {
+        if (!isMutableKey(key) && exists(key)) {
             channel.discard()
             return@withContext
         }
