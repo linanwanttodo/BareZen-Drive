@@ -40,6 +40,7 @@ object DatabaseFactory {
         transaction(db) { SchemaUtils.createMissingTablesAndColumns(*ALL_TABLES) }
         dropLegacyNameIndex(ds)
         createRootNameIndexes(ds)
+        createAlbumSortIndex(ds)
         return db
     }
 
@@ -55,8 +56,9 @@ object DatabaseFactory {
      *
      * PostgreSQL only: H2 (the test dialect) has no partial indexes, and the
      * app-level pre-check answers 409 for every sequential case anyway.
-     * createMissingTablesAndColumns never adds indexes, so this runs on every
-     * boot; IF NOT EXISTS keeps it idempotent. If existing root rows already
+     * Exposed's createMissingTablesAndColumns backfills plain column indexes
+     * but knows nothing about partial ones, so this runs on every boot; IF NOT
+     * EXISTS keeps it idempotent. If existing root rows already
      * hold duplicates the create fails - logged with guidance instead of
      * silently mutating data.
      */
@@ -88,6 +90,36 @@ object DatabaseFactory {
                 }
             }
         }.onFailure { log.warn("could not inspect the database for root-level name indexes", it) }
+    }
+
+    /**
+     * Expression index for the album ordering key.
+     *
+     * The album endpoint orders by COALESCE(taken_at, updated_at) - the moment
+     * a photo was taken, falling back to when it was uploaded - which no plain
+     * column index can serve: every page sorted the user's entire live set,
+     * once more per page as the user scrolled. The cursor comparison uses the
+     * same expression, so one index serves both the ORDER BY and the keyset
+     * seek.
+     *
+     * PostgreSQL only (H2 has no expression indexes and the test data is
+     * tiny); declared here rather than on FilesTable because Exposed's index
+     * builder only takes column references. IF NOT EXISTS keeps it idempotent.
+     */
+    private fun createAlbumSortIndex(ds: HikariDataSource) {
+        // user_id leads: the album query always scopes to one user, and an
+        // index that started at the expression would have to be walked whole
+        // to find that user's rows.
+        val statement = "CREATE INDEX IF NOT EXISTS files_album_sort_idx ON files " +
+            "(user_id, (COALESCE(taken_at, updated_at)) DESC, id DESC)"
+        runCatching {
+            ds.connection.use { conn ->
+                if (!conn.metaData.databaseProductName.orEmpty().contains("PostgreSQL", ignoreCase = true)) return
+                conn.autoCommit = true
+                runCatching { conn.createStatement().use { it.execute(statement) } }
+                    .onFailure { log.warn("could not create the album sort index", it) }
+            }
+        }.onFailure { log.warn("could not create the album sort index", it) }
     }
 
     /**
