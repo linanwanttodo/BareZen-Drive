@@ -26,6 +26,13 @@ object RefreshTokensTable : Table("refresh_tokens") {
     // stolen one (see AuthService.refresh).
     val graceReplays = integer("grace_replays").default(0)
     override val primaryKey = PrimaryKey(id)
+    init {
+        // The table grows linearly with refresh frequency (30-day TTL) and is
+        // only ever queried by "which tokens of this user" and "which are
+        // expired" - both were full scans over a table that never shrinks.
+        index(customIndexName = "refresh_tokens_user_idx", isUnique = false, user)
+        index(customIndexName = "refresh_tokens_expires_idx", isUnique = false, expiresAt)
+    }
 }
 
 object FoldersTable : Table("folders") {
@@ -45,6 +52,10 @@ object FoldersTable : Table("folders") {
         // Subtree walks (album scoping, folder deletion) load a user's whole
         // folder tree and group it by parent.
         index(customIndexName = "folders_user_parent_idx", isUnique = false, user, parent)
+        // Public share listing filters by folder alone (no user in the query),
+        // and the existing index leads with user_id - so that lookup scanned
+        // the whole folders table.
+        index(customIndexName = "folders_parent_idx", isUnique = false, parent)
     }
 }
 
@@ -87,6 +98,17 @@ object FilesTable : Table("files") {
         // every key a delete touches, twice per delete chain. Without this the
         // question is a full scan of the largest table in the schema.
         index(customIndexName = "files_storage_key_idx", isUnique = false, storageKey)
+        // Public share listing and folder-subtree deletion filter by folder_id
+        // with no user_id in the query, so the four-column name index (which
+        // leads with user_id) could not serve either: both were full scans of
+        // the largest table in the schema.
+        index(customIndexName = "files_folder_idx", isUnique = false, folder)
+        // "Recent" is ORDER BY updated_at over this user's live rows, and the
+        // (user, deleted_at) index stops at deleted_at - every page of the
+        // recent list sorted the user's entire live set.
+        index(customIndexName = "files_user_recent_idx", isUnique = false, user, deletedAt, updatedAt)
+        // Album ordering is COALESCE(taken_at, updated_at); the expression
+        // index for it is PostgreSQL-only and lives in DatabaseFactory.
     }
 }
 
@@ -107,6 +129,15 @@ object UploadSessionsTable : Table("upload_sessions") {
     val createdAt = long("created_at").clientDefault { System.currentTimeMillis() }
     val expiresAt = long("expires_at")
     override val primaryKey = PrimaryKey(id)
+    init {
+        // The 6h cleanup job scans this table for expired rows and the resume
+        // path looks a session up by (user, folder, name, size) - none of which
+        // had an index, so both were full scans of a table that only ever
+        // grows between sweeps.
+        index(customIndexName = "upload_sessions_expires_idx", isUnique = false, expiresAt)
+        index(customIndexName = "upload_sessions_folder_idx", isUnique = false, folder)
+        index(customIndexName = "upload_sessions_user_idx", isUnique = false, user)
+    }
 }
 
 object UploadChunksTable : Table("upload_chunks") {
