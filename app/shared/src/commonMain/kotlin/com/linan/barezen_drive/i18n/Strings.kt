@@ -113,6 +113,9 @@ interface Strings {
      *  full address is shown only once. */
     val shareLinkReady: String
     val settingRejected: String
+    /** Empty admin list is a state, not a failed load - an empty LazyColumn reads
+     *  as "nothing rendered", i.e. as if the page had not loaded at all. */
+    val noUsersYet: String
     val uploadFailedTitle: String
     fun uploadFailedCount(count: Int): String
     fun uploadDoneCount(count: Int): String
@@ -163,6 +166,10 @@ interface Strings {
     val shareFile: String
     val shareFolder: String
     val shareLinkInvalid: String
+    /** Distinct from [shareLinkInvalid]: the link may be perfectly alive, we
+     *  just could not reach the server to ask. Telling the user the link died
+     *  sends them to the sharer for a new one when a retry would have worked. */
+    val shareLoadFailed: String
     val askSharerForNewLink: String
     val goToApp: String
     fun updatedAt(dateTime: String): String

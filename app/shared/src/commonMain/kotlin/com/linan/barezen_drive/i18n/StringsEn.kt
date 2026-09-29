@@ -147,6 +147,7 @@ object StringsEn : Strings {
     override val sharedFiles: String = "Shared files"
     override val shareFile: String = "Share file"
     override val shareFolder: String = "Share folder"
+    override val shareLoadFailed: String = "Cannot reach the server"
     override val shareLinkInvalid: String = "This link is invalid or has expired"
     override val askSharerForNewLink: String = "Ask the person who shared it for a new link"
     override val goToApp: String = "Back to app"
@@ -343,4 +344,5 @@ override val avatarChange: String = "Change avatar"
     override val syncBatchTitle: String = "Album sync"
     override val syncBatchNetworkLost: String = "Network lost, resuming later"
     override fun syncBatchFailed(failed: Int, done: Int): String = "$done synced, $failed failed"
+    override val noUsersYet: String = "No users have registered yet"
 }
