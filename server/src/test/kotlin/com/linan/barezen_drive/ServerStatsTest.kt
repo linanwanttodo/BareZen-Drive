@@ -13,8 +13,16 @@ import kotlin.test.*
 
 class ServerStatsTest {
     private val storageDir = Files.createTempDirectory("bz-stats").toString()
-    private fun cfg() = AppConfig(0, "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH", "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30)
+    // A guest account has to exist for the ownership test below, and admitting
+    // it is exactly what the registration switch controls.
+    private fun cfg() = AppConfig(
+        0,
+        "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",
+        "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30,
+        registrationOpen = true,
+    )
     private var auth = ""
+    private var guestAuth = ""
     private val json = Json { ignoreUnknownKeys = true }
 
     private suspend fun ApplicationTestBuilder.setup() {
@@ -24,6 +32,9 @@ class ServerStatsTest {
         client.post("/api/auth/register") { contentType(ContentType.Application.Json); setBody("""{"username":"user1","password":"password123"}""") }
         val login = client.post("/api/auth/login") { contentType(ContentType.Application.Json); setBody("""{"username":"user1","password":"password123"}""") }
         auth = "Bearer " + Regex(""""accessToken":"([^"]+)"""").find(login.bodyAsText())!!.groupValues[1]
+        client.post("/api/auth/register") { contentType(ContentType.Application.Json); setBody("""{"username":"guest1","password":"password123"}""") }
+        val guestLogin = client.post("/api/auth/login") { contentType(ContentType.Application.Json); setBody("""{"username":"guest1","password":"password123"}""") }
+        guestAuth = "Bearer " + Regex(""""accessToken":"([^"]+)"""").find(guestLogin.bodyAsText())!!.groupValues[1]
     }
 
     @Test
@@ -31,6 +42,25 @@ class ServerStatsTest {
         setup()
         val res = client.get("/api/server/stats")
         assertEquals(HttpStatusCode.Unauthorized, res.status)
+    }
+
+    /**
+     * The payload is the host's own profile: total CPU/memory/disk, uptime and
+     * live network throughput, read straight from /proc. Every other management
+     * surface is owner-only, and the registration switch is itself owner-only -
+     * so a guest could otherwise self-register its way to a capacity and uptime
+     * fingerprint of the machine the drive runs on. Authentication is not
+     * enough here; the response has to be the owner's alone.
+     */
+    @Test
+    fun statsAreOwnerOnly() = testApplication {
+        setup()
+        val guest = client.get("/api/server/stats") { header(HttpHeaders.Authorization, guestAuth) }
+        assertEquals(HttpStatusCode.Forbidden, guest.status, guest.bodyAsText())
+        assertTrue(!guest.bodyAsText().contains("memTotalBytes"), "no host profile may leak to a guest: ${guest.bodyAsText()}")
+        // The owner still gets it.
+        val owner = client.get("/api/server/stats") { header(HttpHeaders.Authorization, auth) }
+        assertEquals(HttpStatusCode.OK, owner.status, owner.bodyAsText())
     }
 
     @Test

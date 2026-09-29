@@ -26,15 +26,20 @@ object DatabaseFactory {
     /** True once connect() has run on this process. */
     val connected: Boolean get() = ::db.isInitialized
 
-    fun connect(jdbcUrl: String, user: String, password: String): Database {
+    fun connect(
+        jdbcUrl: String,
+        user: String,
+        password: String,
+        poolSize: Int = 5,
+        connectionTimeoutMs: Long = 30_000,
+        leakDetectionMs: Long = 0,
+    ): Database {
         runCatching { pool?.close() }
-        val ds = HikariDataSource(HikariConfig().apply {
-            this.jdbcUrl = jdbcUrl
-            this.username = user
-            this.password = password
-            maximumPoolSize = 5
-            isAutoCommit = false
-        })
+        val ds = HikariDataSource(poolConfig(jdbcUrl, user, password, poolSize, connectionTimeoutMs, leakDetectionMs))
+        log.info(
+            "connection pool: {} connections, {} ms to wait for one, leak detection {}",
+            poolSize, connectionTimeoutMs, if (leakDetectionMs > 0) "${leakDetectionMs} ms" else "off",
+        )
         pool = ds
         db = Database.connect(ds)
         transaction(db) { SchemaUtils.createMissingTablesAndColumns(*ALL_TABLES) }
@@ -42,6 +47,40 @@ object DatabaseFactory {
         createRootNameIndexes(ds)
         createAlbumSortIndex(ds)
         return db
+    }
+
+    /**
+     * The pool settings, in one place so the numbers are inspectable.
+     *
+     * The pool is the whole server's concurrency budget: every request that
+     * touches the database waits for one of these, and the pool is only five
+     * wide by default because a 1C/1G box cannot serve more Postgres backends
+     * than it can schedule. What is worth making configurable is the failure
+     * mode: the wait for a connection used to be Hikari's 30 s default, which is
+     * also how long a caller sat there when the pool was exhausted by something
+     * that leaked or held a connection across slow work - a shorter, explicit
+     * timeout turns that into a visible error instead of a minute of silence.
+     *
+     * `isAutoCommit = false` is what Exposed's transaction management expects;
+     * it must not be turned on.
+     */
+    internal fun poolConfig(
+        jdbcUrl: String,
+        user: String,
+        password: String,
+        poolSize: Int,
+        connectionTimeoutMs: Long,
+        leakDetectionMs: Long,
+    ): HikariConfig = HikariConfig().apply {
+        this.jdbcUrl = jdbcUrl
+        this.username = user
+        this.password = password
+        maximumPoolSize = poolSize.coerceAtLeast(1)
+        this.connectionTimeout = connectionTimeoutMs.coerceAtLeast(250)
+        // Hikari only accepts 0 (off) or at least 2 s, and logs a warning for
+        // anything smaller.
+        this.leakDetectionThreshold = if (leakDetectionMs > 0) leakDetectionMs.coerceAtLeast(2_000) else 0
+        isAutoCommit = false
     }
 
     /**

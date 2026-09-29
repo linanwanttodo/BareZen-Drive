@@ -32,6 +32,10 @@ class RateLimitTest {
         // These tests drive the limiter through X-Forwarded-For, which is the
         // trusted-proxy mode; TRUST_PROXY=false is covered by its own case below.
         trustProxy = trustProxy,
+        // The register limiter (5 per address) is the subject here, and each
+        // case needs several accounts - which a default (closed) instance only
+        // admits once the owner opens registration.
+        registrationOpen = true,
     )
 
     private fun ApplicationTestBuilder.setup(trustProxy: Boolean = true) {

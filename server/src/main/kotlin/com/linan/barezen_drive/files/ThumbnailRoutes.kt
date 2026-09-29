@@ -103,12 +103,3 @@ private fun coverEtag(bytes: ByteArray): String {
     val hex = digest.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
     return "\"" + hex + "\""
 }
-
-/** Streamed outgoing body used by file/thumbnail content responses. */
-internal class FileStream(
-    private val channel: ByteReadChannel,
-    override val contentLength: Long,
-    override val contentType: ContentType?,
-) : OutgoingContent.ReadChannelContent() {
-    override fun readFrom(): ByteReadChannel = channel
-}

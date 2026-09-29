@@ -24,6 +24,14 @@ data class FileMeta(val id: UUID, val userId: UUID, val folderId: UUID?, val nam
 /** Keys per `IN (...)` batch in the refcount sweep - see orphanBlobKeys. */
 private const val REFCOUNT_BATCH = 500
 
+/**
+ * Folder ids per `IN (...)` batch in the subtree delete. A level of the tree
+ * is one statement, except for a folder with more direct children than this -
+ * at which point the bound is the number of bind parameters, not the round
+ * trips.
+ */
+private const val FOLDER_BATCH = 2000
+
 object FileService {
     private const val MILLIS_PER_DAY = 24L * 3600 * 1000
 
@@ -31,6 +39,19 @@ object FileService {
     const val TRASH_RETENTION_DAYS = 30L
 
     private fun nameOk(name: String) = name.isNotBlank() && name.length <= 255 && !name.contains('/')
+
+    /**
+     * `column IS NULL` for a null [parent] (the account root) and `column = ?`
+     * for a real folder id.
+     *
+     * Every "which rows live here" filter used to be written twice - once per
+     * shape - so each of them (the live-only predicate, the exclude-self
+     * clause, the name check) was a place a fix had to land twice and could
+     * be fixed on one side only. One parameterized predicate keeps the root
+     * and nested paths from drifting apart.
+     */
+    private fun scopedTo(column: Column<UUID?>, parent: UUID?): Op<Boolean> =
+        Op.build { if (parent == null) column.isNull() else column.eq(parent) }
 
     /**
      * Folder listing. [limit] opts into paging the file list: without it the
@@ -53,16 +74,11 @@ object FileService {
                     ?: throw ApiException.notFound("文件夹不存在")
                 id
             }
-            val folders = (if (parent == null) {
-                FoldersTable.selectAll().where { (FoldersTable.user eq userId) and FoldersTable.parent.isNull() }
-            } else {
-                FoldersTable.selectAll().where { (FoldersTable.user eq userId) and (FoldersTable.parent eq parent) }
-            }).map { it.toFolderDto() }
-            var q = if (parent == null) {
-                FilesTable.selectAll().where { (FilesTable.user eq userId) and FilesTable.folder.isNull() and (FilesTable.deletedAt eq 0L) }
-            } else {
-                FilesTable.selectAll().where { (FilesTable.user eq userId) and (FilesTable.folder eq parent) and (FilesTable.deletedAt eq 0L) }
-            }
+            val folders = FoldersTable.selectAll()
+                .where { (FoldersTable.user eq userId) and scopedTo(FoldersTable.parent, parent) }
+                .map { it.toFolderDto() }
+            var q = FilesTable.selectAll()
+                .where { (FilesTable.user eq userId) and scopedTo(FilesTable.folder, parent) and (FilesTable.deletedAt eq 0L) }
             // A malformed cursor restarts from the top, same as the album page:
             // better an extra page than an empty folder.
             val after = cursor?.let { parseFileCursor(it) }
@@ -103,19 +119,13 @@ object FileService {
     /** Folders and files share one sibling namespace: a clash on either side is a conflict.
      *  Trashed rows are not part of the namespace (see the live-only filters inside). */
     internal fun nameConflict(userId: UUID, parent: UUID?, name: String, excludeFolder: UUID? = null, excludeFile: UUID? = null): Boolean {
-        val folders = if (parent == null) {
-            FoldersTable.selectAll().where { (FoldersTable.user eq userId) and FoldersTable.parent.isNull() and (FoldersTable.name eq name) }
-        } else {
-            FoldersTable.selectAll().where { (FoldersTable.user eq userId) and (FoldersTable.parent eq parent) and (FoldersTable.name eq name) }
-        }
+        val folders = FoldersTable.selectAll()
+            .where { (FoldersTable.user eq userId) and scopedTo(FoldersTable.parent, parent) and (FoldersTable.name eq name) }
         val folderHit = if (excludeFolder != null) folders.andWhere { FoldersTable.id neq excludeFolder }.any() else folders.any()
         // A trashed row does not hold the name: the same file can be uploaded
         // again while the old copy waits in the trash.
-        val files = if (parent == null) {
-            FilesTable.selectAll().where { (FilesTable.user eq userId) and FilesTable.folder.isNull() and (FilesTable.name eq name) and (FilesTable.deletedAt eq 0L) }
-        } else {
-            FilesTable.selectAll().where { (FilesTable.user eq userId) and (FilesTable.folder eq parent) and (FilesTable.name eq name) and (FilesTable.deletedAt eq 0L) }
-        }
+        val files = FilesTable.selectAll()
+            .where { (FilesTable.user eq userId) and scopedTo(FilesTable.folder, parent) and (FilesTable.name eq name) and (FilesTable.deletedAt eq 0L) }
         val fileHit = if (excludeFile != null) files.andWhere { FilesTable.id neq excludeFile }.any() else files.any()
         return folderHit || fileHit
     }
@@ -124,18 +134,14 @@ object FileService {
      *  overwrite upload path replaces exactly this row; a folder of the same
      *  name is a different animal and never a replace target. */
     internal fun findLiveFile(userId: UUID, parent: UUID?, name: String): ResultRow? =
-        (if (parent == null) {
-            FilesTable.selectAll().where { (FilesTable.user eq userId) and FilesTable.folder.isNull() and (FilesTable.name eq name) and (FilesTable.deletedAt eq 0L) }
-        } else {
-            FilesTable.selectAll().where { (FilesTable.user eq userId) and (FilesTable.folder eq parent) and (FilesTable.name eq name) and (FilesTable.deletedAt eq 0L) }
-        }).firstOrNull()
+        FilesTable.selectAll()
+            .where { (FilesTable.user eq userId) and scopedTo(FilesTable.folder, parent) and (FilesTable.name eq name) and (FilesTable.deletedAt eq 0L) }
+            .firstOrNull()
 
     internal fun hasFolderNamed(userId: UUID, parent: UUID?, name: String): Boolean =
-        if (parent == null) {
-            FoldersTable.selectAll().where { (FoldersTable.user eq userId) and FoldersTable.parent.isNull() and (FoldersTable.name eq name) }.any()
-        } else {
-            FoldersTable.selectAll().where { (FoldersTable.user eq userId) and (FoldersTable.parent eq parent) and (FoldersTable.name eq name) }.any()
-        }
+        FoldersTable.selectAll()
+            .where { (FoldersTable.user eq userId) and scopedTo(FoldersTable.parent, parent) and (FoldersTable.name eq name) }
+            .any()
 
     fun createFolder(userId: UUID, parentId: String?, name: String): FolderDto = transaction(DatabaseFactory.db) {
         if (!nameOk(name)) throw ApiException.badRequest("名称非法")
@@ -176,13 +182,19 @@ object FileService {
      * sessions (removed rows) that targeted the deleted subtree. */
     data class FolderDeletion(val blobKeys: List<String>, val removedSessionIds: List<UUID>)
 
+    /** One page of the trash: the rows, plus the cursor for the next older page
+     *  (null when this was the last one). */
+    data class TrashPage(val files: List<FileDto>, val nextCursor: String?)
+
     /** Recursively delete the folder subtree; returns storage keys whose blob refcount drops to zero. */
     fun deleteFolder(userId: UUID, id: UUID): FolderDeletion = transaction(DatabaseFactory.db) {
         FoldersTable.selectAll().where { (FoldersTable.id eq id) and (FoldersTable.user eq userId) }.singleOrNull()
             ?: throw ApiException.notFound("文件夹不存在")
-        // The whole subtree in one query (FileTree); walking it level by level
-        // would cost one round trip per folder on the way down.
-        val all = FileTree.subtreeWithRoot(userId, id)
+        // The whole subtree from one query, grouped by depth. Level 0 is the
+        // root itself, level 1 its children, and so on - the shape the delete
+        // below needs to honour the parent FK without one statement per folder.
+        val levels = subtreeLevels(userId, id)
+        val all = levels.flatten()
         // ALL sessions (any status) targeting the subtree reference folders.id by FK;
         // their rows must be removed here or folder row deletion fails. One query
         // for the ids, then two batched deletes - chunks first, sessions second.
@@ -210,9 +222,46 @@ object FileService {
             val filesOp = SqlExpressionBuilder.run { FilesTable.id inList doomedFileIds }
             FilesTable.deleteWhere { filesOp }
         }
-        // Delete children before parents so the self-referencing FK (parent_id) is satisfied.
-        for (fid in all.asReversed()) FoldersTable.deleteWhere { FoldersTable.id eq fid }
+        // Deepest level first: the self-referencing FK (parent_id) forbids
+        // removing a parent while a child row still points at it. One
+        // `WHERE id IN (...)` per level instead of one per folder - the old
+        // per-folder loop turned a 1641-folder tree into 1641 round trips, all
+        // of them holding one of the 5 pooled connections.
+        for (level in levels.asReversed()) {
+            for (batch in level.chunked(FOLDER_BATCH)) {
+                val op = SqlExpressionBuilder.run { FoldersTable.id inList batch }
+                FoldersTable.deleteWhere { op }
+            }
+        }
         FolderDeletion(orphanBlobKeys(keys), doomedSessionIds)
+    }
+
+    /**
+     * The subtree rooted at [rootId], grouped into breadth-first levels
+     * (index 0 = the root). One query for the account's whole folder set,
+     * matched by the walk `FileTree` already performs, so the grouping costs
+     * no extra round trip over the flat id list.
+     */
+    private fun subtreeLevels(userId: UUID, rootId: UUID): List<List<UUID>> {
+        val childrenByParent = HashMap<UUID, MutableList<UUID>>()
+        FoldersTable.select(FoldersTable.id, FoldersTable.parent)
+            .where { FoldersTable.user eq userId }
+            .forEach { row ->
+                row[FoldersTable.parent]?.let { parent ->
+                    childrenByParent.getOrPut(parent) { mutableListOf() }.add(row[FoldersTable.id])
+                }
+            }
+        val levels = mutableListOf<MutableList<UUID>>()
+        val seen = HashSet<UUID>()
+        var level = listOf(rootId)
+        while (level.isNotEmpty()) {
+            // A cycle in the parent pointers (only reachable through a manual
+            // DB edit) would otherwise spin here forever.
+            if (!seen.addAll(level)) break
+            levels += level.toMutableList()
+            level = level.flatMap { childrenByParent[it].orEmpty() }
+        }
+        return levels
     }
 
     fun getFileMeta(userId: UUID, id: UUID): FileMeta = transaction(DatabaseFactory.db) {
@@ -236,12 +285,12 @@ object FileService {
     )
 
     fun updateFile(userId: UUID, id: UUID, newName: String?, newFolderId: String?): FileDto = transaction(DatabaseFactory.db) {
-        val cur = getFileMeta(userId, id)
+        val cur = fileRowOf(userId, id)
         if (newName != null) {
             if (!nameOk(newName)) throw ApiException.badRequest("名称非法")
         }
         val target: UUID? = when (newFolderId) {
-            null -> cur.folderId
+            null -> cur[FilesTable.folder]
             "root" -> null
             else -> {
                 val tid = newFolderId.toUuidOrBadRequest()
@@ -250,20 +299,25 @@ object FileService {
                 tid
             }
         }
-        val finalName = newName ?: cur.name
+        val finalName = newName ?: cur[FilesTable.name]
         // Files have no subtree, so no into-descendant check is needed; only the sibling name clash.
         if (nameConflict(userId, target, finalName, excludeFile = id)) {
             throw ApiException.conflict(ErrorCodes.NAME_CONFLICT, "目标位置已存在同名文件夹或文件")
         }
-        mapNameConflict {
+        val now = System.currentTimeMillis()
+        val touched = mapNameConflict {
             FilesTable.update({ FilesTable.id eq id }) {
                 if (newName != null) it[name] = newName
                 it[folder] = target
-                it[updatedAt] = System.currentTimeMillis()
+                it[updatedAt] = now
             }
         }
-        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
-                ?: throw ApiException.notFound("文件不存在")
+        requireTouched(touched)
+        cur.toFileDto().copy(
+            name = finalName,
+            folderId = target?.toString(),
+            updatedAt = iso(now),
+        )
     }
 
     /**
@@ -272,9 +326,9 @@ object FileService {
      * removal happens through the trash endpoints or the retention sweep.
      */
     fun trashFile(userId: UUID, id: UUID): FileDto = transaction(DatabaseFactory.db) {
-        fileRowOf(userId, id)
+        val row = fileRowOf(userId, id)
         val now = System.currentTimeMillis()
-        FilesTable.update({ FilesTable.id eq id }) {
+        val touched = FilesTable.update({ FilesTable.id eq id }) {
             it[deletedAt] = now
             it[updatedAt] = now
         }
@@ -284,16 +338,53 @@ object FileService {
         // an explicit act.
         val activeLinks = SqlExpressionBuilder.run { (ShareLinksTable.file eq id) and ShareLinksTable.revokedAt.isNull() }
         ShareLinksTable.update({ activeLinks }) { it[revokedAt] = now }
-        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
-                ?: throw ApiException.notFound("文件不存在")
+        // The row was read one statement ago and only these two columns moved,
+        // so the DTO comes from that read plus what the write set - no third
+        // round trip re-reading the primary key the first statement had.
+        requireTouched(touched)
+        row.toFileDto().copy(deletedAt = iso(now), updatedAt = iso(now))
     }
 
-    /** Everything currently in the trash, most recently trashed first. */
-    fun listTrash(userId: UUID): List<FileDto> = transaction(DatabaseFactory.db) {
-        FilesTable.selectAll()
-            .where { (FilesTable.user eq userId) and (FilesTable.deletedAt greater 0L) }
-            .orderBy(FilesTable.deletedAt to SortOrder.DESC)
-            .map { it.toFileDto() }
+    /**
+     * One page of the trash, most recently trashed first.
+     *
+     * Paged rather than "everything": emptying ten thousand photos and then
+     * opening the trash screen used to build ten thousand 12-field DTOs with
+     * three timestamps stringified each, in one response and one unbounded
+     * list. The keyset is (deleted_at DESC, id DESC) - id breaks the ties a
+     * bulk trash creates, where hundreds of rows share one millisecond, so the
+     * walk cannot stall or repeat on them.
+     *
+     * [limit] is clamped by the caller-facing route; a malformed [cursor]
+     * restarts from the top, same as the album and contents pages.
+     */
+    fun listTrash(userId: UUID, limit: Int, cursor: String? = null): TrashPage = transaction(DatabaseFactory.db) {
+        var q = FilesTable.selectAll().where { (FilesTable.user eq userId) and (FilesTable.deletedAt greater 0L) }
+        cursor?.let { parseTrashCursor(it) }?.let { (ms, id) ->
+            q = q.andWhere {
+                (FilesTable.deletedAt less ms) or ((FilesTable.deletedAt eq ms) and (FilesTable.id less id))
+            }
+        }
+        // limit + 1 rows: "is there more" is answered by the query, not by a
+        // second count over the trash.
+        val rows = q.orderBy(FilesTable.deletedAt to SortOrder.DESC, FilesTable.id to SortOrder.DESC)
+            .limit(limit + 1)
+            .map { it[FilesTable.deletedAt] to it.toFileDto() }
+        val page = rows.take(limit)
+        val more = rows.size > limit
+        TrashPage(
+            page.map { it.second },
+            if (more && page.isNotEmpty()) "${page.last().first}:${page.last().second.id}" else null,
+        )
+    }
+
+    /** "<deletedAtMillis>:<uuid>"; null when the value does not parse. */
+    private fun parseTrashCursor(raw: String): Pair<Long, UUID>? {
+        val cut = raw.lastIndexOf(':')
+        if (cut <= 0) return null
+        val ms = raw.substring(0, cut).toLongOrNull() ?: return null
+        val id = runCatching { UUID.fromString(raw.substring(cut + 1)) }.getOrNull() ?: return null
+        return ms to id
     }
 
     /** Puts a trashed file back on the shelf. A live sibling already holding the
@@ -304,14 +395,15 @@ object FileService {
         if (nameConflict(userId, row[FilesTable.folder], row[FilesTable.name], excludeFile = id)) {
             throw ApiException.conflict(ErrorCodes.NAME_CONFLICT, "目标位置已存在同名文件夹或文件")
         }
-        mapNameConflict {
+        val now = System.currentTimeMillis()
+        val touched = mapNameConflict {
             FilesTable.update({ FilesTable.id eq id }) {
                 it[deletedAt] = 0L
-                it[updatedAt] = System.currentTimeMillis()
+                it[updatedAt] = now
             }
         }
-        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
-                ?: throw ApiException.notFound("文件不存在")
+        requireTouched(touched)
+        row.toFileDto().copy(deletedAt = null, updatedAt = iso(now))
     }
 
     /** Permanent removal of a trashed file; returns blob keys that lost their last reference. */
@@ -348,23 +440,35 @@ object FileService {
     }
 
     fun setFavorite(userId: UUID, id: UUID, favorite: Boolean): FileDto = transaction(DatabaseFactory.db) {
-        fileRowOf(userId, id)
-        FilesTable.update({ FilesTable.id eq id }) { it[isFavorite] = favorite }
-        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
-                ?: throw ApiException.notFound("文件不存在")
+        val row = fileRowOf(userId, id)
+        val touched = FilesTable.update({ FilesTable.id eq id }) { it[isFavorite] = favorite }
+        requireTouched(touched)
+        row.toFileDto().copy(isFavorite = favorite)
     }
 
     /** Archive is a flag, not a move: the file keeps its folder and name. */
     fun setArchived(userId: UUID, id: UUID, archived: Boolean): FileDto = transaction(DatabaseFactory.db) {
-        fileRowOf(userId, id)
+        val row = fileRowOf(userId, id)
         val now = System.currentTimeMillis()
-        FilesTable.update({ FilesTable.id eq id }) {
+        val touched = FilesTable.update({ FilesTable.id eq id }) {
             it[archivedAt] = if (archived) now else 0L
             it[updatedAt] = now
         }
-        FilesTable.selectAll().where { FilesTable.id eq id }.singleOrNull()?.toFileDto()
-                ?: throw ApiException.notFound("文件不存在")
+        requireTouched(touched)
+        row.toFileDto().copy(archivedAt = if (archived) iso(now) else null, updatedAt = iso(now))
     }
+
+    /**
+     * The UPDATE matched no row even though the row was just read: only possible
+     * if something deleted it in between, which the pre-read could not see.
+     * Reported as the same 404 the trailing re-read used to answer, so the
+     * round-trip saving never turns a 404 into a 200 with a phantom DTO.
+     */
+    private fun requireTouched(touched: Int) {
+        if (touched == 0) throw ApiException.notFound("文件不存在")
+    }
+
+    private fun iso(millis: Long): String = Instant.ofEpochMilli(millis).toString()
 
     /** Row of a file owned by [userId] regardless of trash state - the trash
      *  routes must reach rows every live query filters out. */

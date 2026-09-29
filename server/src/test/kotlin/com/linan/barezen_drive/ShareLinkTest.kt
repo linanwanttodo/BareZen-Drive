@@ -21,7 +21,7 @@ class ShareLinkTest {
     // The counter test below visits the public endpoints from several source
     // addresses, which only the forwarding header can express in a test JVM; that
     // is the trusted-proxy mode, so this config enables it.
-    private fun cfg() = AppConfig(0, "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH", "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30, trustProxy = true)
+    private fun cfg() = AppConfig(0, "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH", "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30, trustProxy = true, registrationOpen = true)
     private var auth = ""
     private var jdbcUrl = ""
     private val json = Json { ignoreUnknownKeys = true }

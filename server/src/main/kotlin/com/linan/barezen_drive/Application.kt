@@ -11,6 +11,7 @@ import com.linan.barezen_drive.auth.AuthService
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.api.ApiException
 import com.linan.barezen_drive.api.Throttle
+import com.linan.barezen_drive.api.TrustedProxyRange
 import com.linan.barezen_drive.files.fileContentRoutes
 import com.linan.barezen_drive.files.folderRoutes
 import com.linan.barezen_drive.files.shareOwnerRoutes
@@ -23,6 +24,8 @@ import com.linan.barezen_drive.files.UploadService
 import com.linan.barezen_drive.system.adminUserRoutes
 import com.linan.barezen_drive.system.avatarRoutes
 import com.linan.barezen_drive.system.proxyRoutes
+import com.linan.barezen_drive.system.resetOwnerCache
+import com.linan.barezen_drive.system.ServerSettingsService
 import com.linan.barezen_drive.system.settingsRoutes
 import com.linan.barezen_drive.system.systemRoutes
 import com.linan.barezen_drive.system.versionRoutes
@@ -75,10 +78,30 @@ fun main() {
     // Cleanup loop must start BEFORE start(wait = true) blocks the main thread; it runs in
     // production only, never in tests (module() does not spawn it).
     val cleanupJob = CoroutineScope(Dispatchers.Default + SupervisorJob()).let { UploadCleanupJob.start(it, storage) }
+    val eventLoopThreads = nettyEventLoopThreads()
+    bootLog.info(
+        "starting on port {} with {} event-loop threads ({} available processors)",
+        cfg.port, eventLoopThreads, Runtime.getRuntime().availableProcessors(),
+    )
     val server = embeddedServer(Netty, port = cfg.port) { module(cfg, storage) }
+    // Ktor sizes the event loops at "parallelism / 2 + 1" per group, i.e. ONE
+    // thread per group on the 1C deployment target - so a single blocking call
+    // (a JDBC wait, an image decode) would stall every other connection on the
+    // box. The engine reads these when it creates the groups, which happens at
+    // start(), so setting them here is what counts.
+    server.engineConfig.workerGroupSize = eventLoopThreads
+    server.engineConfig.callGroupSize = eventLoopThreads
     Runtime.getRuntime().addShutdownHook(Thread { cleanupJob.cancel(); server.stop(1000, 5000) })
     server.start(wait = true)
 }
+
+private val bootLog = org.slf4j.LoggerFactory.getLogger("BareZenDrive.boot")
+
+/** Netty event-loop threads per group; see the call site for why it is set. */
+internal fun nettyEventLoopThreads(): Int =
+    maxOf(MIN_EVENT_LOOP_THREADS, Runtime.getRuntime().availableProcessors() * 2)
+
+private const val MIN_EVENT_LOOP_THREADS = 4
 
 fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     JwtService.init(cfg.jwtSecret)
@@ -95,11 +118,56 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     // instance (or a new testApplication) never inherits a saturated window from
     // a previous one that shared this JVM.
     Throttle.reset()
+    // Same reasoning for the cached owner: it is a process-wide answer about
+    // THIS database, so a (re)start - or a new test application on a fresh
+    // database - must not inherit the previous instance's.
+    resetOwnerCache()
     Throttle.trustProxy = cfg.trustProxy
+    Throttle.trustedProxyRanges = cfg.trustedProxyCidrs.mapNotNull { spec ->
+        TrustedProxyRange.parse(spec) ?: run {
+            log.warn("ignoring TRUST_PROXY_CIDRS entry '{}': expected an address or CIDR block like 10.0.0.0/8", spec)
+            null
+        }
+    }
+    if (Throttle.trustedProxyRanges.isNotEmpty()) {
+        log.info(
+            "trusting X-Forwarded-For from {} configured prox{}; every other peer is keyed by its socket address",
+            Throttle.trustedProxyRanges.size,
+            if (Throttle.trustedProxyRanges.size == 1) "y" else "ies",
+        )
+    } else if (cfg.trustProxy) {
+        log.warn(
+            "TRUST_PROXY=true without TRUST_PROXY_CIDRS: X-Forwarded-For is believed from any peer, " +
+                "so the auth rate limiter can be keyed by an address the caller chose. " +
+                "Set TRUST_PROXY_CIDRS to the address range of the reverse proxy in front of this instance.",
+        )
+    }
+    ServerSettingsService.registrationDefault = cfg.registrationOpen
     // Install-wizard bootstrap: seed the owner account from env on a fresh
     // instance, so a headless deploy is signed up before the first open.
-    runCatching {
-        AuthService.bootstrapAdmin(System.getenv("BOOTSTRAP_ADMIN_USER"), System.getenv("BOOTSTRAP_ADMIN_PASSWORD"))
+    val bootstrapUser = System.getenv("BOOTSTRAP_ADMIN_USER")
+    val bootstrapPassword = System.getenv("BOOTSTRAP_ADMIN_PASSWORD")
+    if (!bootstrapUser.isNullOrBlank() || !bootstrapPassword.isNullOrBlank()) {
+        val seeded = AuthService.bootstrapAdmin(bootstrapUser, bootstrapPassword)
+        seeded.onSuccess { dto ->
+            if (dto != null) {
+                log.info("seeded the owner account '{}' from BOOTSTRAP_ADMIN_USER", dto.username)
+            } else {
+                log.info("BOOTSTRAP_ADMIN_USER is set but the instance already has accounts; nothing seeded")
+            }
+        }.onFailure { cause ->
+            // Never swallowed: a failed seed means the instance may have no
+            // account at all, and the symptom is a server that looks deployed
+            // and that nobody can log into. Say so, loudly, with the reason.
+            log.error(
+                "could not seed the owner account from BOOTSTRAP_ADMIN_USER='{}'. " +
+                    "This instance may have no usable account: fix the credentials " +
+                    "(username 3-32 chars of letters/digits/underscore, password at least 8 bytes) " +
+                    "or register from the host, then restart.",
+                bootstrapUser,
+                cause,
+            )
+        }
     }
     // encodeDefaults=true keeps the public API shape stable: fields with
     // default values (updateAvailable, assets, hasThumbnail...) are always
@@ -220,7 +288,12 @@ private fun Application.connectDatabaseOnce(cfg: AppConfig) {
     if (attributes.getOrNull(DB_CONNECTED_KEY) == true) return
     synchronized(DatabaseFactory) {
         if (attributes.getOrNull(DB_CONNECTED_KEY) == true) return
-        DatabaseFactory.connect(cfg.jdbcUrl, cfg.dbUser, cfg.dbPassword)
+        DatabaseFactory.connect(
+            cfg.jdbcUrl, cfg.dbUser, cfg.dbPassword,
+            poolSize = cfg.dbPoolSize,
+            connectionTimeoutMs = cfg.dbConnectionTimeoutMs,
+            leakDetectionMs = cfg.dbLeakDetectionMs,
+        )
         attributes.put(DB_CONNECTED_KEY, true)
     }
 }

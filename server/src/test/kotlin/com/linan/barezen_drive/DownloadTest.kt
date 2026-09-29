@@ -21,7 +21,9 @@ import kotlin.test.*
 
 class DownloadTest {
     private val storageDir = Files.createTempDirectory("bz-dl").toString()
-    private fun cfg() = AppConfig(0, "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH", "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30)
+    // A second user is needed for the cross-account case, which a default
+    // instance only admits once the owner opens registration.
+    private fun cfg() = AppConfig(0, "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH", "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30, registrationOpen = true)
     private var auth = ""
     private val json = Json { ignoreUnknownKeys = true }
 

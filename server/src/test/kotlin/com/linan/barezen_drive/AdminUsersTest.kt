@@ -17,6 +17,9 @@ class AdminUsersTest {
         "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",
         "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30,
         updateRepoUrl = "https://example.invalid/not-github",
+        // This test needs a guest account, which a default (closed) instance
+        // only admits once the owner opens registration.
+        registrationOpen = true,
     )
 
     @Test

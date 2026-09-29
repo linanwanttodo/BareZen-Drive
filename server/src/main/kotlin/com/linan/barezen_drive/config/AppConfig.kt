@@ -29,8 +29,44 @@ data class AppConfig(
      * `X-Forwarded-For` (nginx, Caddy, ...). While false the limiter keys on the
      * socket address and ignores the header entirely, so a caller cannot mint an
      * unlimited number of buckets by spoofing it.
+     *
+     * LEGACY, KEEP OFF: this trusts the forwarding header from *any* peer, so
+     * anyone who can reach the port can forge the client address the auth rate
+     * limiter keys on. Prefer [trustedProxyCidrs], which only lets a configured
+     * proxy speak for its clients. If both are set, the CIDR list wins and this
+     * flag is ignored - an operator who has named their proxies does not want
+     * the "trust anybody" behaviour back (see `Throttle.resolveClientIp`).
      */
     val trustProxy: Boolean = false,
+    /**
+     * Address ranges of the reverse proxies allowed to speak for their clients
+     * in `X-Forwarded-For`, as CIDR blocks or bare addresses
+     * (`TRUST_PROXY_CIDRS=10.0.0.0/8,172.17.0.1`). Empty - the default - trusts
+     * nothing: the limiter keys on the socket peer, and a header is only read
+     * when the peer is one of these ranges. See `Throttle.clientIp`.
+     */
+    val trustedProxyCidrs: List<String> = emptyList(),
+    /**
+     * Factory default for the `registration_open` setting when the row is
+     * absent. False (registration closed) is the safe default: the owner of a
+     * fresh instance comes from the install wizard (BOOTSTRAP_ADMIN_*) or from
+     * the host itself, never from whoever reaches the published port first.
+     */
+    val registrationOpen: Boolean = false,
+    /** JDBC pool size (DB_POOL_SIZE). 5 connections is what a 1C/1G box can serve. */
+    val dbPoolSize: Int = 5,
+    /** How long a caller waits for a pooled connection before failing
+     *  (DB_CONNECTION_TIMEOUT_MS). Hikari's own default is 30 s, kept. */
+    val dbConnectionTimeoutMs: Long = 30_000,
+    /**
+     * How long a connection may be checked out before Hikari logs it as a leak
+     * (DB_LEAK_DETECTION_MS; 0 disables it). A leaked connection is this
+     * instance's worst failure mode - the pool empties and every request starts
+     * failing - and the log line is the only warning that it happened. Two
+     * minutes is comfortably above the longest legitimate holder (a recursive
+     * folder delete, a large merge).
+     */
+    val dbLeakDetectionMs: Long = 120_000,
 ) {
     /**
      * Name the active provider is registered under in `StorageRegistry`. Only the
@@ -63,6 +99,14 @@ data class AppConfig(
             s3SecretKey = env("S3_SECRET_KEY", ""),
             s3PathStyle = env("S3_PATH_STYLE", "false").toBoolean(),
             trustProxy = env("TRUST_PROXY", "false").toBoolean(),
+            trustedProxyCidrs = System.getenv("TRUST_PROXY_CIDRS").orEmpty()
+                .split(',')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() },
+            registrationOpen = env("REGISTRATION_OPEN", "false").toBoolean(),
+            dbPoolSize = env("DB_POOL_SIZE", "5").toInt(),
+            dbConnectionTimeoutMs = env("DB_CONNECTION_TIMEOUT_MS", "30000").toLong(),
+            dbLeakDetectionMs = env("DB_LEAK_DETECTION_MS", "120000").toLong(),
         )
 
         /**

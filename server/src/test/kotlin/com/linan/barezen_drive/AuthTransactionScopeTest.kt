@@ -35,6 +35,9 @@ class AuthTransactionScopeTest {
         "jdbc:h2:mem:${UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",
         "sa", "", "test-secret-0123456789abcdef0123456789abcdef",
         Files.createTempDirectory("bz-authscope").toString(), 1L shl 30,
+        // The duplicate-username case registers twice, which a default instance
+        // only admits once the owner opens registration.
+        registrationOpen = true,
     )
 
     private suspend fun ApplicationTestBuilder.setup() {

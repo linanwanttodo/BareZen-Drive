@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.imageio.ImageIO
 import javax.imageio.ImageReadParam
+import javax.imageio.ImageReader
 import kotlin.io.path.deleteIfExists
 import kotlin.math.ceil
 import kotlin.math.max
@@ -42,7 +43,16 @@ import kotlin.math.roundToInt
  */
 object ThumbnailService {
     private const val MAX_EDGE = 512
-    private const val MAX_THUMB_BYTES = 512 * 1024
+
+    /**
+     * Ceiling for a stored cover, in bytes. One definition, used by the
+     * generator below *and* by the PUT route that accepts a client-made cover:
+     * two copies of this number meant the server could start publishing covers
+     * its own PUT endpoint would have rejected, and nobody would notice until a
+     * client sent a large one.
+     */
+    const val MAX_THUMB_BYTES = 512 * 1024
+
     private const val IMAGE_SOURCE_MAX_BYTES = 100L * 1024 * 1024
     private const val VIDEO_SOURCE_MAX_BYTES = 500L * 1024 * 1024
     private const val FFMPEG_TIMEOUT_SECONDS = 60L
@@ -193,7 +203,6 @@ object ThumbnailService {
         }
     }
 
-    /** Pure-Java image fallback: decode, downscale to fit 512x512, re-encode JPEG. */
     /**
      * Source-decimation factors for a cover of [targetEdge] px.
      *
@@ -219,46 +228,64 @@ object ThumbnailService {
         return factor to factor
     }
 
+    /**
+     * Decodes the source through [subsamplingFor] and nothing else: bounds and
+     * decimation factors come from one pass over the header, and the reader
+     * then decodes the subsampled grid directly, so the full raster is never
+     * materialised.
+     */
+    private fun decodeSource(reader: ImageReader): BufferedImage? {
+        val w = reader.getWidth(0).toLong()
+        val h = reader.getHeight(0).toLong()
+        // Refuse a decompression bomb before decoding any pixels.
+        if (w <= 0 || h <= 0 || w * h > MAX_SOURCE_PIXELS) return null
+        val (fx, fy) = subsamplingFor(w, h, MAX_EDGE)
+        // A default read param with no cache: the decimation below is the
+        // only transformation, and a null param would mean a full decode.
+        val param: ImageReadParam = reader.defaultReadParam
+            ?: throw javax.imageio.IIOException("reader without a read param")
+        if (fx > 1 || fy > 1) param.setSourceSubsampling(fx, fy, 0, 0)
+        return reader.read(0, param)
+    }
+
+    /**
+     * Pure-Java image fallback: decode, downscale to fit 512x512, re-encode JPEG
+     * - through one open, one reader, one close.
+     *
+     * Every exit goes through the same finally, including "no reader for this
+     * format" - the exit the previous shape missed, which leaked a file
+     * descriptor on every request for a file ImageIO cannot decode (a phone's
+     * HEIC, a WEBP the JVM has no plugin for). The same reader then decodes;
+     * opening the file a second time to do it would be a second full read of
+     * the source for nothing.
+     */
     private fun imageIoCover(source: Path): ByteArray? = try {
         ImageIO.setUseCache(false)
-        // Bounds and decimation decided in one pass over the header, then the
-        // reader decodes the subsampled grid directly - the full raster is
-        // never materialised.
         val input = ImageIO.createImageInputStream(source.toFile()) ?: return null
-        val readers = ImageIO.getImageReaders(input)
-        if (!readers.hasNext()) {
-            input.close()
-            return null
-        }
-        val reader = readers.next()
-        reader.input = input
-        val img = try {
-            val w = reader.getWidth(0).toLong()
-            val h = reader.getHeight(0).toLong()
-            // Refuse a decompression bomb before decoding any pixels.
-            if (w <= 0 || h <= 0 || w * h > MAX_SOURCE_PIXELS) return null
-            val (fx, fy) = subsamplingFor(w, h, MAX_EDGE)
-            // A default read param with no cache: the decimation below is the
-            // only transformation, and a null param would mean a full decode.
-            val param: ImageReadParam = reader.defaultReadParam
-                ?: throw javax.imageio.IIOException("reader without a read param")
-            if (fx > 1 || fy > 1) param.setSourceSubsampling(fx, fy, 0, 0)
-            reader.read(0, param)
+        var reader: ImageReader? = null
+        try {
+            val readers = ImageIO.getImageReaders(input)
+            if (!readers.hasNext()) return null
+            reader = readers.next()
+            reader.input = input
+            val img = decodeSource(reader) ?: return null
+            if (img.width <= 0 || img.height <= 0) null else {
+                val scale = min(1f, MAX_EDGE.toFloat() / max(img.width, img.height))
+                val w = max(1, (img.width * scale).roundToInt())
+                val h = max(1, (img.height * scale).roundToInt())
+                val canvas = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
+                val g = canvas.createGraphics()
+                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+                g.drawImage(img, 0, 0, w, h, null)
+                g.dispose()
+                val bytes = ByteArrayOutputStream()
+                if (!ImageIO.write(canvas, "jpg", bytes)) null else bytes.toByteArray()
+            }
         } finally {
-            reader.dispose()
+            // dispose() before close(): a reader holding an input must be told
+            // to let go of it first.
+            reader?.dispose()
             input.close()
-        } ?: return null
-        if (img.width <= 0 || img.height <= 0) null else {
-            val scale = min(1f, MAX_EDGE.toFloat() / max(img.width, img.height))
-            val w = max(1, (img.width * scale).roundToInt())
-            val h = max(1, (img.height * scale).roundToInt())
-            val canvas = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
-            val g = canvas.createGraphics()
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
-            g.drawImage(img, 0, 0, w, h, null)
-            g.dispose()
-            val bytes = ByteArrayOutputStream()
-            if (!ImageIO.write(canvas, "jpg", bytes)) null else bytes.toByteArray()
         }
     } catch (_: java.io.IOException) {
         null
@@ -266,8 +293,15 @@ object ThumbnailService {
         null
     }
 
-    /** Same-content rows share one cover; flag them all like the PUT route does. */
-    private fun flagThumbnails(meta: FileMeta) {
+    /**
+     * Marks every row of this user that holds [meta]'s content as having a
+     * cover, so a list tile never asks for a cover that is already stored.
+     *
+     * The only writer of that flag, for both the generator and the PUT route:
+     * two hand-written copies of the same UPDATE are two chances to spell the
+     * "same content, maybe another file" condition differently.
+     */
+    internal fun flagThumbnails(meta: FileMeta) {
         transaction(DatabaseFactory.db) {
             FilesTable.update({ (FilesTable.sha256 eq meta.sha256) and (FilesTable.user eq meta.userId) }) {
                 it[hasThumbnail] = true

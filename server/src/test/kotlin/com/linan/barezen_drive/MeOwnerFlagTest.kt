@@ -30,6 +30,9 @@ class MeOwnerFlagTest {
         0,
         "jdbc:h2:mem:${UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH",
         "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30,
+        // The guest cases below need a second account, which a default (closed)
+        // instance only admits once the owner opens registration.
+        registrationOpen = true,
     )
     private val json = Json { ignoreUnknownKeys = true }
 
