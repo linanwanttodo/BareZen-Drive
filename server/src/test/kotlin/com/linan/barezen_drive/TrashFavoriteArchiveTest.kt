@@ -11,6 +11,7 @@ import com.linan.barezen_drive.core.dto.UploadCompleteResponse
 import com.linan.barezen_drive.core.dto.UploadInitResponse
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.files.FileService
+import com.linan.barezen_drive.files.processQueue
 import com.linan.barezen_drive.storage.LocalStorageProvider
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
@@ -35,10 +36,12 @@ class TrashFavoriteArchiveTest {
     private fun cfg() = AppConfig(0, "jdbc:h2:mem:${UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH", "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30)
     private var auth = ""
     private val json = Json { ignoreUnknownKeys = true }
+    private lateinit var storage: LocalStorageProvider
 
     private suspend fun ApplicationTestBuilder.setup() {
         val c = cfg()
         val storage = LocalStorageProvider(java.nio.file.Path.of(c.storageDir))
+        this@TrashFavoriteArchiveTest.storage = storage
         application { module(c, storage) }
         client.post("/api/auth/register") { contentType(ContentType.Application.Json); setBody("""{"username":"user1","password":"password123"}""") }
         val login = client.post("/api/auth/login") { contentType(ContentType.Application.Json); setBody("""{"username":"user1","password":"password123"}""") }
@@ -152,9 +155,14 @@ class TrashFavoriteArchiveTest {
         assertEquals(HttpStatusCode.NoContent, client.delete("/api/trash/$doomed") { header(HttpHeaders.Authorization, auth) }.status)
         assertEquals(emptyList(), json.decodeFromString<TrashResponse>(client.get("/api/trash") { header(HttpHeaders.Authorization, auth) }.bodyAsText()).files)
         assertEquals(0L, transaction { FilesTable.selectAll().where { FilesTable.id eq UUID.fromString(doomed) }.count() })
-        // The bytes went with the last reference.
+        // Losing the last reference queues the bytes; they are unlinked only
+        // once the grace period is up, so a dedup upload racing this purge
+        // still finds the content (see BlobGracePeriodTest).
         val sha = sha256hex("dead".encodeToByteArray())
-        assertTrue(Files.notExists(java.nio.file.Path.of(storageDir, "blobs", sha.substring(0, 2), sha.substring(2, 4), sha)))
+        val blob = java.nio.file.Path.of(storageDir, "blobs", sha.substring(0, 2), sha.substring(2, 4), sha)
+        assertTrue(Files.exists(blob), "the bytes outlive the last reference by the grace period")
+        processQueue(storage, graceMs = 0)
+        assertTrue(Files.notExists(blob), "and the sweep that ends the grace period frees them")
     }
 
     @Test

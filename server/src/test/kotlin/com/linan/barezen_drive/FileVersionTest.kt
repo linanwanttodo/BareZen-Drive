@@ -7,6 +7,7 @@ import com.linan.barezen_drive.core.dto.FileVersionsResponse
 import com.linan.barezen_drive.core.dto.UploadCompleteResponse
 import com.linan.barezen_drive.core.dto.UploadInitResponse
 import com.linan.barezen_drive.files.VersionService
+import com.linan.barezen_drive.files.processQueue
 import com.linan.barezen_drive.storage.LocalStorageProvider
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
@@ -28,10 +29,13 @@ class FileVersionTest {
     private fun cfg() = AppConfig(0, "jdbc:h2:mem:${UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH", "sa", "", "test-secret-0123456789abcdef0123456789abcdef", storageDir, 1L shl 30)
     private var auth = ""
     private val json = Json { ignoreUnknownKeys = true }
+    private lateinit var storage: LocalStorageProvider
 
     private suspend fun ApplicationTestBuilder.setup() {
         val c = cfg()
-        application { module(c, LocalStorageProvider(Path.of(c.storageDir))) }
+        val storage = LocalStorageProvider(Path.of(c.storageDir))
+        this@FileVersionTest.storage = storage
+        application { module(c, storage) }
         client.post("/api/auth/register") { contentType(ContentType.Application.Json); setBody("""{"username":"user1","password":"password123"}""") }
         val login = client.post("/api/auth/login") { contentType(ContentType.Application.Json); setBody("""{"username":"user1","password":"password123"}""") }
         auth = "Bearer " + Regex(""""accessToken":"([^"]+)"""").find(login.bodyAsText())!!.groupValues[1]
@@ -170,7 +174,12 @@ class FileVersionTest {
         val del = client.delete("/api/files/${a.id}/versions/${vs.first().id}") { header(HttpHeaders.Authorization, auth) }
         assertEquals(HttpStatusCode.NoContent, del.status, del.bodyAsText())
         assertEquals(emptyList<FileVersionDto>(), versions(a.id))
-        assertFalse(Files.exists(blob), "dropping the last reference must free the blob")
+        // The reference is gone, so the bytes are on their way out: queued now,
+        // unlinked once the grace period is up (the queue is what makes a
+        // concurrent dedup upload of the same content safe).
+        assertTrue(Files.exists(blob), "the bytes survive the grace period")
+        processQueue(storage, graceMs = 0)
+        assertFalse(Files.exists(blob), "the sweep frees the blob the version no longer references")
         // The live content is untouched.
         assertEquals("v2", content(a.id))
     }
@@ -186,6 +195,7 @@ class FileVersionTest {
         assertTrue(Files.exists(blob))
         client.delete("/api/files/${a.id}") { header(HttpHeaders.Authorization, auth) }
         client.delete("/api/trash/${a.id}") { header(HttpHeaders.Authorization, auth) }
+        processQueue(storage, graceMs = 0)
         assertFalse(Files.exists(blob), "hard-deleting the file must cascade its versions")
     }
 

@@ -2,6 +2,7 @@ package com.linan.barezen_drive.jobs
 
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.files.deleteStoredBlobs
+import com.linan.barezen_drive.files.processQueue
 import com.linan.barezen_drive.files.FileService
 import com.linan.barezen_drive.files.UploadService
 import com.linan.barezen_drive.storage.StorageProvider
@@ -33,6 +34,12 @@ object UploadCleanupJob {
                 val freed = FileService.purgeExpiredTrash()
                 deleteStoredBlobs(storage, freed)
             }.onFailure { log.error("trash retention sweep failed", it) }
+            // The second half of every delete: keys that lost their last
+            // reference on an earlier pass and have now served out the grace
+            // period. Keys queued by the tick above are picked up on the next
+            // one, which is exactly the point of the grace period.
+            runCatching { processQueue(storage) }
+                .onFailure { log.error("blob delete queue sweep failed", it) }
             delay(6.hours)
         }
     }
