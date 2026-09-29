@@ -107,6 +107,9 @@ interface Strings {
     val connectionSettings: String
     /** Past-tense results, not the action labels that triggered them. */
     val folderDeleted: String
+    val fileRenamed: String
+    val fileMoved: String
+    val folderCreated: String
     fun deletedCount(count: Int): String
     val unarchived: String
     /** Distinct from shareScreen's shareLinkCreated, which announces that the

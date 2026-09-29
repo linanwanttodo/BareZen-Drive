@@ -81,8 +81,15 @@ object SyncUploadQueue {
 
         repeat(lanes.coerceAtLeast(1)) {
             launch(Dispatchers.IO) {
-                // One manager per lane: its progress StateFlow and activeUploadId
-                // are single-slot and must not be shared across concurrent files.
+                // One manager per lane, still. The reason it used to be
+                // mandatory is gone - progress used to live in a single slot on
+                // the manager, so two concurrent uploads on one instance
+                // overwrote each other's row and cancelling one aborted the
+                // other's server session. Progress is now per call and the
+                // session belongs to the call that opened it, so sharing an
+                // instance across lanes would be safe. Kept as-is because
+                // per-lane isolation is still the simpler thing to reason
+                // about, and changing it buys nothing but churn.
                 val uploader = UploadManager(repo)
                 while (!stop.get()) {
                     // claim-then-check: getAndIncrement can hand out an index past

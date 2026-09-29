@@ -15,7 +15,7 @@ import kotlin.js.toJsArray
 
 @Composable
 actual fun rememberFileSaver(
-    onDone: (FileSaveRequest, String?) -> Unit,
+    onDone: (FileSaveRequest, FileSaveResult) -> Unit,
     onProgress: (FileSaveRequest, Long) -> Unit,
 ): (FileSaveRequest) -> Unit {
     val scope = rememberCoroutineScope()
@@ -55,9 +55,16 @@ actual fun rememberFileSaver(
                 a.click()
                 a.parentNode?.removeChild(a)
                 URL.revokeObjectURL(url)
-                onDone(req, req.name)
+                onDone(req, FileSaveResult.Saved(req.name))
             } catch (t: Throwable) {
-                onDone(req, null)
+                // The browser gives us no way to tell a user-cancelled save from
+                // a broken one - the anchor click is fire-and-forget - so any
+                // throw here is a real failure (quota, network, decode) and is
+                // reported as one.
+                // The exception type and message used to be dropped entirely, so
+                // quota exceeded / offline / abort were indistinguishable.
+                println("[FileSaver] save failed for ${req.name}: ${t::class.simpleName} ${t.message}")
+                onDone(req, FileSaveResult.Failed(t::class.simpleName ?: "error"))
             }
         }
     }

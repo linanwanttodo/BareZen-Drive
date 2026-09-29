@@ -59,7 +59,11 @@ fun ShareManagerScreen(
 ) {
     var shares by remember { mutableStateOf<List<ShareDto>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    val snackbar = SnackbarHostState()
+    // remembered, not bare: a fresh SnackbarHostState per recomposition means
+    // the host renders a different instance than the one a launched coroutine
+    // holds, so showSnackbar's message is never drawn and the call never
+    // returns - it suspends waiting for a dismissal that cannot happen.
+    val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     fun refresh() {

@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,19 +97,31 @@ fun TransferCenterScreen(
     // in-flight file first, so the row must acknowledge the request.
     var stopRequested by remember { mutableStateOf(setOf<String>()) }
 
-    val mine = all.filter { it.lane == lane }
-    val active = mine.filter { it.phase == TransferPhase.RUNNING || it.phase == TransferPhase.QUEUED }
+    // Upload progress pushes a new items list on every chunk, so these
+    // projections used to be rebuilt on every recomposition - and a recomposition
+    // is also what every row's unstable onStop lambda caused, so the two fed
+    // each other. Keyed on the inputs only, so a tab switch or a stop-ack no
+    // longer walks the list again.
+    val mine = remember(all, lane) { all.filter { it.lane == lane } }
+    val active = remember(mine) {
+        mine.filter { it.phase == TransferPhase.RUNNING || it.phase == TransferPhase.QUEUED }
+    }
     // Active batches keep their queued children inline; settled children drop
     // to the finished tab so the user sees photos complete without switching.
-    val activeRows = buildList {
-        active.forEach { item ->
-            add(item)
-            if (item.parent == null && item.kind == TransferKind.SYNC) {
-                addAll(active.filter { it.parent == item.id })
+    val activeRows = remember(active) {
+        buildList {
+            val childrenByParent = active.filter { it.parent != null }.groupBy { it.parent }
+            active.forEach { item ->
+                add(item)
+                if (item.parent == null && item.kind == TransferKind.SYNC) {
+                    addAll(childrenByParent[item.id].orEmpty())
+                }
             }
         }
     }
-    val finished = mine.filter { it.phase != TransferPhase.RUNNING && it.phase != TransferPhase.QUEUED }
+    val finished = remember(mine) {
+        mine.filter { it.phase != TransferPhase.RUNNING && it.phase != TransferPhase.QUEUED }
+    }
 
     val strings = LocalStrings.current
     Scaffold(
@@ -172,16 +185,11 @@ fun TransferCenterScreen(
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(rows, key = { it.id }) { item ->
-                        TransferRow(
-                            item,
-                            indent = item.parent != null,
+                        TransferRowHost(
+                            item = item,
                             stopping = item.id in stopRequested,
-                            onStop = {
-                                TransferCenter.cancel(item.id)
-                                stopRequested = stopRequested + item.id
-                            },
-                            retryable = onRetry != null && TransferCenter.retryHandle(item.id) != null,
-                            onRetry = { onRetry?.invoke(item.id) },
+                            onStopRequested = { stopRequested = stopRequested + it },
+                            onRetry = onRetry,
                         )
                         HorizontalDivider()
                     }
@@ -189,6 +197,54 @@ fun TransferCenterScreen(
             }
         }
     }
+}
+
+/**
+ * One row plus its callbacks, hoisted so the lambdas stay stable.
+ *
+ * `onStop` used to be built inline in the list item, so it was a new instance on
+ * every recomposition of the row - and since upload progress drives a
+ * recomposition of the whole list on every chunk, every visible row rebuilt on
+ * every chunk, and each rebuild handed a fresh lambda to its children. The
+ * lambda is remembered against the row id instead, and the parent's setter is
+ * read through [rememberUpdatedState] so it never has to be a remember key.
+ */
+@Composable
+private fun TransferRowHost(
+    item: TransferItem,
+    stopping: Boolean,
+    onStopRequested: (String) -> Unit,
+    onRetry: ((String) -> Unit)?,
+) {
+    val currentStop by rememberUpdatedState(onStopRequested)
+    val currentRetry by rememberUpdatedState(onRetry)
+    val onStop = remember(item.id) {
+        {
+            TransferCenter.cancel(item.id)
+            currentStop(item.id)
+        }
+    }
+    val onRetryRow = remember(item.id) {
+        {
+            currentRetry?.invoke(item.id)
+            Unit
+        }
+    }
+    // Only where a retry can actually run, and only while there is an error to
+    // retry from: the source handle is kept for single-file uploads, not for
+    // album batch rows. Reading the registry per row per recomposition was the
+    // other half of this row's cost.
+    val retryable = remember(item.id, item.phase, item.error) {
+        item.error != null && currentRetry != null && TransferCenter.retryHandle(item.id) != null
+    }
+    TransferRow(
+        item = item,
+        indent = item.parent != null,
+        stopping = stopping,
+        onStop = onStop,
+        retryable = retryable,
+        onRetry = onRetryRow,
+    )
 }
 
 @Composable
