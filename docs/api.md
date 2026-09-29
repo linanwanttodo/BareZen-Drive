@@ -10,7 +10,7 @@
 
 错误码全集：`INVALID_CREDENTIALS`、`TOKEN_INVALID`、`TOKEN_EXPIRED`、`USERNAME_INVALID`、`USERNAME_TAKEN`、`PASSWORD_TOO_SHORT`、`VALIDATION_ERROR`、`FORBIDDEN`、`NOT_FOUND`、`NAME_CONFLICT`、`SESSION_NOT_FOUND`、`SESSION_COMPLETED`、`SESSION_EXPIRED`、`CHUNK_INVALID`、`CHUNK_MISSING`、`FILE_TOO_LARGE`、`RATE_LIMITED`、`REGISTRATION_DISABLED`、`INTERNAL_ERROR`。
 
-注（以实现为准）：v0.0.1 未提供文件夹移动 API（`PATCH /api/folders/{id}` 仅接受 `name`），因此 `FOLDER_INTO_DESCENDANT` 暂不触发；`SESSION_NOT_FOUND` 统一以 404 `NOT_FOUND` 表达；`FILE_TOO_LARGE` 为预留码（服务端单块大小已校验，整文件大小上限未强制）。
+注（以实现为准）：v0.0.1 未提供文件夹移动 API（`PATCH /api/folders/{id}` 仅接受 `name`），因此 `FOLDER_INTO_DESCENDANT` 暂不触发；`SESSION_NOT_FOUND` 统一以 404 `NOT_FOUND` 表达；`FILE_TOO_LARGE` 已在 `POST /api/uploads/init` 强制——`size` 超过 `MAX_FILE_SIZE`（环境变量，默认 10 GiB，启动时注入）时返回 413，分块单块超限返回 400 `CHUNK_INVALID`。该上限只按单次上传会话计，尚未做用户级总配额。
 
 ### 限流与计数去重
 
@@ -307,7 +307,17 @@ FileVersionDto：
 
 ### GET /api/trash
 
-返回当前用户回收站内的全部文件（`TrashResponse`）。
+返回当前用户回收站内的一页文件（`TrashResponse`）。
+
+**分页**：`?limit=` 缺省 100、上限 500（`coerceIn`）；`?cursor=` 取上一页的
+`nextCursor`。keyset 为 `(deleted_at DESC, id DESC)`，游标串是
+`"<deletedAtMillis>:<uuid>"`——id 是必需的兜底：一次批量删除往往让整页行共享
+同一个 `deleted_at`，没有它游标会卡在第一页。非法游标从头再来（与
+`/api/files/contents`、`/api/files/album` 同口径）。
+
+上限不是形式主义：清空一个两万张的回收站后，旧的「一次返回全部」会把两万行
+DTO 一次性序列化进响应体与堆内存。`nextCursor` 为 `null` 表示到底；该字段带
+默认值，老客户端多解一个它忽略的字段即可。
 
 ```json
 {"files": [FileDto]}

@@ -574,6 +574,11 @@ fun App() {
                 thumbs = thumbs,
                 onBack = pop,
                 onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
+                // Without this the page stops at the server's first page
+                // (100 rows) with no way to reach the rest: emptying a trash of
+                // 20k photos used to return them all, and the bounded response
+                // is only safe once the client can walk the cursor.
+                loadMorePage = { cursor -> files.trash(limit = 100, cursor = cursor) },
             )
             is Screen.Archive -> ArchiveScreen(
                 repo = files,
