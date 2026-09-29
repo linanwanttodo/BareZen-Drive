@@ -59,6 +59,18 @@ data class BackupStatus(
     val excludedBuckets: Int = 0,
     val lastSyncAt: Long = 0L,
     val pausedReason: BackupPauseReason? = null,
+    /**
+     * Why the most recent pass gave up, when it gave up for a reason the
+     * scheduler cannot see: a revoked media permission, a full disk, a
+     * MediaStore that threw.
+     *
+     * [pausedReason] answers "why is nothing running"; this answers "why did the
+     * last attempt die". Without it the card keeps claiming a pending count for
+     * a backup that has been silently dead since the permission was revoked -
+     * the status card and the architecture note both promised not to swallow
+     * scan failures, and the promise was not kept.
+     */
+    val lastError: String? = null,
 ) {
     /** True when there is any row worth showing in the UI. */
     val visible: Boolean

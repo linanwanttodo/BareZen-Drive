@@ -115,6 +115,10 @@ interface Strings {
     val settingRejected: String
     /** Empty admin list is a state, not a failed load - an empty LazyColumn reads
      *  as "nothing rendered", i.e. as if the page had not loaded at all. */
+    /** A backup pass that died for a reason the user can act on. Not a pause:
+     *  [BackupPauseReason] covers "we are not allowed to try right now", this
+     *  covers "we tried and it broke". */
+    fun backupLastFailed(reason: String): String
     val noUsersYet: String
     val uploadFailedTitle: String
     fun uploadFailedCount(count: Int): String

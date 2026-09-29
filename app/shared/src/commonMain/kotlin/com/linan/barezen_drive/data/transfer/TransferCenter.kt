@@ -297,9 +297,9 @@ object TransferCenter {
         _items.update { list -> list.map { if (it.id == id) block(it) else it } }
     }
 
-    // A plain counter, not a clock: the rows only need creation ORDER, and a
-    // platform clock would drag Android framework calls into unit tests.
-    // Real wall-clock timestamp for the UI. The seq counter stays reserved
-    // for ids ("t<n>"), where uniqueness matters but the value never shows.
+    // A real wall-clock timestamp: it is what the UI renders ("3 分钟前") and
+    // what orders rows across lanes, so a counter would be wrong. The seq
+    // counter above stays reserved for ids ("t<n>"), where only uniqueness
+    // matters and the value never shows.
     private fun nowMs(): Long = Clock.System.now().toEpochMilliseconds()
 }

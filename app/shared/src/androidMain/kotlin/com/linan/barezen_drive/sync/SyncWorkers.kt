@@ -88,6 +88,26 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
          * to do - the running pass is already doing exactly that work.
          */
         private val passMutex = kotlinx.coroutines.sync.Mutex()
+        private const val TAG = "SyncWorker"
+    }
+
+    /**
+     * Why a stage of the pass failed, in two places at once.
+     *
+     * The stack trace is the diagnosis and belongs in logcat, which is also the
+     * only place it survives the process. The one-line reason goes to the status
+     * card, because "待备份 128 项" with no explanation is how a revoked media
+     * permission looks identical to a backup that simply has not run yet. The
+     * user can act on the message ("存储空间不足", "权限被收回"); they cannot act
+     * on an empty stage.
+     */
+    private fun report(stage: String, error: Throwable?, fallback: String? = null) {
+        error?.let { android.util.Log.e(TAG, "$stage failed", it) }
+            ?: android.util.Log.w(TAG, "$stage: $fallback")
+        val reason = error?.let { "${it::class.simpleName}: ${it.message ?: "no message"}" }
+            ?: fallback
+            ?: return
+        MediaSync.noteFailure("$stage: $reason")
     }
 
     /**
@@ -135,10 +155,21 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
             // the reconcile job still pass null and take everything.
             val incremental = inputData.getBoolean(MediaSync.KEY_INCREMENTAL, false)
             val since = if (incremental) SyncPolicy.scanSinceSeconds(MediaSync.lastScanAt()) else null
-            val scanned = runCatching { SyncScan.scanAll(applicationContext, since) }.getOrNull()
+            // The scan used to be swallowed whole: a revoked READ_MEDIA_IMAGES
+            // permission, a MediaStore that throws, a full disk - all of them
+            // left `scanned` null, the upsert skipped, the watermark unmoved and
+            // the status card still advertising a pending count for a backup
+            // that had quietly stopped. The watermark is the important half:
+            // not advancing it means the next pass re-reads the window, so a
+            // transient failure costs a rescan rather than a silent gap.
+            val scanned = runCatching { SyncScan.scanAll(applicationContext, since) }
+                .onFailure { report("scan", it) }
+                .getOrNull()
             if (scanned != null) {
                 SyncDb.upsertScanned(scanned)
                 MediaSync.markScanned()
+            } else {
+                report("scan", null, "the media scan returned nothing")
             }
 
             val totalEstimate = SyncDb.dueCount()
@@ -150,7 +181,10 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
                     // paused) without a second source of truth: it reads the queue.
                     MediaSync.refreshStatus()
                 }
-            }.getOrNull()
+            }
+                .onFailure { report("pass", it) }
+                .getOrNull()
+            if (pass == null) report("pass", null, "the upload pass produced no result")
 
             if (pass != null && !pass.stoppedEarly && pass.failed == 0 && SyncDb.dueCount() == 0) {
                 MediaSync.markSynced()
