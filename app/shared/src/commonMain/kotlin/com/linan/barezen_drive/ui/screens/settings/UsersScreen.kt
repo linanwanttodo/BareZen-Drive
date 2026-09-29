@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -85,6 +86,9 @@ fun UsersScreen(
         },
     ) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
+            // Local copy so the empty check below smart-casts: `list` is a
+            // delegated property and cannot.
+            val users = list
             Text(
                 LocalStrings.current.userManagementHint,
                 style = MaterialTheme.typography.bodySmall,
@@ -106,11 +110,20 @@ fun UsersScreen(
                     actionLabel = if (error!!.contains("仅实例所有者")) null else LocalStrings.current.actionRetry,
                     onAction = { error = null; reload() },
                 )
-                list == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                users == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
+                // An owner who has just installed the server has nobody to list.
+                // That used to render an empty LazyColumn: a full page of white
+                // with the hint at the top, which reads as a load that never
+                // finished rather than as a genuinely empty list.
+                users.isEmpty() -> EmptyState(
+                    icon = Icons.Default.People,
+                    title = LocalStrings.current.noUsersYet,
+                    modifier = Modifier.fillMaxSize(),
+                )
                 else -> LazyColumn {
-                    items(list!!, key = { it.id }) { user ->
+                    items(users, key = { it.id }) { user ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

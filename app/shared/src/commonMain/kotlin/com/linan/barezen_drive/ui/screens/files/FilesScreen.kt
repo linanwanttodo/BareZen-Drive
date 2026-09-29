@@ -3,7 +3,6 @@ package com.linan.barezen_drive.ui.screens.files
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,6 +100,11 @@ import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.upload.UploadManager
 import com.linan.barezen_drive.platform.PickedFile
 import com.linan.barezen_drive.platform.rememberFilePicker
+import com.linan.barezen_drive.data.transfer.TransferCenter
+import com.linan.barezen_drive.data.transfer.TransferItem
+import com.linan.barezen_drive.data.transfer.TransferKind
+import com.linan.barezen_drive.data.transfer.TransferLane
+import com.linan.barezen_drive.data.transfer.TransferPhase
 import com.linan.barezen_drive.data.transfer.rememberDownloadSaver
 import com.linan.barezen_drive.ui.component.SkeletonList
 import com.linan.barezen_drive.ui.component.onHoverChanged
@@ -131,6 +135,34 @@ private data class ContentsUi(
 )
 
 private data class MoveTarget(val fileId: String, val fromFolderId: String?, val fileName: String)
+
+/**
+ * Every action a file row or tile can perform, dispatched through ONE callback.
+ *
+ * The rows used to take nine to eleven lambdas (`onOpen`, `onRename`, ...),
+ * all rebuilt whenever the list recomposed, so no row could ever skip and one
+ * progress tick rebuilt every visible row's callbacks. A row now takes the
+ * item plus a single dispatch function; everything else it receives is a
+ * stable reference.
+ *
+ * The overflow menu is dispatched here too, rather than through a per-item
+ * `setMenuOpen` lambda - a lambda built from the item's key is a new instance
+ * on every recomposition, which is exactly the churn this removes.
+ */
+private enum class FileAction { OPEN, DOWNLOAD, RENAME, MOVE, DELETE, SHARE, FAVORITE, ARCHIVE, VERSIONS, TOGGLE_SELECT, TOGGLE_MENU }
+
+/** Folders have a much smaller menu; kept separate so no row can fire a file action. */
+private enum class FolderAction { OPEN, RENAME, DELETE, SHARE, TOGGLE_MENU }
+
+/** Path segments kept visible before the middle of the breadcrumb folds away. */
+private const val MAX_CRUMBS = 3
+
+/**
+ * File-transfer rows rendered inline above the listing. The rest live in the
+ * transfer centre (one tap away), so a long tail of old FAILED rows can never
+ * push the folder listing off the screen.
+ */
+private const val MAX_INLINE_TRANSFERS = 3
 
 // Locale-free numeric formatting so the code stays platform-agnostic.
 private fun formatOneDecimal(value: Double): String {
@@ -184,7 +216,11 @@ fun FilesScreen(
     themeToggle: (@Composable () -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
-    val snackbar = SnackbarHostState()
+    // remembered, not bare: a fresh SnackbarHostState per recomposition means
+    // the host renders a different instance than the one a launched coroutine
+    // holds, so showSnackbar's message is never drawn and the call never
+    // returns - it suspends waiting for a dismissal that cannot happen.
+    val snackbar = remember { SnackbarHostState() }
     val currentPath by rememberUpdatedState(path)
     val folderId = path.lastOrNull()?.id ?: ROOT_FOLDER_ID
 
@@ -197,7 +233,11 @@ fun FilesScreen(
     var showNewFolder by remember { mutableStateOf(false) }
     var pendingUploads by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
     var uploading by remember { mutableStateOf(false) }
-    var menuFor by remember { mutableStateOf<Any?>(null) }
+    // Which row's overflow menu is open, as "f_<id>" / "d_<id>". A key rather
+    // than the DTO itself: identity comparison is what made a row rebuild its
+    // menu whenever the listing was replaced, and two equal DTOs could open
+    // each other's menu.
+    var menuFor by remember { mutableStateOf<String?>(null) }
     var renameTarget by remember { mutableStateOf<Triple<Boolean, String, String>?>(null) }
     var moveTarget by remember { mutableStateOf<MoveTarget?>(null) }
     var deleting by remember { mutableStateOf<Any?>(null) }
@@ -217,6 +257,11 @@ fun FilesScreen(
     var versionsFor by remember { mutableStateOf<FileDto?>(null) }
     var versions by remember { mutableStateOf<List<FileVersionDto>>(emptyList()) }
     var versionsLoading by remember { mutableStateOf(false) }
+    // A failed version load used to raise one snackbar and then fall through to
+    // `versions.isEmpty()`, so the dialog announced "no earlier versions" for a
+    // file that may well have them - a broken request was rendered as an empty
+    // history, and nothing on screen offered a way back.
+    var versionsError by remember { mutableStateOf<String?>(null) }
     // View mode comes from the persisted preference; the switcher in the top
     // app bar writes straight back to AppPreferences so it survives restarts.
     var gridView by remember { mutableStateOf(AppPreferences.get().filesViewMode == 1) }
@@ -376,10 +421,13 @@ fun FilesScreen(
         versionsFor = file
         versions = emptyList()
         versionsLoading = true
+        versionsError = null
         scope.launch {
             repo.fileVersions(file.id).fold(
-                onSuccess = { versions = it },
-                onFailure = { snackbar.showSnackbar(msg(it, I18n.strings.loadFailed)) },
+                onSuccess = { versions = it; versionsError = null },
+                // No snackbar: the dialog is right there and now says what went
+                // wrong, with a retry next to it.
+                onFailure = { versionsError = msg(it, I18n.strings.loadFailed) },
             )
             versionsLoading = false
         }
@@ -423,6 +471,53 @@ fun FilesScreen(
     // the row's 3-dot into a circle checkbox and swaps the top bar for an
     // action bar with select-all.
     val selectedFiles = remember { mutableStateOf(setOf<String>()) }
+
+    // ---- Row dispatch (the single callback every row/tile takes) ----
+    //
+    // Two layers on purpose. The outer lambda is remembered, so its identity
+    // never changes and a row can be skipped; it reads the real work out of a
+    // rememberUpdatedState, which is rewritten on every recomposition. Without
+    // that split the rows would hold a callback closing over the values of the
+    // composition that created it - a stale listing, a stale snackbar host.
+    val fileActionImpl = rememberUpdatedState<(FileAction, FileDto) -> Unit> { action, file ->
+        when (action) {
+            FileAction.OPEN -> openOrPreview(file, state?.files ?: emptyList(), onPreview, repo)
+            FileAction.DOWNLOAD -> saver(file)
+            FileAction.RENAME -> renameTarget = Triple(false, file.id, file.name)
+            FileAction.MOVE -> moveTarget = MoveTarget(file.id, file.folderId, file.name)
+            FileAction.DELETE -> deleting = file
+            FileAction.SHARE -> shareTarget = file
+            FileAction.FAVORITE -> toggleFavorite(file)
+            FileAction.ARCHIVE -> toggleArchived(file)
+            FileAction.VERSIONS -> openVersions(file)
+            FileAction.TOGGLE_SELECT -> selectedFiles.value = selectedFiles.value.toMutableSet().apply {
+                if (!add(file.id)) remove(file.id)
+            }
+            FileAction.TOGGLE_MENU -> {
+                val key = "d_${file.id}"
+                menuFor = if (menuFor == key) null else key
+            }
+        }
+    }
+    val folderActionImpl = rememberUpdatedState<(FolderAction, FolderDto) -> Unit> { action, folder ->
+        when (action) {
+            FolderAction.OPEN -> onOpenFolder(folder)
+            FolderAction.RENAME -> renameTarget = Triple(true, folder.id, folder.name)
+            FolderAction.DELETE -> deleting = folder
+            FolderAction.SHARE -> shareTarget = folder
+            FolderAction.TOGGLE_MENU -> {
+                val key = "f_${folder.id}"
+                menuFor = if (menuFor == key) null else key
+            }
+        }
+    }
+    val onFileAction: (FileAction, FileDto) -> Unit = remember {
+        { action: FileAction, file: FileDto -> fileActionImpl.value(action, file) }
+    }
+    val onFolderAction: (FolderAction, FolderDto) -> Unit = remember {
+        { action: FolderAction, folder: FolderDto -> folderActionImpl.value(action, folder) }
+    }
+    val dismissMenu: () -> Unit = remember { { menuFor = null } }
 
     // Drain pending picks sequentially. Picks that arrive while an upload is
     // running stay queued and go out in the next round instead of silently
@@ -468,7 +563,21 @@ fun FilesScreen(
         reload()
     }
 
-    val progress by uploader.progress.collectAsState()
+    // Upload progress comes from the transfer centre, not from the manager.
+    // The manager used to keep ONE progress slot, so with two files uploading
+    // at once the strip showed whichever was written last and the other looked
+    // frozen - one file's bar wearing another file's name, which is exactly
+    // what the centre's per-row model was built to avoid. Rows are newest
+    // first; DONE ones drop out so the strip follows live work instead of
+    // growing with the session's history.
+    val transferRows by TransferCenter.items.collectAsState()
+    val fileTransfers = remember(transferRows) {
+        transferRows.filter {
+            it.lane == TransferLane.FILE &&
+                it.kind == TransferKind.UPLOAD &&
+                it.phase != TransferPhase.DONE
+        }
+    }
 
     Scaffold(
         // Lift the snackbar above the floating bottom bar: at scaffold
@@ -511,11 +620,23 @@ fun FilesScreen(
                 // so the path read as a row of buttons and pushed the file list
                 // down. 14sp with a 6dp hit padding keeps the row ~28dp tall
                 // while staying comfortable to tap.
+                //
+                // The path is bounded, not scrollable: it used to grow a segment
+                // per level inside a horizontalScroll, which on a narrow screen
+                // pushed the action icons out of reach - and the trailing
+                // ellipsis never fired, because nothing constrained the text.
+                // Deep paths fold to first + ellipsis + last two (where the user
+                // is), and every name shrinks with an ellipsis of its own before
+                // the row can overflow.
                 val crumbStyle = MaterialTheme.typography.bodyMedium
+                val folded = path.size > MAX_CRUMBS
+                val visible = remember(path, folded) {
+                    if (folded) listOf(0) + path.indices.toList().takeLast(MAX_CRUMBS - 1)
+                    else path.indices.toList()
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
                         .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -532,13 +653,24 @@ fun FilesScreen(
                             .clickable { onJumpTo(-1) }
                             .padding(horizontal = 6.dp, vertical = 4.dp),
                     )
-                    path.forEachIndexed { i, f ->
+                    visible.forEachIndexed { slot, i ->
+                        val f = path[i]
                         val isLast = i == path.lastIndex
                         Text(
                             text = " / ",
                             style = crumbStyle,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        if (folded && slot == 1) {
+                            // The folded middle. Not clickable on its own - the
+                            // crumbs on either side are the reachable ones.
+                            Text(
+                                text = "…",
+                                style = crumbStyle,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
                         Text(
                             text = f.name,
                             style = crumbStyle,
@@ -550,6 +682,10 @@ fun FilesScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
+                                // fill = false: the row only shrinks names when
+                                // they no longer fit, and never pads a short
+                                // path out to full width.
+                                .weight(1f, fill = false)
                                 .clip(RoundedCornerShape(6.dp))
                                 .clickable { onJumpTo(i) }
                                 .padding(horizontal = 6.dp, vertical = 4.dp),
@@ -643,34 +779,22 @@ fun FilesScreen(
                 }
                 HorizontalDivider()
             }
-            val p = progress
-            if (p.phase != UploadManager.Phase.IDLE && p.phase != UploadManager.Phase.DONE) {
+            // One row per live transfer, not one bar for all of them.
+            if (fileTransfers.isNotEmpty()) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                 ) {
-                    Text(
-                        when (p.phase) {
-                            UploadManager.Phase.HASHING -> LocalStrings.current.verifyingFile(p.fileName)
-                            UploadManager.Phase.UPLOADING -> LocalStrings.current.uploading(p.fileName)
-                            UploadManager.Phase.COMPLETING -> LocalStrings.current.finalizingFile(p.fileName)
-                            else -> LocalStrings.current.uploadFailedNamed(p.fileName)
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = { p.fraction.toFloat() },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    if (p.phase == UploadManager.Phase.FAILED) {
-                        Text(
-                            p.error?.message ?: LocalStrings.current.uploadFailedRetry,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
+                    fileTransfers.take(MAX_INLINE_TRANSFERS).forEach { row ->
+                        UploadRow(
+                            row = row,
+                            onRetry = { scope.launch { uploader.retryFailed(row.id) } },
                         )
+                    }
+                    if (fileTransfers.size > MAX_INLINE_TRANSFERS) {
+                        // The full list, with the rows this strip left out.
+                        TextButton(onClick = onOpenUploads) { Text(LocalStrings.current.seeAll) }
                     }
                 }
             }
@@ -699,27 +823,12 @@ fun FilesScreen(
                 gridView -> FilesGrid(
                     ui = ui,
                     thumbs = thumbs,
+                    onFileAction = onFileAction,
+                    onFolderAction = onFolderAction,
                     menuFor = menuFor,
-                    setMenuFor = { menuFor = it },
-                    onOpenFolder = onOpenFolder,
-                    onRenameFolder = { renameTarget = Triple(true, it.id, it.name) },
-                    onDeleteFolder = { deleting = it },
-                    onShareFolder = { shareTarget = it },
-                    onOpenFile = { openOrPreview(it, ui.files, onPreview, repo) },
-                    onDownloadFile = { saver(it) },
-                    onRenameFile = { renameTarget = Triple(false, it.id, it.name) },
-                    onMoveFile = { moveTarget = MoveTarget(it.id, it.folderId, it.name) },
-                    onDeleteFile = { deleting = it },
-                    onShareFile = { shareTarget = it },
-                    onFavoriteFile = { toggleFavorite(it) },
-                    onArchiveFile = { toggleArchived(it) },
-                    onVersionsFile = { openVersions(it) },
-                    selection = selectedFiles.value.ifEmpty { null },
-                    onToggleSelect = { file ->
-                        selectedFiles.value = selectedFiles.value.toMutableSet().apply {
-                            if (!add(file.id)) remove(file.id)
-                        }
-                    },
+                    dismissMenu = dismissMenu,
+                    selectionMode = sel.isNotEmpty(),
+                    selectedIds = sel,
                 )
                 else -> {
                 // Bottom clearance lets the last rows scroll clear of the
@@ -731,12 +840,9 @@ fun FilesScreen(
                     items(ui.folders, key = { "f_${it.id}" }) { folder ->
                         FolderRow(
                             folder = folder,
-                            onOpen = { onOpenFolder(folder) },
-                            onRename = { renameTarget = Triple(true, folder.id, folder.name) },
-                            onDelete = { deleting = folder },
-                            onShare = { shareTarget = folder },
-                            menuFor = menuFor,
-                            setMenuFor = { menuFor = it },
+                            onAction = onFolderAction,
+                            menuOpen = menuFor == "f_${folder.id}",
+                            dismissMenu = dismissMenu,
                         )
                         HorizontalDivider()
                     }
@@ -744,25 +850,11 @@ fun FilesScreen(
                         FileRow(
                             file = file,
                             thumbs = thumbs,
-                            onOpen = {
-                                openOrPreview(file, ui.files, onPreview, repo)
-                            },
-                            onDownload = { saver(file) },
-                            onRename = { renameTarget = Triple(false, file.id, file.name) },
-                            onMove = { moveTarget = MoveTarget(file.id, file.folderId, file.name) },
-                            onDelete = { deleting = file },
-                            onShare = { shareTarget = file },
-                            onFavorite = { toggleFavorite(file) },
-                            onArchive = { toggleArchived(file) },
-                            onVersions = { openVersions(file) },
-                            menuFor = menuFor,
-                            setMenuFor = { menuFor = it },
-                            selection = selectedFiles.value.ifEmpty { null },
-                            onToggleSelect = {
-                                selectedFiles.value = selectedFiles.value.toMutableSet().apply {
-                                    if (!add(file.id)) remove(file.id)
-                                }
-                            },
+                            onAction = onFileAction,
+                            menuOpen = menuFor == "d_${file.id}",
+                            dismissMenu = dismissMenu,
+                            selectionMode = sel.isNotEmpty(),
+                            selected = file.id in sel,
                         )
                         HorizontalDivider()
                     }
@@ -815,6 +907,10 @@ fun FilesScreen(
                     onSuccess = {
                         showNewFolder = false
                         reload()
+                        // Creating is the one action here that leaves no trace in
+                        // the list the user is looking at unless the new folder
+                        // happens to scroll into view.
+                        snackbar.showSnackbar(I18n.strings.folderCreated)
                     },
                     onFailure = { snackbar.showSnackbar(msg(it, I18n.strings.createFailed)) },
                 )
@@ -847,6 +943,7 @@ fun FilesScreen(
                     onSuccess = {
                         renameTarget = null
                         reload()
+                        snackbar.showSnackbar(I18n.strings.fileRenamed)
                     },
                     onFailure = { snackbar.showSnackbar(msg(it, I18n.strings.renameFailed)) },
                 )
@@ -867,6 +964,9 @@ fun FilesScreen(
                     onSuccess = {
                         moveTarget = null
                         reload()
+                        // The item leaves this folder entirely: a silent success
+                        // reads as a failed move.
+                        snackbar.showSnackbar(I18n.strings.fileMoved)
                     },
                     onFailure = { snackbar.showSnackbar(msg(it, I18n.strings.moveFailed)) },
                 )
@@ -997,6 +1097,19 @@ fun FilesScreen(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
+                        // Third state, same shape as MoveDialog's: a failed
+                        // request is not an empty history.
+                        versionsError != null -> Column {
+                            Text(
+                                versionsError ?: LocalStrings.current.loadFailed,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(onClick = { openVersions(file) }) {
+                                Text(LocalStrings.current.actionRetry)
+                            }
+                        }
                         versions.isEmpty() -> Text(
                             LocalStrings.current.noVersions,
                             style = MaterialTheme.typography.bodySmall,
@@ -1043,23 +1156,12 @@ fun FilesScreen(
 private fun FilesGrid(
     ui: ContentsUi,
     thumbs: ThumbnailLoader,
-    menuFor: Any?,
-    setMenuFor: (Any?) -> Unit,
-    onOpenFolder: (FolderDto) -> Unit,
-    onRenameFolder: (FolderDto) -> Unit,
-    onDeleteFolder: (FolderDto) -> Unit,
-    onShareFolder: (FolderDto) -> Unit,
-    onOpenFile: (FileDto) -> Unit,
-    onDownloadFile: (FileDto) -> Unit,
-    onRenameFile: (FileDto) -> Unit,
-    onMoveFile: (FileDto) -> Unit,
-    onDeleteFile: (FileDto) -> Unit,
-    onShareFile: (FileDto) -> Unit,
-    onFavoriteFile: (FileDto) -> Unit,
-    onArchiveFile: (FileDto) -> Unit,
-    onVersionsFile: (FileDto) -> Unit,
-    selection: Set<String>? = null,
-    onToggleSelect: (FileDto) -> Unit = {},
+    onFileAction: (FileAction, FileDto) -> Unit,
+    onFolderAction: (FolderAction, FolderDto) -> Unit,
+    menuFor: String?,
+    dismissMenu: () -> Unit,
+    selectionMode: Boolean,
+    selectedIds: Set<String>,
 ) {
     // Folders and files share the same cells: a folder is a sibling of the
     // files beside it, so switching the view re-flows the whole listing.
@@ -1074,32 +1176,67 @@ private fun FilesGrid(
         items(ui.folders, key = { "f_${it.id}" }) { folder ->
             FolderTile(
                 folder = folder,
-                onOpen = { onOpenFolder(folder) },
-                onRename = { onRenameFolder(folder) },
-                onDelete = { onDeleteFolder(folder) },
-                onShare = { onShareFolder(folder) },
-                menuFor = menuFor,
-                setMenuFor = setMenuFor,
+                onAction = onFolderAction,
+                menuOpen = menuFor == "f_${folder.id}",
+                dismissMenu = dismissMenu,
             )
         }
         items(ui.files, key = { "d_${it.id}" }) { file ->
             FileTile(
                 file = file,
                 thumbs = thumbs,
-                onOpen = { onOpenFile(file) },
-                selection = selection,
-                onToggleSelect = { onToggleSelect(file) },
-                onDownload = { onDownloadFile(file) },
-                onRename = { onRenameFile(file) },
-                onMove = { onMoveFile(file) },
-                onDelete = { onDeleteFile(file) },
-                onShare = { onShareFile(file) },
-                onFavorite = { onFavoriteFile(file) },
-                onArchive = { onArchiveFile(file) },
-                onVersions = { onVersionsFile(file) },
-                menuFor = menuFor,
-                setMenuFor = setMenuFor,
+                onAction = onFileAction,
+                menuOpen = menuFor == "d_${file.id}",
+                dismissMenu = dismissMenu,
+                selectionMode = selectionMode,
+                selected = file.id in selectedIds,
             )
+        }
+    }
+}
+
+/**
+ * One live file transfer above the listing, read from the transfer centre.
+ *
+ * A FAILED row carries the retry button. The server keeps every chunk it
+ * already stored, so re-running the same PickedFile resume-matches in
+ * upload/init and goes straight to complete - without it, resuming was only
+ * reachable by picking the file again from scratch.
+ */
+@Composable
+private fun UploadRow(row: TransferItem, onRetry: () -> Unit) {
+    val failed = row.phase == TransferPhase.FAILED
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(
+            if (failed) LocalStrings.current.uploadFailedNamed(row.name)
+            else LocalStrings.current.uploading(row.name),
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(4.dp))
+        LinearProgressIndicator(
+            progress = {
+                if (row.bytesTotal <= 0L) 0f
+                else (row.bytesDone.toDouble() / row.bytesTotal).coerceIn(0.0, 1.0).toFloat()
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (failed) {
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    row.error ?: LocalStrings.current.uploadFailedRetry,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                // Album batches report one aggregate row and hold no source,
+                // so only a single-file row can be re-run from here.
+                if (row.retry != null) {
+                    TextButton(onClick = onRetry) { Text(LocalStrings.current.actionRetry) }
+                }
+            }
         }
     }
 }
@@ -1149,12 +1286,9 @@ private fun TileOverflow(
 @Composable
 private fun FolderTile(
     folder: FolderDto,
-    onOpen: () -> Unit,
-    onRename: () -> Unit,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-    menuFor: Any?,
-    setMenuFor: (Any?) -> Unit,
+    onAction: (FolderAction, FolderDto) -> Unit,
+    menuOpen: Boolean,
+    dismissMenu: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -1163,10 +1297,10 @@ private fun FolderTile(
                 MaterialTheme.shapes.medium,
             )
             .combinedClickable(
-                onClick = onOpen,
+                onClick = { onAction(FolderAction.OPEN, folder) },
                 // Long-press opens the tile's overflow menu, matching the file
                 // tiles and the list rows.
-                onLongClick = { setMenuFor(folder) },
+                onLongClick = { onAction(FolderAction.TOGGLE_MENU, folder) },
             ),
     ) {
         Column(Modifier.padding(8.dp)) {
@@ -1202,36 +1336,27 @@ private fun FolderTile(
             )
         }
         TileOverflow(
-            expanded = menuFor === folder,
-            onToggle = { setMenuFor(if (menuFor === folder) null else folder) },
+            expanded = menuOpen,
+            onToggle = { onAction(FolderAction.TOGGLE_MENU, folder) },
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(2.dp),
         ) {
-            DropdownMenu(expanded = menuFor === folder, onDismissRequest = { setMenuFor(null) }) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = dismissMenu) {
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionRename) },
                     leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onRename()
-                    },
+                    onClick = { onAction(FolderAction.RENAME, folder) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionShare) },
                     leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onShare()
-                    },
+                    onClick = { onAction(FolderAction.SHARE, folder) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onDelete()
-                    },
+                    onClick = { onAction(FolderAction.DELETE, folder) },
                 )
             }
         }
@@ -1242,21 +1367,12 @@ private fun FolderTile(
 private fun FileTile(
     file: FileDto,
     thumbs: ThumbnailLoader,
-    onOpen: () -> Unit,
-    onDownload: () -> Unit,
-    onRename: () -> Unit,
-    onMove: () -> Unit,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-    onFavorite: () -> Unit,
-    onArchive: () -> Unit,
-    onVersions: () -> Unit,
-    menuFor: Any?,
-    setMenuFor: (Any?) -> Unit,
-    selection: Set<String>? = null,
-    onToggleSelect: () -> Unit = {},
+    onAction: (FileAction, FileDto) -> Unit,
+    menuOpen: Boolean,
+    dismissMenu: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
 ) {
-    val isSelected = selection?.contains(file.id) == true
     // Outer Box hosts the overflow trigger so it can sit on the tile's
     // top-right corner. In the caption row it would have squeezed a
     // three-column tile's name down to a couple of characters.
@@ -1270,8 +1386,11 @@ private fun FileTile(
                 MaterialTheme.shapes.medium,
             )
             .combinedClickable(
-                onClick = { if (selection != null) onToggleSelect() else onOpen() },
-                onLongClick = onToggleSelect,
+                onClick = {
+                    if (selectionMode) onAction(FileAction.TOGGLE_SELECT, file)
+                    else onAction(FileAction.OPEN, file)
+                },
+                onLongClick = { onAction(FileAction.TOGGLE_SELECT, file) },
             ),
     ) {
         Column(Modifier.padding(8.dp)) {
@@ -1282,11 +1401,11 @@ private fun FileTile(
                 contentAlignment = Alignment.Center,
             ) {
                 FileThumbnail(file, thumbs, edge = 84.dp)
-                if (selection != null) {
+                if (selectionMode) {
                     Icon(
-                        if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
                         contentDescription = null,
-                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.align(Alignment.TopEnd),
                     )
                 }
@@ -1309,46 +1428,34 @@ private fun FileTile(
         }
         // Selection mode owns the corner, browse mode shows the overflow there;
         // they are never both on screen.
-        if (selection == null) {
+        if (!selectionMode) {
             TileOverflow(
-                expanded = menuFor === file,
-                onToggle = { setMenuFor(if (menuFor === file) null else file) },
+                expanded = menuOpen,
+                onToggle = { onAction(FileAction.TOGGLE_MENU, file) },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(2.dp),
             ) {
-                DropdownMenu(expanded = menuFor === file, onDismissRequest = { setMenuFor(null) }) {
+                DropdownMenu(expanded = menuOpen, onDismissRequest = dismissMenu) {
                     DropdownMenuItem(
                         text = { Text(LocalStrings.current.actionRename) },
                         leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onRename()
-                        },
+                        onClick = { onAction(FileAction.RENAME, file) },
                     )
                     DropdownMenuItem(
                         text = { Text(LocalStrings.current.actionMove) },
                         leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onMove()
-                        },
+                        onClick = { onAction(FileAction.MOVE, file) },
                     )
                     DropdownMenuItem(
                         text = { Text(LocalStrings.current.actionDownload) },
                         leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onDownload()
-                        },
+                        onClick = { onAction(FileAction.DOWNLOAD, file) },
                     )
                     DropdownMenuItem(
                         text = { Text(LocalStrings.current.actionShare) },
                         leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onShare()
-                        },
+                        onClick = { onAction(FileAction.SHARE, file) },
                     )
                     DropdownMenuItem(
                         text = {
@@ -1363,10 +1470,7 @@ private fun FileTile(
                                 contentDescription = null,
                             )
                         },
-                        onClick = {
-                            setMenuFor(null)
-                            onFavorite()
-                        },
+                        onClick = { onAction(FileAction.FAVORITE, file) },
                     )
                     DropdownMenuItem(
                         text = {
@@ -1376,28 +1480,19 @@ private fun FileTile(
                             )
                         },
                         leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onArchive()
-                        },
+                        onClick = { onAction(FileAction.ARCHIVE, file) },
                     )
                     // Only offered for files: a folder has no content of its own to
                     // revision, and the server has no version endpoints for one.
                     DropdownMenuItem(
                         text = { Text(LocalStrings.current.versionHistory) },
                         leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onVersions()
-                        },
+                        onClick = { onAction(FileAction.VERSIONS, file) },
                     )
                     DropdownMenuItem(
                         text = { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) },
                         leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                        onClick = {
-                            setMenuFor(null)
-                            onDelete()
-                        },
+                        onClick = { onAction(FileAction.DELETE, file) },
                     )
                 }
             }
@@ -1408,12 +1503,9 @@ private fun FileTile(
 @Composable
 private fun FolderRow(
     folder: FolderDto,
-    onOpen: () -> Unit,
-    onRename: () -> Unit,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-    menuFor: Any?,
-    setMenuFor: (Any?) -> Unit,
+    onAction: (FolderAction, FolderDto) -> Unit,
+    menuOpen: Boolean,
+    dismissMenu: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -1421,8 +1513,8 @@ private fun FolderRow(
             // Long-press opens the same menu as the 3-dot button, matching the
             // file rows; folders previously had no long-press at all.
             .combinedClickable(
-                onClick = onOpen,
-                onLongClick = { setMenuFor(folder) },
+                onClick = { onAction(FolderAction.OPEN, folder) },
+                onLongClick = { onAction(FolderAction.TOGGLE_MENU, folder) },
             )
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1431,33 +1523,24 @@ private fun FolderRow(
         Spacer(Modifier.width(12.dp))
         Text(folder.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         Box {
-            IconButton(onClick = { setMenuFor(if (menuFor === folder) null else folder) }) {
+            IconButton(onClick = { onAction(FolderAction.TOGGLE_MENU, folder) }) {
                 Icon(Icons.Default.MoreVert, contentDescription = LocalStrings.current.moreActions)
             }
-            DropdownMenu(expanded = menuFor === folder, onDismissRequest = { setMenuFor(null) }) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = dismissMenu) {
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionRename) },
                     leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onRename()
-                    },
+                    onClick = { onAction(FolderAction.RENAME, folder) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionShare) },
                     leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onShare()
-                    },
+                    onClick = { onAction(FolderAction.SHARE, folder) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onDelete()
-                    },
+                    onClick = { onAction(FolderAction.DELETE, folder) },
                 )
             }
         }
@@ -1468,21 +1551,12 @@ private fun FolderRow(
 private fun FileRow(
     file: FileDto,
     thumbs: ThumbnailLoader,
-    onOpen: () -> Unit,
-    onDownload: () -> Unit,
-    onRename: () -> Unit,
-    onMove: () -> Unit,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-    onFavorite: () -> Unit,
-    onArchive: () -> Unit,
-    onVersions: () -> Unit,
-    menuFor: Any?,
-    setMenuFor: (Any?) -> Unit,
-    selection: Set<String>? = null,
-    onToggleSelect: () -> Unit = {},
+    onAction: (FileAction, FileDto) -> Unit,
+    menuOpen: Boolean,
+    dismissMenu: () -> Unit,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
 ) {
-    val isSelected = selection?.contains(file.id) == true
     // Desktop has no long-press, so the checkbox shows on hover as well: it is
     // the only way a mouse user can start a multi-select here.
     var hovered by remember(file.id) { mutableStateOf(false) }
@@ -1491,8 +1565,11 @@ private fun FileRow(
             .fillMaxWidth()
             .onHoverChanged { hovered = it }
             .combinedClickable(
-                onClick = { if (selection != null) onToggleSelect() else onOpen() },
-                onLongClick = onToggleSelect,
+                onClick = {
+                    if (selectionMode) onAction(FileAction.TOGGLE_SELECT, file)
+                    else onAction(FileAction.OPEN, file)
+                },
+                onLongClick = { onAction(FileAction.TOGGLE_SELECT, file) },
             )
             // 8dp vertical: 40dp thumbnail + two text lines + 1dp divider comes
             // to 64dp, the top of the 56-64dp row band. At 10dp the row
@@ -1500,8 +1577,8 @@ private fun FileRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (selection == null && hovered) {
-            IconButton(onClick = onToggleSelect, modifier = Modifier.size(40.dp)) {
+        if (!selectionMode && hovered) {
+            IconButton(onClick = { onAction(FileAction.TOGGLE_SELECT, file) }, modifier = Modifier.size(40.dp)) {
                 Icon(
                     Icons.Default.RadioButtonUnchecked,
                     contentDescription = LocalStrings.current.actionSelect,
@@ -1520,53 +1597,41 @@ private fun FileRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (selection != null) {
+        if (selectionMode) {
             // The circle where the 3-dot used to be.
-            IconButton(onClick = onToggleSelect) {
+            IconButton(onClick = { onAction(FileAction.TOGGLE_SELECT, file) }) {
                 Icon(
-                    if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                    if (selected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
                     contentDescription = null,
-                    tint = if (isSelected) MaterialTheme.colorScheme.primary
+                    tint = if (selected) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         } else {
         Box {
-            IconButton(onClick = { setMenuFor(if (menuFor === file) null else file) }) {
+            IconButton(onClick = { onAction(FileAction.TOGGLE_MENU, file) }) {
                 Icon(Icons.Default.MoreVert, contentDescription = LocalStrings.current.moreActions)
             }
-            DropdownMenu(expanded = menuFor === file, onDismissRequest = { setMenuFor(null) }) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = dismissMenu) {
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionRename) },
                     leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onRename()
-                    },
+                    onClick = { onAction(FileAction.RENAME, file) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionMove) },
                     leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onMove()
-                    },
+                    onClick = { onAction(FileAction.MOVE, file) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionDownload) },
                     leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onDownload()
-                    },
+                    onClick = { onAction(FileAction.DOWNLOAD, file) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionShare) },
                     leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onShare()
-                    },
+                    onClick = { onAction(FileAction.SHARE, file) },
                 )
                 // Flag actions reflect the current state so the menu reads as the
                 // action it performs, matching the album selection bar wording.
@@ -1583,10 +1648,7 @@ private fun FileRow(
                             contentDescription = null,
                         )
                     },
-                    onClick = {
-                        setMenuFor(null)
-                        onFavorite()
-                    },
+                    onClick = { onAction(FileAction.FAVORITE, file) },
                 )
                 DropdownMenuItem(
                     text = {
@@ -1596,10 +1658,7 @@ private fun FileRow(
                         )
                     },
                     leadingIcon = { Icon(Icons.Default.Archive, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onArchive()
-                    },
+                    onClick = { onAction(FileAction.ARCHIVE, file) },
                 )
                 // Only offered for files: a folder has no content of its own to
                 // revision, and the server has no version endpoints for one.
@@ -1609,26 +1668,17 @@ private fun FileRow(
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionSelect) },
                     leadingIcon = { Icon(Icons.Default.CheckCircle, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onToggleSelect()
-                    },
+                    onClick = { onAction(FileAction.TOGGLE_SELECT, file) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.versionHistory) },
                     leadingIcon = { Icon(Icons.Default.History, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onVersions()
-                    },
+                    onClick = { onAction(FileAction.VERSIONS, file) },
                 )
                 DropdownMenuItem(
                     text = { Text(LocalStrings.current.actionDelete, color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                    onClick = {
-                        setMenuFor(null)
-                        onDelete()
-                    },
+                    onClick = { onAction(FileAction.DELETE, file) },
                 )
             }
         }

@@ -10,15 +10,11 @@ import com.linan.barezen_drive.platform.generateCover
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * Drives the whole upload pipeline for one file at a time (v0.0.1: a new
- * upload simply overwrites the single progress state; concurrent uploads are
- * out of scope until the UI needs them):
+ * Drives the whole upload pipeline for one file per call:
  *
  * 1. whole-file SHA-256, streamed through Sha256er over PickedFile.readRange
  *    chunks (the file is never fully loaded into memory);
@@ -30,25 +26,43 @@ import kotlin.time.Duration.Companion.milliseconds
  *    attempts fails the whole upload and the server session is aborted;
  * 4. uploadComplete, which returns the created FileDto.
  * 5. cover generation (images/videos): the client-side generated JPEG is PUT
- *    to /thumbnail. Any failure here is swallowed - the file itself is
- *    already uploaded; the cover only upgrades list tiles to previews.
+ *    to /thumbnail. Any failure here is logged and swallowed - the file itself
+ *    is already uploaded; the cover only upgrades list tiles to previews.
  *    Instant uploads skip this step: a cover for the same content hash is
  *    already stored server-side.
  *
- * Progress is exposed as a single StateFlow<Progress> with a phase enum;
- * hashing reports the streamed byte count, uploading reports the cumulative
- * uploaded bytes (received chunks count too), completing/done are terminal.
- * On cancellation (coroutine cancelled mid-upload) the server session is
- * aborted best-effort inside NonCancellable, then CancellationException is
- * rethrown. Backoff base is constructor-injectable so tests can use a small
- * value.
+ * ## Progress: per call, never a shared slot
+ *
+ * There is no manager-wide progress state. A single `_progress` field plus an
+ * `activeUploadId` used to live here, and both were single-slot: two uploads
+ * on one instance overwrote each other, so the UI showed one file's bar for
+ * another and cancelling the first aborted the second's server session.
+ * Progress is now per call through [upload]'s `onProgress`, and the session id
+ * a cancellation must abort is a local of the call that opened it. The
+ * durable, multi-row view the pages render is TransferCenter's, which already
+ * models one row per transfer; the manager only writes to it.
+ *
+ * On cancellation (coroutine cancelled mid-upload) that call's own server
+ * session is aborted best-effort inside NonCancellable, then
+ * CancellationException is rethrown. Backoff base is constructor-injectable so
+ * tests can use a small value.
  */
 class UploadManager(
     private val api: UploadApi,
     private val backoffBaseMs: Long = 200L,
     private val coverGen: suspend (PickedFile) -> ByteArray? = ::generateCover,
+    /**
+     * Where the cover pipeline's failures go. Both halves used to be a bare
+     * `getOrNull()`, so "uploaded, but it never got a cover" - the exact case
+     * nobody could chase - left no trace at all, and a local decoder failure
+     * was indistinguishable from a rejected PUT.
+     *
+     * Default is stdout: a cover is best-effort, so this must never be fatal.
+     * Tests pass a collector to assert on the two stages separately.
+     */
+    private val log: (String) -> Unit = { println(it) },
 ) {
-    enum class Phase { IDLE, HASHING, UPLOADING, COMPLETING, COVER, DONE, FAILED }
+    enum class Phase { HASHING, UPLOADING, COMPLETING, COVER, DONE, FAILED }
 
     data class Progress(
         val phase: Phase,
@@ -61,11 +75,6 @@ class UploadManager(
         val fraction: Double
             get() = if (bytesTotal <= 0L) 0.0 else (bytesDone.toDouble() / bytesTotal).coerceIn(0.0, 1.0)
     }
-
-    private val _progress = MutableStateFlow(Progress(Phase.IDLE, "", 0L, 0L))
-    val progress: StateFlow<Progress> = _progress
-
-    private var activeUploadId: String? = null
 
     suspend fun upload(
         file: PickedFile,
@@ -87,6 +96,11 @@ class UploadManager(
          *  album lane, everything else lands on the file transfer page. */
         lane: com.linan.barezen_drive.data.transfer.TransferLane =
             com.linan.barezen_drive.data.transfer.TransferLane.FILE,
+        /** This call's own progress. A caller driving one file at a time can
+         *  render it directly; anything that lists several uploads at once
+         *  (the files page) reads TransferCenter's rows instead, which is the
+         *  projection that survives this call returning. */
+        onProgress: ((Progress) -> Unit)? = null,
     ): Result<FileDto> {
         // Mirror every upload into the transfer centre so the UI can show
         // progress and history instead of a modal. Album-sync batches pass
@@ -108,8 +122,14 @@ class UploadManager(
                 com.linan.barezen_drive.data.transfer.RetryHandle(file, folderId, overwrite),
             )
         }
+        // The session THIS call opened. It was an instance field, so a second
+        // upload on the same manager overwrote it and the cancellation below
+        // aborted the wrong server session.
+        var sessionId: String? = null
         try {
-            val result = doUpload(file, folderId, transferId, cachedSha256, onHashed, overwrite)
+            val result = doUpload(file, folderId, transferId, cachedSha256, onHashed, overwrite, onProgress) {
+                sessionId = it
+            }
             if (transferId != null) {
                 result.fold(
                     onSuccess = { com.linan.barezen_drive.data.transfer.TransferCenter.done(transferId, it.id) },
@@ -124,12 +144,10 @@ class UploadManager(
             if (transferId != null) {
                 com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, "cancelled")
             }
-            activeUploadId?.let { id ->
+            sessionId?.let { id ->
                 runCatching { withContext(NonCancellable) { api.abort(id) } }
             }
             throw e
-        } finally {
-            activeUploadId = null
         }
     }
 
@@ -141,12 +159,20 @@ class UploadManager(
      * duplicate of the same work. Returns null when the row is not retryable
      * (album batch, or the row was cleared in the meantime).
      */
-    suspend fun retryFailed(transferId: String): Result<FileDto>? {
+    suspend fun retryFailed(
+        transferId: String,
+        onProgress: ((Progress) -> Unit)? = null,
+    ): Result<FileDto>? {
         val handle = com.linan.barezen_drive.data.transfer.TransferCenter.retryHandle(transferId) ?: return null
         com.linan.barezen_drive.data.transfer.TransferCenter.progress(transferId, 0, handle.file.size, reset = true)
         com.linan.barezen_drive.data.transfer.TransferCenter.clearError(transferId)
+        // Same per-call rule as upload(): a retry owns the session it opens, so
+        // cancelling it aborts that session and nothing else.
+        var sessionId: String? = null
         return try {
-            val result = doUpload(handle.file, handle.folderId, transferId, null, null, handle.overwrite)
+            val result = doUpload(
+                handle.file, handle.folderId, transferId, null, null, handle.overwrite, onProgress,
+            ) { sessionId = it }
             result.fold(
                 onSuccess = { com.linan.barezen_drive.data.transfer.TransferCenter.done(transferId, it.id) },
                 onFailure = { com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, it.message ?: "failed") },
@@ -154,6 +180,7 @@ class UploadManager(
             result
         } catch (e: CancellationException) {
             com.linan.barezen_drive.data.transfer.TransferCenter.fail(transferId, "cancelled")
+            sessionId?.let { id -> runCatching { withContext(NonCancellable) { api.abort(id) } } }
             throw e
         }
     }
@@ -165,11 +192,15 @@ class UploadManager(
         cachedSha256: String?,
         onHashed: ((String) -> Unit)?,
         overwrite: Boolean,
+        onProgress: ((Progress) -> Unit)?,
+        /** Hands the freshly opened server session back to the caller so only
+         *  that call can abort it. */
+        onSession: (String) -> Unit,
     ): Result<FileDto> {
         // 1) Whole-file SHA-256, streamed in fixed-size reads - unless the caller
         // already has a valid cached hash for this exact (uri, size, mtime), in
         // which case the file is unchanged and re-hashing is pure wasted I/O.
-        _progress.value = Progress(Phase.HASHING, file.name, 0L, file.size)
+        onProgress?.invoke(Progress(Phase.HASHING, file.name, 0L, file.size))
         val wholeSha = if (cachedSha256 != null) {
             transferId?.let { com.linan.barezen_drive.data.transfer.TransferCenter.progress(it, file.size / 2, file.size) }
             cachedSha256
@@ -180,7 +211,7 @@ class UploadManager(
                 val bytes = file.readRange(hashed, HASH_READ_BYTES) ?: break
                 hasher.update(bytes)
                 hashed += bytes.size
-                _progress.value = Progress(Phase.HASHING, file.name, hashed, file.size)
+                onProgress?.invoke(Progress(Phase.HASHING, file.name, hashed, file.size))
                 transferId?.let { com.linan.barezen_drive.data.transfer.TransferCenter.progress(it, hashed / 2, file.size) }
             }
             hasher.digestHex().also { onHashed?.invoke(it) }
@@ -188,7 +219,7 @@ class UploadManager(
 
         // 2) Init: server may match the hash (instant upload) or report
         //    already-received chunk indexes (resume of a previous session).
-        _progress.value = Progress(Phase.UPLOADING, file.name, 0L, file.size)
+        onProgress?.invoke(Progress(Phase.UPLOADING, file.name, 0L, file.size))
         transferId?.let { com.linan.barezen_drive.data.transfer.TransferCenter.progress(it, file.size / 2, file.size) }
         val init = api.init(
             UploadInitRequest(
@@ -200,18 +231,18 @@ class UploadManager(
                 takenAt = file.originDateMs,
                 overwrite = overwrite,
             ),
-        ).getOrElse { e -> return failed(file, 0L, e) }
+        ).getOrElse { e -> return failed(file, 0L, e, onProgress) }
         if (init.instantUpload) {
             // A malformed server response (instantUpload without a file payload) must
             // surface as Result.failure, not escape as an exception.
             val created = init.file
-                ?: return failed(file, 0L, ApiFailure.Network("instantUpload response missing file payload"))
-            _progress.value = Progress(Phase.DONE, file.name, file.size, file.size)
+                ?: return failed(file, 0L, ApiFailure.Network("instantUpload response missing file payload"), onProgress)
+            onProgress?.invoke(Progress(Phase.DONE, file.name, file.size, file.size))
             return Result.success(created)
         }
 
         // Track the session so a cancellation mid-chunks can abort it.
-        activeUploadId = init.uploadId
+        onSession(init.uploadId)
 
         val chunkSize = init.chunkSize.coerceAtLeast(1L)
         val expectedChunks = ((file.size + chunkSize - 1) / chunkSize).toInt()
@@ -225,12 +256,12 @@ class UploadManager(
             val length = minOf(chunkSize, file.size - offset).toInt()
             val doneBytes = minOf((index + 1).toLong() * chunkSize, file.size)
             if (index in init.receivedChunks) {
-                _progress.value = Progress(Phase.UPLOADING, file.name, doneBytes, file.size)
+                onProgress?.invoke(Progress(Phase.UPLOADING, file.name, doneBytes, file.size))
                 transferId?.let { com.linan.barezen_drive.data.transfer.TransferCenter.progress(it, file.size / 2 + doneBytes / 2, file.size) }
                 continue
             }
             val bytes = file.readRange(offset, length)
-                ?: return failed(file, doneBytes, ApiFailure.Network("readRange returned null at offset $offset"))
+                ?: return failed(file, doneBytes, ApiFailure.Network("readRange returned null at offset $offset"), onProgress)
             val chunkSha = Sha256er.newInstance().apply { update(bytes) }.digestHex()
             var attempt = 0
             while (true) {
@@ -241,39 +272,55 @@ class UploadManager(
                     // Give up: surface the failure and abort the session so no
                     // partial upload is left behind server-side.
                     runCatching { api.abort(init.uploadId) }
-                    return failed(file, doneBytes, result.exceptionOrNull() ?: ApiFailure.Network("chunk $index failed"))
+                    return failed(
+                        file, doneBytes, result.exceptionOrNull() ?: ApiFailure.Network("chunk $index failed"),
+                        onProgress,
+                    )
                 }
                 delay((backoffBaseMs * (1L shl (attempt - 1))).milliseconds)
             }
-            _progress.value = Progress(Phase.UPLOADING, file.name, doneBytes, file.size)
+            onProgress?.invoke(Progress(Phase.UPLOADING, file.name, doneBytes, file.size))
             transferId?.let { com.linan.barezen_drive.data.transfer.TransferCenter.progress(it, file.size / 2 + doneBytes / 2, file.size) }
         }
 
         // 4) Complete.
-        activeUploadId = init.uploadId
-        _progress.value = Progress(Phase.COMPLETING, file.name, file.size, file.size)
+        onSession(init.uploadId)
+        onProgress?.invoke(Progress(Phase.COMPLETING, file.name, file.size, file.size))
         val dto = api.complete(init.uploadId).getOrElse { e ->
-            _progress.value = Progress(Phase.FAILED, file.name, file.size, file.size, e)
+            onProgress?.invoke(Progress(Phase.FAILED, file.name, file.size, file.size, e))
             return Result.failure(e)
         }
 
         // 5) Best-effort cover upload; never fails the upload itself. Always try
         // for supported types: the row flag may be stale for same-content files
         // and the server-side PUT is idempotent (skips existing covers).
-        _progress.value = Progress(Phase.COVER, file.name, file.size, file.size)
-        val cover = runCatching { coverGen(file) }.getOrNull()
+        //
+        // The two stages are logged apart on purpose: a decoder that cannot
+        // handle the file and a server that rejected the PUT need completely
+        // different fixes, and one merged "cover failed" line told the reader
+        // nothing about which one happened.
+        onProgress?.invoke(Progress(Phase.COVER, file.name, file.size, file.size))
+        val cover = runCatching { coverGen(file) }
+            .onFailure { e -> log("cover gen failed for ${file.name}: ${e.message ?: e.toString()}") }
+            .getOrNull()
         if (cover != null) {
-            runCatching { api.putThumbnail(dto.id, cover) }
+            runCatching { api.putThumbnail(dto.id, cover).getOrThrow() }
+                .onFailure { e -> log("cover put failed for ${dto.id}: ${e.message ?: e.toString()}") }
             // Direct-to-cache: the list surfaces show this cover on the next
             // frame instead of refetching it from the server one tile at a time.
             com.linan.barezen_drive.ui.media.ThumbnailHub.put(dto.id, cover)
         }
-        _progress.value = Progress(Phase.DONE, file.name, file.size, file.size)
+        onProgress?.invoke(Progress(Phase.DONE, file.name, file.size, file.size))
         return Result.success(dto)
     }
 
-    private fun failed(file: PickedFile, bytesDone: Long, error: Throwable): Result<FileDto> {
-        _progress.value = Progress(Phase.FAILED, file.name, bytesDone, file.size, error)
+    private fun failed(
+        file: PickedFile,
+        bytesDone: Long,
+        error: Throwable,
+        onProgress: ((Progress) -> Unit)?,
+    ): Result<FileDto> {
+        onProgress?.invoke(Progress(Phase.FAILED, file.name, bytesDone, file.size, error))
         return Result.failure(error)
     }
 

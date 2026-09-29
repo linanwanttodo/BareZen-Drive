@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
@@ -37,6 +38,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -54,9 +56,13 @@ import com.linan.barezen_drive.core.dto.SharedContentsResponse
 import com.linan.barezen_drive.core.dto.SharedFileDto
 import com.linan.barezen_drive.core.dto.SharedFolderDto
 import com.linan.barezen_drive.core.dto.SharedInfoResponse
+import com.linan.barezen_drive.data.api.ApiFailure
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.platform.FileSaveRequest
+import com.linan.barezen_drive.platform.SaveOutcome
+import com.linan.barezen_drive.platform.outcome
 import com.linan.barezen_drive.platform.rememberFileSaver
+import com.linan.barezen_drive.ui.component.EmptyState
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.ui.media.formatDateTime
 import kotlinx.coroutines.Dispatchers
@@ -77,22 +83,62 @@ fun ShareScreen(
     onExit: () -> Unit,
 ) {
     var info by remember { mutableStateOf<SharedInfoResponse?>(null) }
-    var invalid by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<ShareProblem?>(null) }
     var loading by remember { mutableStateOf(true) }
+    // Bumped by the retry button, which re-enters the effect below.
+    var attempt by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(token) {
+    LaunchedEffect(token, attempt) {
+        loading = true
+        problem = null
         repo.sharedInfo(token).fold(
             onSuccess = { info = it; loading = false },
-            onFailure = { invalid = true; loading = false },
+            onFailure = { problem = shareProblemFor(it); loading = false },
         )
     }
 
     val i = info
     when {
         loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        invalid || i == null -> InvalidShare(onExit)
+        // A link that is alive but unreachable is the common case on a phone
+        // that just lost signal. Telling the visitor the link died sends them
+        // off to ask the sender for a new one when all they had to do was tap
+        // retry.
+        problem == ShareProblem.UNREACHABLE -> ShareUnreachable { attempt++ }
+        problem != null || i == null -> InvalidShare(onExit)
         i.type == "file" -> SharedFileView(token, i, repo, onExit)
         else -> SharedFolderView(token, i, repo, onExit)
+    }
+}
+
+/** Why the share entry could not be opened, as far as the client can tell. */
+enum class ShareProblem { INVALID, UNREACHABLE }
+
+/**
+ * The server answers an unknown, revoked or expired token with 404 and nothing
+ * else; a share that was never valid is indistinguishable from one that was
+ * pulled. Everything else - no signal, a timeout, a 5xx, an unparseable body -
+ * is a link that may well be fine, so it gets a retry instead of a dead end.
+ */
+fun shareProblemFor(failure: Throwable): ShareProblem =
+    if ((failure as? ApiFailure.Http)?.httpStatus in GONE_STATUSES) {
+        ShareProblem.INVALID
+    } else {
+        ShareProblem.UNREACHABLE
+    }
+
+private val GONE_STATUSES = setOf(404, 410)
+
+@Composable
+private fun ShareUnreachable(onRetry: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        EmptyState(
+            icon = Icons.Default.CloudOff,
+            title = LocalStrings.current.shareLoadFailed,
+            actionLabel = LocalStrings.current.actionRetry,
+            onAction = onRetry,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
@@ -130,14 +176,22 @@ private fun SharedFileView(
     onExit: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val snackbar = SnackbarHostState()
+    // remembered, not bare: a fresh SnackbarHostState per recomposition means
+    // the host renders a different instance than the one a launched coroutine
+    // holds, so showSnackbar's message is never drawn and the call never
+    // returns - it suspends waiting for a dismissal that cannot happen.
+    val snackbar = remember { SnackbarHostState() }
     // A guest has no transfer centre to look at, so this one keeps the plain
     // saver and reports through the screen's own snackbar. It still has to
     // build a FileSaveRequest now that the request carries the size and the
     // caller's key.
+    // Only a genuine write failure is worth a toast here. Dismissing the system
+    // save dialog is a decision the user just made, not a broken download.
     val saver = rememberFileSaver(
-        onDone = { _, saved ->
-            if (saved == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+        onDone = { _, result ->
+            if (result.outcome() == SaveOutcome.FAILED) {
+                scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+            }
         },
         onProgress = { _, _ -> },
     )
@@ -268,7 +322,11 @@ private fun SharedFolderView(
     val currentId = crumbs.lastOrNull()?.id
     var listing by remember { mutableStateOf<SharedContentsResponse?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    val snackbar = SnackbarHostState()
+    // remembered, not bare: a fresh SnackbarHostState per recomposition means
+    // the host renders a different instance than the one a launched coroutine
+    // holds, so showSnackbar's message is never drawn and the call never
+    // returns - it suspends waiting for a dismissal that cannot happen.
+    val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(currentId) {
         repo.sharedContents(token, currentId).fold(
@@ -366,8 +424,10 @@ private fun SharedFileRow(
 ) {
     val scope = rememberCoroutineScope()
     val saver = rememberFileSaver(
-        onDone = { _, saved ->
-            if (saved == null) scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+        onDone = { _, result ->
+            if (result.outcome() == SaveOutcome.FAILED) {
+                scope.launch { snackbar.showSnackbar(I18n.strings.downloadFailed) }
+            }
         },
         onProgress = { _, _ -> },
     )

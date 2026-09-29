@@ -93,7 +93,11 @@ fun ArchiveScreen(
     fun unarchive(file: FileDto) {
         scope.launch {
             repo.setArchived(file.id, false).fold(
-                onSuccess = { files = files.filterNot { f -> f.id == file.id }; snackbar.showSnackbar(strings.actionUnarchive) },
+                // Past tense, not the button label: "unarchive" as a result reads
+                // like the name of the control the user just pressed, and the
+                // trash screen already reports restore/delete with real
+                // outcome wording.
+                onSuccess = { files = files.filterNot { f -> f.id == file.id }; snackbar.showSnackbar(I18n.strings.unarchived) },
                 onFailure = { snackbar.showSnackbar(I18n.strings.operationFailed) },
             )
         }

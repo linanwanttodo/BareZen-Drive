@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
@@ -50,6 +51,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
+import com.linan.barezen_drive.core.dto.TrashResponse
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.i18n.LocalStrings
@@ -58,12 +60,25 @@ import com.linan.barezen_drive.ui.media.fileIcon
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import kotlinx.coroutines.launch
 
+/** Rows per request; the same page size the contents and album grids use. */
+private const val TRASH_PAGE_SIZE = 100
+
+/** One page of the trash plus the cursor for the next, older one. */
+private data class TrashUi(val files: List<FileDto>, val nextCursor: String? = null)
+
 /**
  * Trash: soft-deleted files that keep their bytes for the retention window.
  * Each row can be restored to the timeline or purged permanently; the header
  * action empties the whole trash after an explicit confirmation. A live file
  * id can never reach here (plain delete is the only thing that lands a row in
  * the trash), and rows past the window are dropped by the server cleanup loop.
+ *
+ * The server answers with one page (100 newest trashed rows) plus a cursor:
+ * the trash can hold every photo the account ever deleted, and one response
+ * carrying all of them is what made opening this screen expensive after a bulk
+ * delete. [loadMorePage] fetches the page after a cursor and appends it; while
+ * it is null the screen shows the first page and hides the footer, because a
+ * "load more" button that cannot load anything is worse than no button.
  */
 @Composable
 fun TrashScreen(
@@ -71,21 +86,25 @@ fun TrashScreen(
     thumbs: ThumbnailLoader,
     onBack: () -> Unit,
     onPreview: (List<FileDto>, Int) -> Unit,
+    loadMorePage: (suspend (cursor: String) -> Result<TrashResponse>)? = null,
 ) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val strings = LocalStrings.current
-    var files by remember { mutableStateOf<List<FileDto>>(emptyList()) }
+    var state by remember { mutableStateOf<TrashUi?>(null) }
     var loading by remember { mutableStateOf(true) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var loadMoreError by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmEmpty by remember { mutableStateOf(false) }
     var confirmPurge by remember { mutableStateOf<FileDto?>(null) }
+    val files = state?.files.orEmpty()
 
     fun load() {
         loading = true
         scope.launch {
             repo.trash().fold(
-                onSuccess = { files = it.files; error = null },
+                onSuccess = { state = TrashUi(it.files, it.nextCursor); error = null; loadMoreError = null },
                 onFailure = { error = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed },
             )
             loading = false
@@ -93,10 +112,46 @@ fun TrashScreen(
     }
     LaunchedEffect(Unit) { load() }
 
+    /** Fetches the next page and appends it; the rows already on screen stay put. */
+    fun loadMore() {
+        val cursor = state?.nextCursor ?: return
+        val fetch = loadMorePage ?: return
+        if (loadingMore) return
+        loadingMore = true
+        loadMoreError = null
+        scope.launch {
+            fetch(cursor).fold(
+                onSuccess = { page ->
+                    val current = state ?: return@fold
+                    // Append de-duplicated by id: a file trashed or restored
+                    // between pages can shift the cursor and hand back a row
+                    // the grid already shows.
+                    val known = current.files.mapTo(HashSet()) { it.id }
+                    state = current.copy(
+                        files = current.files + page.files.filter { known.add(it.id) },
+                        nextCursor = page.nextCursor,
+                    )
+                    loadingMore = false
+                },
+                onFailure = {
+                    // The rows already loaded stay; the footer offers a retry.
+                    loadMoreError = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed
+                    loadingMore = false
+                },
+            )
+        }
+    }
+
+    // A row leaving the trash is dropped from the loaded pages in place, the
+    // cursor untouched: the remaining pages are still the same keyset walk.
+    fun dropRow(id: String) {
+        state = state?.let { it.copy(files = it.files.filterNot { f -> f.id == id }) }
+    }
+
     fun restore(file: FileDto) {
         scope.launch {
             repo.restoreFromTrash(file.id).fold(
-                onSuccess = { files = files.filterNot { f -> f.id == file.id }; snackbar.showSnackbar(strings.restored) },
+                onSuccess = { dropRow(file.id); snackbar.showSnackbar(strings.restored) },
                 onFailure = { snackbar.showSnackbar(I18n.strings.operationFailed) },
             )
         }
@@ -104,7 +159,7 @@ fun TrashScreen(
     fun purge(file: FileDto) {
         scope.launch {
             repo.deleteForever(file.id).fold(
-                onSuccess = { files = files.filterNot { f -> f.id == file.id }; snackbar.showSnackbar(strings.deletedForever) },
+                onSuccess = { dropRow(file.id); snackbar.showSnackbar(strings.deletedForever) },
                 onFailure = { snackbar.showSnackbar(I18n.strings.operationFailed) },
             )
         }
@@ -112,7 +167,7 @@ fun TrashScreen(
     fun empty() {
         scope.launch {
             repo.emptyTrash().fold(
-                onSuccess = { files = emptyList(); snackbar.showSnackbar(strings.trashEmptied) },
+                onSuccess = { state = TrashUi(emptyList()); snackbar.showSnackbar(strings.trashEmptied) },
                 onFailure = { snackbar.showSnackbar(I18n.strings.operationFailed) },
             )
         }
@@ -174,6 +229,28 @@ fun TrashScreen(
                         onRestore = { restore(file) },
                         onPurge = { confirmPurge = file },
                     )
+                }
+                // Load-more footer, only while older pages actually exist and
+                // something can fetch them: a footer that shows an error or a
+                // spinner the screen can never resolve is worse than none.
+                if (state?.nextCursor != null && loadMorePage != null) {
+                    item(key = "more", span = { GridItemSpan(maxLineSpan) }) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+                            when {
+                                loadMoreError != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        loadMoreError!!,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    TextButton(onClick = { loadMore() }) { Text(strings.actionRetry) }
+                                }
+                                loadingMore -> CircularProgressIndicator(Modifier.size(24.dp))
+                                else -> TextButton(onClick = { loadMore() }) { Text(strings.loadMore) }
+                            }
+                        }
+                    }
                 }
             }
         }

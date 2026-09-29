@@ -104,10 +104,19 @@ fun HomeScreen(
     var recent by remember { mutableStateOf<List<FileDto>?>(null) }
     var album by remember { mutableStateOf<List<FileDto>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    // The album strip used to swallow its failure and simply not render, so a
+    // dead network read as "this account has no photos" and the whole section
+    // was unrecoverable without switching tabs. Kept apart from `error` so one
+    // broken section cannot blank the other.
+    var albumError by remember { mutableStateOf<String?>(null) }
     var stats by remember { mutableStateOf<ServerStatsDto?>(null) }
     var statsUnavailable by remember { mutableStateOf(false) }
     var latency by remember { mutableStateOf<Long?>(null) }
-    val snackbar = SnackbarHostState()
+    // remembered, not bare: a fresh SnackbarHostState per recomposition means
+    // the host renders a different instance than the one a launched coroutine
+    // holds, so showSnackbar's message is never drawn and the call never
+    // returns - it suspends waiting for a dismissal that cannot happen.
+    val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     // One shared saver for the home tab; download failures surface through
     // this screen's snackbar, same as the files screen.
@@ -118,8 +127,8 @@ fun HomeScreen(
     // like the files screen does - a bare tap must never destroy data.
     var confirmDelete by remember { mutableStateOf<List<FileDto>?>(null) }
 
-    // Sections load independently so one failure cannot blank the page; the
-    // album strip simply stays hidden when its request fails.
+    // Sections load independently so one failure cannot blank the page; each
+    // reports its own error and offers its own retry.
     fun reload() {
         scope.launch {
             repo.recentFiles(RECENT_LIMIT).fold(
@@ -127,8 +136,8 @@ fun HomeScreen(
                 onFailure = { if (recent == null) error = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed },
             )
             repo.album(ALBUM_STRIP_SIZE).fold(
-                onSuccess = { album = it.files },
-                onFailure = { /* album strip stays hidden on failure */ },
+                onSuccess = { album = it.files; albumError = null },
+                onFailure = { albumError = it.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed },
             )
         }
     }
@@ -241,7 +250,21 @@ fun HomeScreen(
                     ServerStatusCard(stats, latency, statsUnavailable)
                 }
                 // ---- Album section ----
-                if (!albumList.isNullOrEmpty()) {
+                if (albumError != null) {
+                    // The section keeps its place instead of vanishing: a hidden
+                    // strip reads as "no photos", a card with a retry reads as
+                    // "could not load them".
+                    item(key = "album_header") {
+                        SectionHeader(
+                            title = LocalStrings.current.tabAlbum,
+                            action = null,
+                            onAction = null,
+                        )
+                    }
+                    item(key = "album_error") {
+                        AlbumStripError(message = albumError ?: LocalStrings.current.loadFailed, onRetry = { reload() })
+                    }
+                } else if (!albumList.isNullOrEmpty()) {
                     item(key = "album_header") {
                         SectionHeader(
                             title = LocalStrings.current.tabAlbum,
@@ -272,12 +295,17 @@ fun HomeScreen(
                 }
                 if (error != null && recentList == null) {
                     item(key = "recent_error") {
-                        Text(
-                            error ?: LocalStrings.current.loadFailed,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(16.dp),
-                        )
+                        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                            Text(
+                                error ?: LocalStrings.current.loadFailed,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            // Files, album and trash all pair their error text
+                            // with a retry. Home did not, so the only way back
+                            // was switching tabs and hoping.
+                            TextButton(onClick = { reload() }) { Text(LocalStrings.current.actionRetry) }
+                        }
                     }
                 } else if (recentList == null) {
                     item(key = "recent_loading") {
@@ -359,6 +387,35 @@ private fun openRecent(
         // Unknown types open the preview too (its Unsupported pane offers an
         // explicit download): tapping a file must never silently start one.
         PreviewKind.OTHER -> onPreview(listOf(file), 0)
+    }
+}
+
+/**
+ * Placeholder in the album strip's slot when its request failed. A flat panel
+ * with the reason and a retry - no spinner (the request already finished) and
+ * no empty-state icon, which would claim there is nothing to show.
+ */
+@Composable
+private fun AlbumStripError(message: String, onRetry: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = LocalPanelAlpha.current),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onRetry) { Text(LocalStrings.current.actionRetry) }
+        }
     }
 }
 

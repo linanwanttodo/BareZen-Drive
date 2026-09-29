@@ -37,7 +37,7 @@ private class CreateDocumentTyped :
 
 @Composable
 actual fun rememberFileSaver(
-    onDone: (FileSaveRequest, String?) -> Unit,
+    onDone: (FileSaveRequest, FileSaveResult) -> Unit,
     onProgress: (FileSaveRequest, Long) -> Unit,
 ): (FileSaveRequest) -> Unit {
     val ctx = LocalContext.current
@@ -47,33 +47,45 @@ actual fun rememberFileSaver(
         val p = pending
         pending = null
         if (uri == null || p == null) {
-            // Cancelled at the document picker: nothing was copied, so the
-            // caller closes its row as cancelled rather than as a failure.
-            if (p != null) onDone(p, null)
+            // Backed out at the document picker: nothing was copied and nothing
+            // went wrong, so the caller closes its row quietly instead of
+            // telling the user their download failed.
+            if (p != null) onDone(p, FileSaveResult.Cancelled)
             return@rememberLauncherForActivityResult
         }
         scope.launch {
-            val ok = try {
-                ctx.contentResolver.openOutputStream(uri)?.use { out ->
+            val result = try {
+                val out = ctx.contentResolver.openOutputStream(uri)
+                    ?: throw IllegalStateException("openOutputStream returned null")
+                out.use { stream ->
                     val ch = p.open()
                     val buf = ByteArray(1 shl 16)
                     var written = 0L
                     while (true) {
                         val n = ch.readAvailable(buf, 0, buf.size)
                         if (n == -1) break
-                        out.write(buf, 0, n)
+                        stream.write(buf, 0, n)
                         written += n
                         // Reported per chunk: a large file used to be minutes of
                         // nothing at all after the dialog closed.
                         onProgress(p, written)
                     }
-                    out.flush()
-                    true
-                } ?: false
+                    stream.flush()
+                }
+                FileSaveResult.Saved(uri.toString())
             } catch (t: Throwable) {
-                false
+                // A throw before the first byte (no such document, revoked
+                // permission, disk full on open) is still a failure: the caller
+                // must not have to guess it from the absence of progress.
+                // The throwable used to be dropped on the floor, so quota
+                // exceeded / revoked uri / no space were indistinguishable.
+                android.util.Log.w(
+                    "FileSaver",
+                    "save failed for ${p.name}: ${t::class.simpleName} ${t.message}",
+                )
+                FileSaveResult.Failed(t::class.simpleName ?: "error")
             }
-            onDone(p, if (ok) uri.toString() else null)
+            onDone(p, result)
         }
     }
     return { req ->

@@ -5,7 +5,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
+import com.linan.barezen_drive.i18n.I18n
 import com.linan.barezen_drive.platform.FileSaveRequest
+import com.linan.barezen_drive.platform.FileSaveResult
+import com.linan.barezen_drive.platform.SaveOutcome
+import com.linan.barezen_drive.platform.outcome
 import com.linan.barezen_drive.platform.rememberFileSaver
 import kotlinx.coroutines.launch
 
@@ -22,8 +26,14 @@ import kotlinx.coroutines.launch
  * failed with the reason on error, removed when the user backed out of the save
  * dialog (nothing was copied, so there is nothing to report).
  *
- * @param onFailed invoked after a cancelled-or-failed save so the screen can
- *   show its own wording; the row already carries the detail.
+ * The row's fate comes from the saver's explicit result, not from whether a
+ * progress callback happened to fire. Inferring it that way cost us a real
+ * failure: a write that died before its first byte reported no bytes and was
+ * therefore discarded as a cancel.
+ *
+ * @param onFailed invoked only for a genuinely failed save (never for a
+ *   cancelled one) so the screen can show its own wording; the row already
+ *   carries the detail.
  */
 @Composable
 fun rememberDownloadSaver(
@@ -31,31 +41,24 @@ fun rememberDownloadSaver(
     onFailed: suspend () -> Unit,
 ): (FileDto) -> Unit {
     val scope = rememberCoroutineScope()
-    // file id -> transfer row id, and the ids that actually received bytes: a
-    // save-dialog cancel never reports progress, which is how we tell it apart
-    // from a failed write.
+    // file id -> transfer row id, so a completion closes its own row.
     val rows = remember { mutableMapOf<String, String>() }
-    val started = remember { mutableSetOf<String>() }
 
     val saver = rememberFileSaver(
-        onDone = { req: FileSaveRequest, saved: String? ->
+        onDone = { req: FileSaveRequest, result: FileSaveResult ->
             val row = rows.remove(req.id)
-            val copied = req.id in started
-            started.remove(req.id)
-            when {
-                saved != null -> row?.let { TransferCenter.done(it, fileId = req.id) }
-                // Nothing was written: the user left the save dialog. Not an
-                // error, and definitely not a toast about a file that never
-                // started downloading.
-                !copied -> row?.let { TransferCenter.discard(it) }
-                else -> {
-                    row?.let { TransferCenter.fail(it, "下载失败") }
+            when (result.outcome()) {
+                SaveOutcome.DONE -> row?.let { TransferCenter.done(it, fileId = req.id) }
+                // The user left the save dialog. Not an error, and definitely not
+                // a toast about a file that never started downloading.
+                SaveOutcome.SILENT -> row?.let { TransferCenter.discard(it) }
+                SaveOutcome.FAILED -> {
+                    row?.let { TransferCenter.fail(it, I18n.strings.downloadFailed) }
                     scope.launch { onFailed() }
                 }
             }
         },
         onProgress = { req: FileSaveRequest, done: Long ->
-            started += req.id
             rows[req.id]?.let { TransferCenter.progress(it, done, req.size) }
         },
     )

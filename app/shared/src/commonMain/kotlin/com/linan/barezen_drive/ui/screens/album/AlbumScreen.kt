@@ -74,6 +74,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
@@ -173,7 +174,11 @@ fun AlbumScreen(
     avatar: @Composable () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
-    val snackbar = SnackbarHostState()
+    // remembered, not bare: a fresh SnackbarHostState per recomposition means
+    // the host renders a different instance than the one a launched coroutine
+    // holds, so showSnackbar's message is never drawn and the call never
+    // returns - it suspends waiting for a dismissal that cannot happen.
+    val snackbar = remember { SnackbarHostState() }
     // Loaded pages of the timeline, newest first. Kept as one list rather than
     // derived on demand because the load-more footer keys its request on this
     // instance: a new page has to produce a new list, a recomposition must not.
@@ -200,7 +205,11 @@ fun AlbumScreen(
     // of dropping them silently. [failedReason] is the first error message.
     var failedUploads by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
     var failedReason by remember { mutableStateOf("") }
-    val progress by uploader.progress.collectAsState()
+    // Progress of THIS screen's own batch. It used to read the manager's
+    // single shared progress flow, which any other upload on the same manager
+    // could overwrite; the manager now reports per call, so the dialog can
+    // only ever show the photo the batch is actually on.
+    var uploadProgress by remember { mutableStateOf<com.linan.barezen_drive.data.upload.UploadManager.Progress?>(null) }
     // This device's own album folder: uploads always target it. Kept apart
     // from albumFolderId (the currently *browsed* scope: a device folder, a
     // category, or the album root for "all devices"), so switching the
@@ -274,6 +283,11 @@ fun AlbumScreen(
     }
     var collections by remember { mutableStateOf<List<CollectionTile>>(emptyList()) }
     var collectionsLoading by remember { mutableStateOf(false) }
+    // The cover requests used to be getOrNull() - a failure and an empty folder
+    // were the same thing, so offline the landing page showed a wall of plain
+    // icons with no error and no way back. The timeline already had an error
+    // branch; the landing page gets the same three states.
+    var collectionsError by remember { mutableStateOf<String?>(null) }
     // Bumped when a file lands on the server: the landing page's covers are
     // "the newest photo of each folder" and go stale the moment anything is
     // uploaded, even when the folder list itself is unchanged.
@@ -318,8 +332,19 @@ fun AlbumScreen(
         val scope = albumFolderId ?: return@LaunchedEffect
         if (timelineMode || allDevicesScope) return@LaunchedEffect
         collectionsLoading = true
-        suspend fun coverOf(folderId: String?): FileDto? =
-            repo.album(1, null, folderId).getOrNull()?.files?.firstOrNull()
+        collectionsError = null
+        // Records the first failure instead of aborting: one unreachable
+        // category must not cost the covers of all the others. A null cover
+        // still renders (icon tile), the error row above the grid explains why
+        // and offers the retry.
+        suspend fun coverOf(folderId: String?): FileDto? {
+            val r = repo.album(1, null, folderId)
+            val e = r.exceptionOrNull()
+            if (e != null && collectionsError == null) {
+                collectionsError = e.message?.takeIf { m -> m.isNotBlank() } ?: I18n.strings.loadFailed
+            }
+            return r.getOrNull()?.files?.firstOrNull()
+        }
         val tiles = mutableListOf(CollectionTile(allPhotosLabel, scope, coverOf(scope)))
         for ((name, id) in categories) {
             tiles.add(CollectionTile(name, id, coverOf(id)))
@@ -363,18 +388,20 @@ fun AlbumScreen(
     // Upload speed: derived from consecutive progress callbacks, sampled at
     // most once per 500 ms.
     var speedText by remember { mutableStateOf("…") }
+    // Same clock as the dialog: the batch's own onProgress feed, not a global
+    // flow that another upload could move under our feet.
     LaunchedEffect(pendingUploads) {
         if (pendingUploads.isEmpty()) return@LaunchedEffect
         var lastAt = monotonicNowMs()
         var lastBytes = 0L
-        uploader.progress.collect { p ->
+        snapshotFlow { uploadProgress?.bytesDone }.collect { bytesDone ->
             val now = monotonicNowMs()
             val dt = now - lastAt
-            if (dt >= 500) {
-                val rate = ((p.bytesDone - lastBytes).coerceAtLeast(0) / (dt / 1000.0)).toLong()
+            if (bytesDone != null && dt >= 500) {
+                val rate = ((bytesDone - lastBytes).coerceAtLeast(0) / (dt / 1000.0)).toLong()
                 speedText = if (rate >= 0) com.linan.barezen_drive.ui.screens.files.formatFileSize(rate) + "/s" else "…"
                 lastAt = now
-                lastBytes = p.bytesDone
+                lastBytes = bytesDone
             }
         }
     }
@@ -550,7 +577,15 @@ fun AlbumScreen(
             // inside the child so a failure is not thrown away.
             var outcome: Result<com.linan.barezen_drive.core.dto.FileDto>? = null
             uploadJob = launch {
-                outcome = uploader.upload(picked, perFile, lane = com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)
+                outcome = uploader.upload(
+                    picked,
+                    perFile,
+                    lane = com.linan.barezen_drive.data.transfer.TransferLane.ALBUM,
+                    // Per-call feed for the progress dialog: only this photo's
+                    // phases, even if something else uploads through the same
+                    // manager at the same time.
+                    onProgress = { uploadProgress = it },
+                )
             }
             uploadJob?.join()
             uploadJob = null
@@ -900,6 +935,30 @@ fun AlbumScreen(
                             bottom = BottomBarClearance,
                         ),
                     ) {
+                        // A failed cover request is its own state, above the
+                        // tiles: the grid still renders (icon covers), so the
+                        // error cannot be mistaken for "these albums are empty".
+                        val coverError = collectionsError
+                        if (coverError != null) {
+                            item(key = "collections_error") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        coverError,
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(onClick = { collectionsTick++ }) {
+                                        Text(LocalStrings.current.actionRetry)
+                                    }
+                                }
+                            }
+                        }
                         items(collections.size, key = { collections[it].folderId }) { i ->
                             val tile = collections[i]
                             CollectionCoverTile(tile = tile, thumbs = thumbs, onClick = {
@@ -1275,40 +1334,51 @@ fun AlbumScreen(
                 },
             )
         } else if (pendingUploads.isNotEmpty() && uploadDialogVisible) {
-            val p = progress
+            val p = uploadProgress
             AlertDialog(
                 containerColor = MaterialTheme.colorScheme.surface,
                 onDismissRequest = { uploadDialogVisible = false },
                 title = { Text(LocalStrings.current.uploadingGeneric) },
                 text = {
                     Column {
-                        Text(
-                            p.fileName,
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        if (p.phase == com.linan.barezen_drive.data.upload.UploadManager.Phase.FAILED) {
-                            // A failure can also land while the batch continues
-                            // with the next photo: show it instead of a bar that
-                            // will never advance.
+                        if (p == null) {
+                            // Between "batch started" and the first chunk: no
+                            // file has reported in yet.
                             Text(
-                                p.error?.message ?: LocalStrings.current.uploadFailedRetry,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
+                                LocalStrings.current.measuring,
+                                style = MaterialTheme.typography.bodyMedium,
                             )
+                            Spacer(Modifier.height(10.dp))
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         } else {
-                            LinearProgressIndicator(
-                                progress = { p.fraction.toFloat() },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(Modifier.height(8.dp))
                             Text(
-                                "${(p.fraction * 100).toInt()}% · $speedText",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                p.fileName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
+                            Spacer(Modifier.height(10.dp))
+                            if (p.phase == com.linan.barezen_drive.data.upload.UploadManager.Phase.FAILED) {
+                                // A failure can also land while the batch continues
+                                // with the next photo: show it instead of a bar that
+                                // will never advance.
+                                Text(
+                                    p.error?.message ?: LocalStrings.current.uploadFailedRetry,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            } else {
+                                LinearProgressIndicator(
+                                    progress = { p.fraction.toFloat() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "${(p.fraction * 100).toInt()}% · $speedText",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 },
