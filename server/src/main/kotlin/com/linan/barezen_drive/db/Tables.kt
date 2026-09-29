@@ -121,6 +121,26 @@ object UploadChunksTable : Table("upload_chunks") {
 // keeps the blob referenced until it is pruned (explicitly, beyond the
 // retention cap, or together with the file). Rows go away only through
 // explicit deletes or the cascade below, never silently.
+/**
+ * Blobs that lost their last reference and are waiting out a grace period
+ * before their bytes are unlinked.
+ *
+ * The table is the point of the grace period: the previous code decided "this
+ * blob is garbage" and unlinked it in the same breath, which left a window
+ * between that decision and the unlink that a concurrent dedup upload could
+ * slip through (exists() passes, the reference row commits, the bytes are
+ * already gone - data loss). Queuing the key instead turns the decision into
+ * something a later pass can re-check, and a key that gained a reference again
+ * simply leaves the queue.
+ */
+object BlobDeleteQueueTable : Table("blob_delete_queue") {
+    val storageKey = varchar("storage_key", 512)
+    /** When the key was first queued. Never rewritten by a re-queue, or a delete
+     *  path that runs twice would restart the clock and leak the blob. */
+    val queuedAt = long("queued_at")
+    override val primaryKey = PrimaryKey(storageKey)
+}
+
 object FileVersionsTable : Table("file_versions") {
     val id = uuid("id")
     val file = uuid("file_id").references(FilesTable.id, onDelete = ReferenceOption.CASCADE)

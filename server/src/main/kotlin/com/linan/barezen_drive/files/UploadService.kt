@@ -23,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder
@@ -85,13 +86,23 @@ object UploadService {
         val sha = req.sha256?.lowercase()?.takeIf { Regex("^[0-9a-f]{64}$").matches(it) }
 
         // Instant upload: the blob already exists by content hash and the name is free.
+        //
+        // The whole thing - the exists() probe, the name check, the insert - runs
+        // while holding the per-blob lock the delete sweep takes, and the row
+        // commits in the same transaction that took it. Without that, a sweep
+        // which had just re-counted "no references" could unlink the bytes
+        // between the probe and the commit, and the new row would point at
+        // nothing. The two IO probes are one filesystem stat locally and one
+        // HEAD on S3; blocking the (already IO-dispatched) worker for that is a
+        // much smaller price than the race.
         if (sha != null) {
             val key = storage.blobKey(sha)
-            if (storage.exists(key)) {
+            val instant = BlobPurgeLock.withKey(key) {
+                if (!runBlocking { storage.exists(key) }) return@withKey null
                 // A cover may already exist for this content (previous upload of the
                 // same bytes); the new row inherits the flag without any client work.
-                val hasThumb = storage.exists(thumbKey(sha))
-                val instant = transaction(DatabaseFactory.db) {
+                val hasThumb = runBlocking { storage.exists(thumbKey(sha)) }
+                transaction(DatabaseFactory.db) {
                     val clash = FileService.findLiveFile(userId, parent, req.name)
                     when {
                         clash != null && req.overwrite -> {
@@ -135,17 +146,21 @@ object UploadService {
                                     it[takenAt] = req.takenAt
                                 }
                             }
+                            // Referenced again inside the grace window: take it
+                            // off the delete queue so the sweep stops re-checking
+                            // (and can never unlink a blob we just claimed).
+                            dequeue(listOf(key))
                             Triple(FilesTable.selectAll().where { FilesTable.id eq id }.single().toFileDto(), emptyList(), null as FileVersionDto?)
                         }
                     }
                 }
-                if (instant != null) {
+            }
+            if (instant != null) {
                     val (created, orphans, _) = instant
                     if (orphans.isNotEmpty()) deleteStoredBlobs(storage, orphans)
                     return UploadInitResponse("", chunkSize, emptyList(), instantUpload = true, file = created)
                 }
             }
-        }
 
         // Resume match: open session with the same user, folder, name and size.
         // Expired rows are skipped: the cleanup job runs only every 6h, and handing

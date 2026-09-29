@@ -10,7 +10,7 @@ import org.slf4j.LoggerFactory
 object DatabaseFactory {
     private val log = LoggerFactory.getLogger(DatabaseFactory::class.java)
 
-    val ALL_TABLES = arrayOf(UsersTable, RefreshTokensTable, FoldersTable, FilesTable, UploadSessionsTable, UploadChunksTable, FileVersionsTable, ShareLinksTable, SettingsTable)
+    val ALL_TABLES = arrayOf(UsersTable, RefreshTokensTable, FoldersTable, FilesTable, UploadSessionsTable, UploadChunksTable, FileVersionsTable, BlobDeleteQueueTable, ShareLinksTable, SettingsTable)
 
     // Held so connect() can shut the previous pool down: every testApplication
     // entry calls connect() again, and swapping the global db reference without
