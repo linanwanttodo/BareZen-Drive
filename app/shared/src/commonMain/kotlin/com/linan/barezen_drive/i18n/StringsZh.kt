@@ -147,6 +147,7 @@ object StringsZh : Strings {
     override val sharedFiles: String = "分享的文件"
     override val shareFile: String = "分享文件"
     override val shareFolder: String = "分享文件夹"
+    override val shareLoadFailed: String = "无法连接服务器"
     override val shareLinkInvalid: String = "链接无效或已过期"
     override val askSharerForNewLink: String = "请向分享者索取新的链接"
     override val goToApp: String = "返回应用"
@@ -343,4 +344,5 @@ override val avatarChange: String = "更换头像"
     override val syncBatchTitle: String = "相册同步"
     override val syncBatchNetworkLost: String = "网络中断，稍后自动续传"
     override fun syncBatchFailed(failed: Int, done: Int): String = "已同步 $done 张，$failed 张失败"
+    override val noUsersYet: String = "还没有注册用户"
 }
