@@ -345,4 +345,5 @@ override val avatarChange: String = "Change avatar"
     override val syncBatchNetworkLost: String = "Network lost, resuming later"
     override fun syncBatchFailed(failed: Int, done: Int): String = "$done synced, $failed failed"
     override val noUsersYet: String = "No users have registered yet"
+    override fun backupLastFailed(reason: String): String = "Last backup failed: $reason"
 }

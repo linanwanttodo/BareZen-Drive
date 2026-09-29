@@ -197,6 +197,16 @@ fun SyncAlbumsScreen(
                         color = MaterialTheme.colorScheme.tertiary,
                     )
                 }
+                // A pass that died for a reason the scheduler cannot see (media
+                // permission revoked, disk full, MediaStore threw) used to be
+                // indistinguishable from one that has not run yet.
+                backupStatus.lastError?.let { error ->
+                    Text(
+                        strings.backupLastFailed(error),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 val last = if (backupStatus.lastSyncAt > 0L) {
                     com.linan.barezen_drive.ui.media.formatDateTime(kotlinx.datetime.Instant.fromEpochMilliseconds(backupStatus.lastSyncAt).toString())
                 } else {

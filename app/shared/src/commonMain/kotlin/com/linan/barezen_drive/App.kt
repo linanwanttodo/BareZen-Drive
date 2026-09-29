@@ -87,6 +87,7 @@ import com.linan.barezen_drive.i18n.stringsFor
 import com.linan.barezen_drive.platform.systemLanguageTag
 import androidx.compose.ui.ExperimentalComposeUiApi
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Minimal navigation backstack (no navigation library): a list of sealed
@@ -114,6 +115,10 @@ private sealed interface Screen {
 
 /** /s/<token> public share entry captured once at startup; null on non-web. */
 private val shareEntryToken: String? by lazy { initialShareToken() }
+
+/** How many times the registration probe retries before it gives up and waits
+ *  for the settings screen to ask again. */
+private const val REGISTRATION_PROBE_ATTEMPTS = 5
 
 private fun themeModeFromIndex(index: Int): ThemeMode = when (index) {
     1 -> ThemeMode.LIGHT
@@ -172,6 +177,22 @@ fun App() {
     var signedIn by remember {
         mutableStateOf(TokenStorage.accessToken != null || TokenStorage.refreshToken != null)
     }
+    // The session token as Compose state.
+    //
+    // The two effects below used to be keyed on TokenStorage.accessToken, which
+    // is a plain property read: it is not observable, so the effects only ran
+    // when some unrelated recomposition happened to touch that line. Sign in,
+    // sign out or switch accounts and `thumbs.clear()` could be skipped - the
+    // previous account's thumbnails then stayed on screen, which is both a
+    // privacy leak and a串号. Every path that changes the session (login, both
+    // sign-out paths) now writes this state explicitly, and the effects key on
+    // it, so they cannot miss a change.
+    // The refresh token counts too: an expired access token is still a
+    // signed-in session, and keying on the access token alone would have
+    // left the settings card hidden for anyone whose token had aged out.
+    var sessionToken by remember {
+        mutableStateOf(TokenStorage.accessToken ?: TokenStorage.refreshToken)
+    }
     var syncWifiOnly by remember { mutableStateOf(prefs.syncWifiOnly) }
     var syncChargingOnly by remember { mutableStateOf(prefs.albumSyncChargingOnly) }
     // Held in composition as well as in prefs: the review is offered only while
@@ -221,7 +242,7 @@ fun App() {
         // Re-run whenever the auth token changes: before login both calls
         // fail, and the settings server card reads these - a one-shot probe
         // would leave the registration toggle hidden for the whole session.
-        LaunchedEffect(TokenStorage.accessToken) {
+        LaunchedEffect(sessionToken) {
             // One call, two answers: who we are, and whether we may manage the
             // instance. The settings rows key off the flag so a guest is never
             // offered a page that can only answer 403.
@@ -237,15 +258,26 @@ fun App() {
         // left it null and the settings toggle vanished for the whole
         // session - the recurring "toggle missing" report. Retry with
         // backoff until the server answers, and re-probe on demand below.
-        LaunchedEffect(TokenStorage.accessToken, registrationProbe) {
+        LaunchedEffect(sessionToken, registrationProbe) {
+            // Backoff, because the failure this loop exists to survive is
+            // usually not transient: a server older than this endpoint answers
+            // 404 forever, and a fixed 5s tick then spends the whole session
+            // asking - battery, traffic, and one more request competing with
+            // the user's actual work. Give up after a few tries and wait for
+            // registrationProbe++ (entering the settings screen), which is the
+            // one moment a retry is both wanted and cheap.
+            var wait = 2.seconds
+            var attempts = 0
             while (true) {
                 val open = files.registrationStatus().getOrNull()?.open
                 if (open != null) {
                     registrationOpen = open
                     break
                 }
-                if (TokenStorage.accessToken == null || files.baseUrl.isBlank()) break
-                delay(5_000.milliseconds)
+                if (!signedIn || files.baseUrl.isBlank()) break
+                if (++attempts >= REGISTRATION_PROBE_ATTEMPTS) break
+                delay(wait)
+                wait = (wait * 2).coerceAtMost(60.seconds)
             }
         }
         // Keep the background album-sync job in step with the stored settings.
@@ -281,8 +313,26 @@ fun App() {
         // to hand the bottom strip over to the album's own action bar.
         var albumInCollection by remember { mutableStateOf(false) }
         val current = stack.last()
-        val push: (Screen) -> Unit = { stack = stack + it }
-        val pop: () -> Unit = { if (stack.size > 1) stack = stack.dropLast(1) }
+        // Remembered: these are handed to MainShell and all four tabs, and a
+        // fresh lambda instance on every App() recomposition meant nothing
+        // below could be skipped. `stack` is a delegated mutable state, so the
+        // closure reads the current value at call time and stays correct.
+        val push: (Screen) -> Unit = remember { { screen -> stack = stack + screen } }
+        val pop: () -> Unit = remember { { if (stack.size > 1) stack = stack.dropLast(1) } }
+        // One sign-out, because the session state has to be updated wherever
+        // it happens: settings logout and "an owner deleted my own account"
+        // used to be two copies that each forgot part of the list, and a path
+        // that misses one leaves the previous account's state behind.
+        val signOut: () -> Unit = remember(auth) {
+            {
+                username = ""
+                prefs.username = ""
+                auth.logout()
+                signedIn = false
+                sessionToken = null
+                stack = listOf(Screen.Login)
+            }
+        }
         // System back pops the in-app backstack instead of exiting the app.
         BackHandler(enabled = stack.size > 1) { pop() }
 
@@ -306,17 +356,23 @@ fun App() {
         // Web-only quick theme toggle for the top-right corner: flips between
         // explicit light/dark (resolving from the effective scheme when in
         // SYSTEM mode). Other platforms keep the settings-screen selector.
-        val themeToggle: (@Composable () -> Unit)? = if (isWebPlatform()) {
-            {
-                IconButton(onClick = {
-                    val next = if (dark) ThemeMode.LIGHT else ThemeMode.DARK
-                    themeMode = next
-                    prefs.themeMode = next.ordinal
-                }) {
-                    Icon(
-                        if (dark) Icons.Default.LightMode else Icons.Default.DarkMode,
-                        contentDescription = LocalStrings.current.toggleTheme,
-                    )
+        val webPlatform = isWebPlatform()
+        // The inner @Composable wrapper is what makes the remembered value
+        // callable as one: remember's own lambda is not a composable scope, so
+        // the button has to be built inside an explicit composable lambda.
+        val themeToggle: (@Composable () -> Unit)? = if (webPlatform) {
+            remember(dark) {
+                @Composable {
+                    IconButton(onClick = {
+                        val next = if (dark) ThemeMode.LIGHT else ThemeMode.DARK
+                        themeMode = next
+                        prefs.themeMode = next.ordinal
+                    }) {
+                        Icon(
+                            if (dark) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = LocalStrings.current.toggleTheme,
+                        )
+                    }
                 }
             }
         } else {
@@ -349,6 +405,7 @@ fun App() {
                 onLoggedIn = {
                     username = prefs.username
                     signedIn = true
+                    sessionToken = TokenStorage.accessToken ?: TokenStorage.refreshToken
                 pop()
                 },
                 themeToggle = themeToggle,
@@ -362,7 +419,8 @@ fun App() {
                 // per screen drifted: search constructed its own with no
                 // username, so it fell back to the blank-account colour and the
                 // "." letter, and files was handed no avatar at all.
-                val tabAvatar: @Composable () -> Unit = {
+                val tabAvatar: @Composable () -> Unit = remember(signedIn, currentUserId, username) {
+                    @Composable {
                     if (signedIn) {
                         AvatarButton(
                             files,
@@ -378,6 +436,7 @@ fun App() {
                                 push(Screen.Settings)
                             },
                         )
+                    }
                     }
                 }
                 MainShell(
@@ -498,12 +557,7 @@ fun App() {
                 onOpenShareManager = { push(Screen.ShareManager) },
                 onOpenTrash = { push(Screen.Trash) },
                 onOpenArchive = { push(Screen.Archive) },
-                onLogout = {
-                username = ""
-                prefs.username = ""
-                auth.logout()
-                stack = listOf(Screen.Login)
-                },
+                onLogout = signOut,
                 onBack = { pop() },
             )
             is Screen.Preview -> PreviewScreen(
@@ -534,12 +588,7 @@ fun App() {
                     // getOrThrow so the screen can surface the failure; the
                     // previous silent fold made a failed delete look done.
                     files.adminDeleteUser(user.id).getOrThrow()
-                    if (user.id == currentUserId) {
-                        username = ""
-                        prefs.username = ""
-                        auth.logout()
-                        stack = listOf(Screen.Login)
-                    }
+                    if (user.id == currentUserId) signOut()
                 },
                 onBack = pop,
             )

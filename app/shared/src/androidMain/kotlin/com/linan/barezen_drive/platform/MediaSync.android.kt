@@ -50,6 +50,7 @@ actual object MediaSync {
     private const val META_PREFS = "barezen_sync_meta"
     private const val KEY_LAST_SYNC = "lastSyncAt"
     private const val KEY_LAST_SCAN = "lastScanAt"
+    private const val KEY_LAST_ERROR = "lastSyncError"
 
     /**
      * Linear 10-minute backoff. WorkManager's default is exponential starting at
@@ -180,6 +181,9 @@ actual object MediaSync {
             failed = runCatching { SyncDb.failedCount() }.getOrDefault(0),
             excludedBuckets = runCatching { SyncDb.excludedBucketCount() }.getOrDefault(0),
             lastSyncAt = app.getSharedPreferences(META_PREFS, Context.MODE_PRIVATE).getLong(KEY_LAST_SYNC, 0L),
+            lastError = runCatching {
+                app.getSharedPreferences(META_PREFS, Context.MODE_PRIVATE).getString(KEY_LAST_ERROR, null)
+            }.getOrNull(),
             // Only claim a pause when work is waiting and nothing is moving: an
             // empty queue on a plane is finished rather than paused, and a pass
             // that is currently running is not paused either.
@@ -225,7 +229,21 @@ actual object MediaSync {
     }
 
     fun markSynced() {
-        runCatching { prefs.edit().putLong(KEY_LAST_SYNC, System.currentTimeMillis()).apply() }
+        // A success clears the recorded failure: leaving a stale one would keep
+        // showing "the last attempt died" after the backup has recovered.
+        runCatching {
+            prefs.edit().putLong(KEY_LAST_SYNC, System.currentTimeMillis())
+                .remove(KEY_LAST_ERROR).apply()
+        }
+    }
+
+    /**
+     * Record why a pass gave up, for the status card and the log. [error] is
+     * stored verbatim (truncated by the caller); the throwable itself goes to
+     * logcat with its stack, which is where the diagnosis actually lives.
+     */
+    internal fun noteFailure(error: String) {
+        runCatching { prefs.edit().putString(KEY_LAST_ERROR, error).apply() }
     }
 
     /** Finish time of the last MediaStore read, so the next change-triggered pass

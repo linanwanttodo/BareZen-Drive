@@ -10,6 +10,10 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -70,6 +74,21 @@ object ThumbnailHub {
  * invisible until logout.
  */
 class ThumbnailLoader(private val repo: FilesRepository) {
+    /**
+     * Ids whose cover became available while this process was running.
+     *
+     * The server generates covers lazily, so a tile that asked before the
+     * cover existed has to be told when it appears. Polling for that was the
+     * old answer: three 30s retries per visible row, restarted on every scroll
+     * and off by as much as 15s from the 60s negative-cache TTL. This is the
+     * same information as an event, for callers already collecting a
+     * [kotlinx.coroutines.flow.StateFlow].
+     *
+     * The set only grows within a session, which is what a viewer needs (it
+     * never has to unsubscribe) and what [clear] resets on account switch.
+     */
+    private val _readyIds = MutableStateFlow<Set<String>>(emptySet())
+    val readyIds: StateFlow<Set<String>> = _readyIds.asStateFlow()
     // Insertion-ordered map: a cache hit re-inserts the key, so the first
     // entry is always the least recently used when evicting.
     private val cache = mutableMapOf<String, ImageBitmap>()
@@ -87,6 +106,9 @@ class ThumbnailLoader(private val repo: FilesRepository) {
      * in memory (in-flight fetches are cancelled outright).
      */
     suspend fun clear() {
+        // Also resets the event set: after an account switch the new session
+        // must not be told about covers that belonged to the previous one.
+        _readyIds.value = emptySet()
         mutex.withLock {
             cache.clear()
             cacheBytes.clear()
@@ -111,8 +133,12 @@ class ThumbnailLoader(private val repo: FilesRepository) {
         }
     }
 
-    /** Clears the negative entry so the next [load] retries the fetch. */
+    /**
+     * Clears the negative entry so the next [load] retries the fetch, and tells
+     * any tile waiting on this id to retry now rather than on its own timer.
+     */
     suspend fun markAvailable(fileId: String) {
+        _readyIds.update { it + fileId }
         mutex.withLock { missingAt.remove(fileId) }
     }
 
@@ -174,6 +200,9 @@ class ThumbnailLoader(private val repo: FilesRepository) {
      *  negative mark: the cover demonstrably exists now. */
     private suspend fun insert(fileId: String, bitmap: ImageBitmap) {
         val bytesCost = bitmap.width * bitmap.height * 4
+        // Announced outside the lock: the flow update runs collectors, and a
+        // collector that reloads must not run while this mutex is held.
+        _readyIds.update { it + fileId }
         mutex.withLock {
             cache[fileId] = bitmap
             cacheBytes[fileId] = bytesCost

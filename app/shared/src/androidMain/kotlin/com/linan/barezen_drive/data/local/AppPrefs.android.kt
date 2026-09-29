@@ -8,7 +8,17 @@ actual object AppPreferences {
         AndroidContext.app.getSharedPreferences("barezen_app_prefs", Context.MODE_PRIVATE)
     }
 
-    actual fun get(): AppPrefs = object : AppPrefs {
+    /**
+     * One instance for the process.
+     *
+     * Every screen called get() and got a fresh anonymous object, so nothing
+     * could be compared by identity and the "remember this" wrappers had
+     * nothing stable to hold. The reads behind it were never the cost people
+     * assumed: SharedPreferences parses its XML once, on first access, and
+     * every getter after that is an in-memory map lookup - so the per-call
+     * allocation was the whole of the waste, and it is now gone.
+     */
+    private val instance: AppPrefs = object : AppPrefs {
         override var filesViewMode: Int
             get() = prefs.getInt("files_view_mode", 0)
             set(v) = prefs.edit().putInt("files_view_mode", v).apply()
@@ -77,4 +87,6 @@ actual object AppPreferences {
             get() = prefs.getBoolean("album_buckets_reviewed", false)
             set(v) = prefs.edit().putBoolean("album_buckets_reviewed", v).apply()
     }
+
+    actual fun get(): AppPrefs = instance
 }

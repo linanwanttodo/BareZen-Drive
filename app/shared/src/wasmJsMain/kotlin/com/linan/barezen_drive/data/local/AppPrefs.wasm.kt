@@ -16,7 +16,16 @@ private fun writeString(key: String, value: String) = try {
 }
 
 actual object AppPreferences {
-    actual fun get(): AppPrefs = object : AppPrefs {
+    /**
+     * One instance for the page, so `get()` costs nothing and callers can hold
+     * on to it across recompositions.
+     *
+     * The getters deliberately still read localStorage on every access instead
+     * of mirroring the values in memory: a cached layer would be faster and
+     * would quietly break the second browser tab, which is a real way to use
+     * this app (backup configured on the desktop, checked on the phone).
+     */
+    private val instance: AppPrefs = object : AppPrefs {
         override var filesViewMode: Int
             get() = readString("files_view_mode")?.toIntOrNull() ?: 0
             set(v) = writeString("files_view_mode", v.toString())
@@ -87,4 +96,6 @@ actual object AppPreferences {
             get() = readString("album_buckets_reviewed") == "true"
             set(v) = writeString("album_buckets_reviewed", v.toString())
     }
+
+    actual fun get(): AppPrefs = instance
 }

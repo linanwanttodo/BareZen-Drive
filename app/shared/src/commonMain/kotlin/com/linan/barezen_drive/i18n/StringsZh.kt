@@ -345,4 +345,5 @@ override val avatarChange: String = "更换头像"
     override val syncBatchNetworkLost: String = "网络中断，稍后自动续传"
     override fun syncBatchFailed(failed: Int, done: Int): String = "已同步 $done 张，$failed 张失败"
     override val noUsersYet: String = "还没有注册用户"
+    override fun backupLastFailed(reason: String): String = "上次备份失败：$reason"
 }
