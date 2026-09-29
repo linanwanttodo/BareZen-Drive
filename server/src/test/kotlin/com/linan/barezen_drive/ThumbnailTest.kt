@@ -85,8 +85,53 @@ class ThumbnailTest {
         assertEquals(HttpStatusCode.OK, get.status, get.bodyAsText())
         assertEquals("image/jpeg", get.contentType()?.withoutParameters()?.toString())
         assertEquals(thumb.toList(), get.bodyAsBytes().toList())
-        assertEquals(sha256hex(body), get.headers[HttpHeaders.ETag])
-        assertTrue(get.headers[HttpHeaders.CacheControl]?.contains("immutable") == true, get.headers.toString())
+        // The tag identifies the cover bytes, quoted per RFC 9110. It used to be
+        // the source file's sha256 with cache-forever: correct only while the
+        // cover slot could never be written twice, which is no longer true.
+        assertEquals("\"" + sha256hex(thumb) + "\"", get.headers[HttpHeaders.ETag])
+        assertEquals(
+            "public, max-age=0, must-revalidate",
+            get.headers[HttpHeaders.CacheControl],
+            "a replaceable cover must revalidate, not be pinned in every cache for a year",
+        )
+    }
+
+    @Test
+    fun replacingACoverChangesTheEtagAndRevalidatesTo304() = testApplication {
+        setup()
+        val fileId = upload("cover swap".encodeToByteArray(), "swap.txt")
+        val first = byteArrayOf(1, 2, 3, 4)
+        val second = byteArrayOf(9, 8, 7, 6)
+        client.put("/api/files/$fileId/thumbnail") {
+            header(HttpHeaders.Authorization, auth); contentType(ContentType.Image.JPEG); setBody(first)
+        }
+        val before = client.get("/api/files/$fileId/thumbnail") { header(HttpHeaders.Authorization, auth) }
+        assertEquals(HttpStatusCode.OK, before.status)
+
+        // A conditional request for what we already hold must not re-send bytes.
+        val notModified = client.get("/api/files/$fileId/thumbnail") {
+            header(HttpHeaders.Authorization, auth)
+            header(HttpHeaders.IfNoneMatch, before.headers[HttpHeaders.ETag]!!)
+        }
+        assertEquals(HttpStatusCode.NotModified, notModified.status)
+
+        // The slot is replaceable now, so a new cover has to be visible - and a
+        // client still holding the old one must be able to tell that it changed.
+        client.put("/api/files/$fileId/thumbnail") {
+            header(HttpHeaders.Authorization, auth); contentType(ContentType.Image.JPEG); setBody(second)
+        }
+        val after = client.get("/api/files/$fileId/thumbnail") { header(HttpHeaders.Authorization, auth) }
+        assertEquals(HttpStatusCode.OK, after.status, after.bodyAsText())
+        assertEquals(second.toList(), after.bodyAsBytes().toList())
+        assertTrue(
+            after.headers[HttpHeaders.ETag] != before.headers[HttpHeaders.ETag],
+            "a replaced cover must not keep the previous ETag",
+        )
+        val stale = client.get("/api/files/$fileId/thumbnail") {
+            header(HttpHeaders.Authorization, auth)
+            header(HttpHeaders.IfNoneMatch, before.headers[HttpHeaders.ETag]!!)
+        }
+        assertEquals(HttpStatusCode.OK, stale.status, "the old ETag must no longer match")
     }
 
     @Test
