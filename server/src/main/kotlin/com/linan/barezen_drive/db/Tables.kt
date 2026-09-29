@@ -107,6 +107,11 @@ object FilesTable : Table("files") {
         // (user, deleted_at) index stops at deleted_at - every page of the
         // recent list sorted the user's entire live set.
         index(customIndexName = "files_user_recent_idx", isUnique = false, user, deletedAt, updatedAt)
+        // The trash list is a keyset walk ordered by (deleted_at, id) - id is
+        // the tiebreaker, without it every row trashed in the same millisecond
+        // re-sorts on each page. A plain ascending btree serves the DESC walk
+        // by scanning backwards, because user_id is pinned by equality.
+        index(customIndexName = "files_user_trash_idx", isUnique = false, user, deletedAt, id)
         // Album ordering is COALESCE(taken_at, updated_at); the expression
         // index for it is PostgreSQL-only and lives in DatabaseFactory.
     }

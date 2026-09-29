@@ -87,7 +87,7 @@ class FilesRepository(private val api: ApiClient) : UploadApi {
     suspend fun fileVersions(id: String): Result<List<com.linan.barezen_drive.core.dto.FileVersionDto>> = api.fileVersions(id)
     suspend fun restoreFileVersion(id: String, versionId: String): Result<FileDto> = api.restoreFileVersion(id, versionId)
     suspend fun deleteFileVersion(id: String, versionId: String): Result<Unit> = api.deleteFileVersion(id, versionId)
-    suspend fun trash(): Result<TrashResponse> = api.trash()
+    suspend fun trash(limit: Int? = null, cursor: String? = null): Result<TrashResponse> = api.trash(limit, cursor)
     suspend fun restoreFromTrash(id: String): Result<FileDto> = api.restoreFromTrash(id)
     suspend fun deleteForever(id: String): Result<Unit> = api.deleteForever(id)
     suspend fun emptyTrash(): Result<Unit> = api.emptyTrash()

@@ -380,8 +380,15 @@ class ApiClient(
         http.delete("$baseUrl/api/files/$id/versions/$versionId")
     }
 
-    suspend fun trash(): Result<TrashResponse> = runApi {
-        http.get("$baseUrl/api/trash").body()
+    /**
+     * [limit] and [cursor] are for walking the trash by keyset; omitting both
+     * keeps the single-page default the server serves (100 rows, no cursor).
+     */
+    suspend fun trash(limit: Int? = null, cursor: String? = null): Result<TrashResponse> = runApi {
+        http.get("$baseUrl/api/trash") {
+            limit?.let { parameter("limit", it) }
+            cursor?.let { parameter("cursor", it) }
+        }.body()
     }
 
     suspend fun restoreFromTrash(id: String): Result<FileDto> = runApi {
