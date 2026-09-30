@@ -60,9 +60,6 @@ import com.linan.barezen_drive.ui.media.fileIcon
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import kotlinx.coroutines.launch
 
-/** Rows per request; the same page size the contents and album grids use. */
-private const val TRASH_PAGE_SIZE = 100
-
 /** One page of the trash plus the cursor for the next, older one. */
 private data class TrashUi(val files: List<FileDto>, val nextCursor: String? = null)
 
