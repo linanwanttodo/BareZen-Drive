@@ -34,12 +34,17 @@
 - [x] 文件版本（覆盖上传保留历史）（2026-09-12。`overwrite` 上传把旧内容写进 `file_versions`，每文件上限 20 版、超出静默裁旧；恢复是一次交换；版本 blob 与文件 blob 共用引用计数；客户端在文件菜单提供版本历史查看/恢复/删除）
 - [x] S3/MinIO StorageProvider（2026-09-12。`STORAGE_BACKEND=s3` + `S3_*` 环境变量，用 JDK HttpClient 与自实现 SigV4（AWS 官方测试向量校验），支持 path-style；不引 AWS SDK）
 - [x] 同级同名的先查后写竞态收敛（2026-09-13。唯一索引由 `(user, folder, name)` 改为 `(user, folder, name, deleted_at)`，回收站行不再占用命名空间；`nameConflict` 的预检窗口由 `UniqueViolation` → 409 `NAME_CONFLICT` 兜底，上传初始化、创建/重命名文件夹与恢复走同一口径，启动时幂等删除遗留索引）
-- Flyway 迁移替代 createMissingTablesAndColumns
+- Flyway 迁移替代 createMissingTablesAndColumns（本轮复核后决定**暂不做**：真正需要它是「改列
+  类型 / 删列 / 加约束」那一天；当前只增列的演进方式下它买不到实际可靠性，而代价是一次
+  V1__baseline 快照加把全部 DDL 迁进迁移文件。已确认真实缺口只有一处——Exposed 不认识部分索引
+  与表达式索引，那两类仍走 `DatabaseFactory` 的启动 DDL）
 - iOS 客户端、Desktop 客户端（平台接口与 CI 任务已预留，剩余为目标启用与 actual 实现。依赖无障碍：
   共享 UI 用的 `backdrop`、`shapes` 均已发布 iOS 与 jvm 产物；Apple target 需在 macOS 上编译验证）
 - Android release 签名包（条件签名已就位，配置 `ANDROID_KEYSTORE_BASE64` 等 Secrets 即启用）
 - Web 端 token 存储评估 HttpOnly cookie（v0.0.1 用 localStorage，存在 XSS 暴露面）
-- 上传合并边收边写（消除 tmp+merge 2x 磁盘峰值）
+- 上传合并边收边写（消除 tmp+merge 2x 磁盘峰值）——本轮已做一半：合并完成后本地直接改名到 blob
+  目标（同卷原子），省掉一遍全量拷贝，读放大约从 2x 降到 1x；「边收边写」本身（不落 merge 中间
+  文件）仍未做，峰值写入仍是 2x
 - npm `ws` 8.20.1（High，GHSA-96hv-2xvq-fx4p）为 Kotlin/JS 构建工具链（webpack dev server）传递依赖，仅构建期存在、不进生产运行时；KGP 钉版无法通过 yarn 升级，待 Kotlin 插件更新后自然消除（Opsera 扫描 2026-09-09）
 - `jackson-databind` 2.22.0（两条 Medium）与 `netty-codec-http` 4.2.16（一条 Medium）均由 ktor 3.5.2 传递引入，仓库未直接声明，只能随 ktor 版本升级收敛；服务端未使用 jackson 的反序列化路径（序列化走 kotlinx.serialization）（Opsera 扫描 2026-09-12）
 
@@ -58,11 +63,21 @@
   列」之间崩溃，该 blob 仍是无主孤儿——需要全量 refcount=0 磁盘扫描才能兜底，代价与收益不成比例，
   本轮不做（`BlobPurgeLock` 的锁只覆盖队列之后的路径）
 - Web 端大文件下载/保存的内存峰值（浏览器机制限制）
-- `MAX_FILE_SIZE`（`FILE_TOO_LARGE`）服务端未强制，磁盘容量是实际上限
-- 删除/416 路径上的文件句柄关闭时机未显式管理
 - Web 端保存文件（saver）整文件缓冲，峰值内存约为文件大小 2-3 倍
-- 并行上传时进度只展示单个文件（单槽位覆盖）
-- 缩略图 PUT 幂等跳过：同一 sha256 的坏封面无法被覆盖（需先删 blob 引用或后续提供覆盖/重生成能力）
-- 客户端封面生成失败（不支持的编码等）时文件将永久无封面（显示类型图标兜底）
+- 用户级总配额未做：`MAX_FILE_SIZE`（`FILE_TOO_LARGE`）已按单会话强制（init 的 `size` 超限返回
+  413，环境变量 `MAX_FILE_SIZE`，默认 10 GiB），但没有「每用户总占用 / 并发上传数」这一层，
+  单个账号仍可把磁盘写满
+- 客户端封面生成失败（不支持的编码等）时文件将永久无封面（显示类型图标兜底）——本轮把静默吞掉
+  改成了分 gen/put 两段记日志，但仍未做行内「封面失败」标记
+- 服务端 `ensureThumbnail` 遇到已存在的封面会直接早退，所以**存量坏封面**仍无法由服务端重新生成；
+  本轮放开的是客户端 PUT 覆盖（且封面 GET 的 ETag 已改为按封面字节计算并允许重验证，所以替换
+  能真正到达客户端）。仍缺一个「重新生成封面」入口
+- 缩略图与头像的并发写入是后写覆盖先写（同 sha256 的每个封面都合法，可接受）；要严格有序需要
+  代次计数器，即一次 schema 变更
+- `/api/search` 的 `lower(name) LIKE '%q%'` 仍扫该用户全部存活行（5 万行实测 8.5ms），需要 pg_trgm
+  或前缀索引；相册 `?root=<folderId>` 仍 seq 扫（1.54ms / 1006 buffers），需要把 `folder_id` 并进
+  相册排序索引——都未做
+- `emptyTrash` / `purgeExpiredTrash` 把全部行 id 读进一个 List 再拼 `IN (...)`，回收站有几万行时
+  本身仍是一次无界读 + 无界参数列表（删子树已改批量，删回收站还没）
 - Material 图标待迁移 AutoMirrored（当前 3 个弃用警告）；icons-extended 仅在链接期裁剪，发布前需复核 wasm 产物体积
-- 退出登录无确认对话框；面包屑按 push 语义增长，无截断策略
+- 退出登录无确认对话框（面包屑的 push 增长与截断本轮已修）
