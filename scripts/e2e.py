@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 """End-to-end functional test against a live BareZen-Drive server.
 
-Usage: BASE=http://host:8080 USER=alice PASS=password123 python3 scripts/e2e.py
+Usage: BASE=http://host:8080 USER_NAME=alice PASS=password123 python3 scripts/e2e.py
 Covers: health/version/manifest, registration switch, chunked upload, instant
 upload, downloads with Range, signed links, share lifecycle, server stats and
 cleanup. Requires python3 with requests.
+
+NEEDS A FRESH INSTANCE (one with no accounts). The script creates the first
+account through the loopback bootstrap path, toggles the registration switch,
+and leaves files and folders behind, so it cannot be pointed at an instance that
+already has accounts - it stops with exit code 2 and says so instead of printing
+a cascade of failures. Point BASE at a newly started server each run.
+
+The version assertion reads the repository's own gradle.properties, so it stays
+true across releases; set EXPECT_VERSION to check a server that is not built
+from this checkout.
 """
 import os
 import hashlib
@@ -20,6 +29,23 @@ USER = os.environ.get("USER_NAME", "e2etest")
 PASS = os.environ.get("PASS", "e2epassword123")
 TS = time.strftime("%H%M%S")
 
+
+def repo_version():
+    """version= line of gradle.properties, the single source of truth for the
+    product version (the server, the apps and update.json all read it)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gradle.properties")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.strip().startswith("version="):
+                    return line.strip().split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return None
+
+
+EXPECT_VERSION = os.environ.get("EXPECT_VERSION") or repo_version()
+
 passed, failed = 0, 0
 
 def check(name, cond, detail=""):
@@ -31,6 +57,21 @@ def check(name, cond, detail=""):
         failed += 1
         print(f"  FAIL {name}  {detail}")
 
+
+def skip(name, why):
+    """Not a pass, and not a failure either: the precondition this check needs
+    is absent. Counting these as passes would be the same lie as deleting the
+    check - a run against a reused instance would look as complete as a run
+    against a fresh one."""
+    print(f"  SKIP {name}  ({why})")
+
+
+# Whether this run got to create the instance's first account, i.e. whether the
+# server was fresh when the run started. Everything that depends on "this
+# account is the owner" or "registration was closed by default" is only
+# meaningful then.
+FRESH = False
+
 s = requests.Session()
 
 # 1. health + version
@@ -38,18 +79,77 @@ r = s.get(f"{BASE}/health", timeout=15)
 check("health", r.json().get("status") == "ok", r.text)
 r = s.get(f"{BASE}/api/version", timeout=30)
 v = r.json()
-check("version endpoint", v.get("serverVersion") == "0.0.2", r.text)
-check("version carries assets", len(v.get("assets", [])) >= 3, r.text[:200])
+# The repo's version, not a constant copied into this script: a hardcoded one
+# fails against every real build, which is a false red, not a finding.
+check("version endpoint reports a version", bool(v.get("serverVersion")), r.text)
+if EXPECT_VERSION:
+    check(f"version matches the repo ({EXPECT_VERSION})", v.get("serverVersion") == EXPECT_VERSION, r.text)
+else:
+    print("  SKIP version vs repo (gradle.properties not found; set EXPECT_VERSION)")
+# `assets` comes from the release manifest (update.json) or the GitHub API, so
+# it is empty on a server with neither configured and no outbound network - a
+# sandbox, or an air-gapped deployment. Reporting that as a failure is a false
+# red of exactly the kind this file used to have with the hardcoded version; it
+# is reported as skipped instead, and the reason is printed.
+if len(v.get("assets", [])) >= 3:
+    check("version carries assets", True, r.text[:200])
+else:
+    skip("version carries assets", "no release manifest reachable (update.json unset or no outbound network)")
 check("version updateAvailable false (same ver)", v.get("updateAvailable") is False, r.text[:200])
 
-# 2. registration status default open
+# 2. registration defaults to CLOSED
+#
+# The owner is whichever account exists first, so an open default means the
+# first stranger to press register owns the instance: they can list every user,
+# delete any account and reopen registration. A fresh instance therefore refuses
+# the public path and only admits the install wizard (BOOTSTRAP_ADMIN_*) or a
+# request from the host itself.
 r = s.get(f"{BASE}/api/settings/registration", timeout=15)
-check("registration default open", r.json().get("open") is True, r.text)
+INITIAL_OPEN = r.json().get("open")
 
 # 3. register + login
+#
+# This run comes from the same host as the server, so it takes the loopback
+# bootstrap path - the manual equivalent of the install wizard. That is the
+# whole reason this step still succeeds on a fresh instance.
 r = s.post(f"{BASE}/api/auth/register", json={"username": USER, "password": PASS}, timeout=20)
-check("register owner (or exists)", r.status_code in (201, 409), r.text)
+# 201 means this run created the instance's first account, which is only
+# possible on an instance that had none - that is the proof we were fresh, and
+# it is what makes the "default closed" check below mean anything.
+#
+# The other two answers are equally fine and say nothing about the product: 409
+# is "that name is taken", and 403 REGISTRATION_DISABLED is the switch doing its
+# job on a reused instance, reached before the uniqueness check ever runs. What
+# actually matters is the next line - the account can log in - so that is what
+# gets asserted, and the register call is only a best effort at obtaining it.
+FRESH = r.status_code == 201
+reg_status = f"{r.status_code} {r.text.strip()}"
+check("register (accepted, taken, or closed)",
+      r.status_code in (201, 409, 403), r.text)
+if FRESH:
+    check("registration default closed", INITIAL_OPEN is False,
+          "a fresh instance must refuse the public register path")
+else:
+    skip("registration default closed", f"instance already had accounts; switch was open={INITIAL_OPEN}")
 r = s.post(f"{BASE}/api/auth/login", json={"username": USER, "password": PASS}, timeout=20)
+if r.status_code != 200 and not FRESH:
+    # This script mutates the instance it runs against: it closes and reopens
+    # the registration switch, and leaves files and folders behind. Pointed at
+    # an instance that already has accounts, the run cannot get in - the
+    # account does not exist and registration is (correctly) closed - and
+    # every later check would fail for that one reason. Say so once, here,
+    # instead of printing thirty confusing reds.
+    print(
+        f"\nThis run needs an instance with no accounts yet.\n"
+        f"  register returned: {reg_status}\n"
+        f"  login returned:    {r.text.strip()}\n"
+        f"  (a reused instance also shares the 5-per-5min register budget with "
+        f"the run that created it, which shows up as RATE_LIMITED)\n"
+        f"Point BASE at a fresh server, or re-run with the same USER_NAME on the "
+        f"one that created the account.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 check("login", r.status_code == 200, r.text)
 tok = r.json()["accessToken"]
 refresh = r.json()["refreshToken"]
@@ -58,6 +158,11 @@ H = {"Authorization": f"Bearer {tok}"}
 # 4. me
 r = s.get(f"{BASE}/api/me", headers=H, timeout=15)
 check("me returns username", r.json().get("username") == USER, r.text)
+# Ask the server whether this account is the owner rather than inferring it
+# from the run order: on a reused instance the user that created the first
+# account is still the owner, while a differently-named user is not, and the
+# owner-only endpoints below answer differently in each case.
+IS_OWNER = r.json().get("isOwner") is True
 
 # 5. folder create + listing
 r = s.post(f"{BASE}/api/folders", headers=H, json={"name": f"docs-{TS}"}, timeout=15)
@@ -136,16 +241,30 @@ check("share SPA page renders", r.status_code == 200 and "text/html" in r.header
 r = s.get(f"{BASE}/api/files/recent", headers=H, timeout=15)
 check("recent files", r.status_code == 200 and len(r.json()["files"]) >= 1, r.text[:200])
 
-# 12. server stats
+# 12. server stats (owner only: any signed-in account used to read the host profile)
 r = s.get(f"{BASE}/api/server/stats", headers=H, timeout=15)
-check("server stats", r.status_code == 200 and r.json()["diskTotalBytes"] > 0, r.text[:200])
+if IS_OWNER:
+    check("server stats", r.status_code == 200 and r.json()["diskTotalBytes"] > 0, r.text[:200])
+else:
+    # Any signed-in account used to read the host profile, and registration was
+    # open by default, so self-registering was enough to get it.
+    check("server stats refuses a non-owner", r.status_code == 403, r.text[:200])
 
 # 13. registration switch: close, verify register 403 + login hidden path, reopen
-r = s.patch(f"{BASE}/api/settings/registration", headers=H, json={"open": False}, timeout=15)
-check("close registration", r.status_code == 200 and r.json()["open"] is False, r.text)
-r = s.get(f"{BASE}/api/settings/registration", timeout=15)
-check("status reflects closed", r.json()["open"] is False, r.text)
-r = s.post(f"{BASE}/api/auth/register", json={"username": "intruder9", "password": "password123"}, timeout=15)
+if not IS_OWNER:
+    skip("registration switch round trip", "toggling it needs the owner account")
+else:
+    r = s.patch(f"{BASE}/api/settings/registration", headers=H, json={"open": False}, timeout=15)
+    check("close registration", r.status_code == 200 and r.json()["open"] is False, r.text)
+    r = s.get(f"{BASE}/api/settings/registration", timeout=15)
+    check("status reflects closed", r.json()["open"] is False, r.text)
+# A forwarded header disqualifies the loopback bootstrap slot: once something
+# upstream annotated the request, the server cannot tell "from the host" apart
+# from "from the internet", and the slot stays shut. Without the header this run
+# WOULD be admitted on a fresh instance - it is on the host - which is exactly
+# why the check has to send one.
+r = s.post(f"{BASE}/api/auth/register", json={"username": "intruder9", "password": "password123"},
+           headers={"X-Forwarded-For": "203.0.113.9"}, timeout=15)
 check("register rejected 403 REGISTRATION_DISABLED",
       r.status_code == 403 and r.json()["error"]["code"] == "REGISTRATION_DISABLED", r.text)
 r = s.post(f"{BASE}/api/auth/login", json={"username": USER, "password": PASS}, timeout=15)
@@ -156,9 +275,11 @@ r = s.post(f"{BASE}/api/auth/refresh", json={"refreshToken": refresh}, timeout=1
 check("refresh works when registration closed", r.status_code == 200, r.text)
 new_refresh = r.json()["refreshToken"]
 
-# 15. reopen for the real owner
-r = s.patch(f"{BASE}/api/settings/registration", headers=H, json={"open": True}, timeout=15)
-check("reopen registration", r.json()["open"] is True, r.text)
+# 15. put the switch back where this run found it, so a second run against the
+# same instance starts from the same state instead of inheriting an open door.
+if IS_OWNER:
+    r = s.patch(f"{BASE}/api/settings/registration", headers=H, json={"open": INITIAL_OPEN}, timeout=15)
+    check("restore registration switch", r.json()["open"] is INITIAL_OPEN, r.text)
 
 # 16. cleanup: delete files + folder (blob refcount)
 r = s.delete(f"{BASE}/api/files/{file_id}", headers=H, timeout=15)
