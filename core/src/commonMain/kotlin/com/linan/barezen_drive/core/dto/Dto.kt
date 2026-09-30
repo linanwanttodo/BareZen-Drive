@@ -80,8 +80,16 @@ data class ContentsResponse(
 /** Toggle archive flag on a single file. */
 @Serializable data class ArchiveRequest(val archived: Boolean)
 
-/** Soft-deleted files currently in the trash. */
-@Serializable data class TrashResponse(val files: List<FileDto>)
+/**
+ * Soft-deleted files currently in the trash, newest trashed first.
+ *
+ * `nextCursor` is non-null only while older trashed rows remain: it is the
+ * "<deletedAtMillis>:<id>" keyset the album and contents pages already use, so
+ * a page walk is stable when a file is trashed or restored mid-scroll. Clients
+ * that do not send a `limit` get the first page (100 rows) plus this cursor -
+ * the response is always paged, and only the first page arrives unpaged-shaped.
+ */
+@Serializable data class TrashResponse(val files: List<FileDto>, val nextCursor: String? = null)
 
 // ---- Share links (read-only, files or folders) ----
 
