@@ -138,11 +138,26 @@ jobs:
           docker run -d --name bz-dav-pg \
             -e POSTGRES_DB=barezen -e POSTGRES_USER=barezen -e POSTGRES_PASSWORD=dev123 \
             -p 5432:5432 postgres:17-alpine
-          for i in $(seq 1 60); do
-            docker exec bz-dav-pg pg_isready -U barezen >/dev/null 2>&1 && break
+          # -h 127.0.0.1 is load-bearing, not decoration. During first-time
+          # initialisation postgres runs a temporary server that listens on the
+          # unix socket but NOT on TCP, so a socket-mode `pg_isready` returns
+          # "accepting" for a moment and then goes back to "rejecting" when that
+          # server shuts down. Probing the socket mode therefore breaks out of
+          # this loop early and the next command fails against a database that
+          # has not finished starting - which is exactly how this step failed the
+          # first time. TCP only answers once the real server is up.
+          for i in $(seq 1 90); do
+            if [ "$(docker inspect -f '{{.State.Running}}' bz-dav-pg 2>/dev/null)" != "true" ]; then
+              echo "postgres container exited during startup:" >&2
+              docker logs bz-dav-pg >&2 || true
+              exit 1
+            fi
+            if docker exec bz-dav-pg pg_isready -h 127.0.0.1 -U barezen >/dev/null 2>&1; then
+              break
+            fi
             sleep 1
           done
-          docker exec bz-dav-pg pg_isready -U barezen
+          docker exec bz-dav-pg pg_isready -h 127.0.0.1 -U barezen
       - name: Build the server distribution
         run: ./gradlew :server:installDist --console=plain
       - name: Start the server
