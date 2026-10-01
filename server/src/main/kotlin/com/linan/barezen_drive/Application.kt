@@ -17,7 +17,7 @@ import com.linan.barezen_drive.webdav.DAV_AUTH_MAX_PER_WINDOW
 import com.linan.barezen_drive.webdav.DAV_AUTH_WINDOW_MS
 import com.linan.barezen_drive.webdav.WebdavTokenService
 import com.linan.barezen_drive.webdav.webdavTokenKey
-import com.linan.barezen_drive.webdav.davAllowRequest
+import com.linan.barezen_drive.webdav.davRequireQuota
 import com.linan.barezen_drive.webdav.webdavResourceRoutes
 import com.linan.barezen_drive.webdav.webdavTokenRoutes
 import com.linan.barezen_drive.files.fileContentRoutes

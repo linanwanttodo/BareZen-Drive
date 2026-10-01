@@ -66,7 +66,7 @@ private fun Route.davSurface() {
     // the one method registered up front. The rest arrive with the later tasks
     // and take precedence over the catch-all below.
     options {
-        call.davAllowRequest()
+        call.davRequireQuota()
         call.respond(HttpStatusCode.OK)
         call.response.header(HttpHeaders.Allow, DAV_ALLOW)
         call.response.header("DAV", "1")
@@ -131,7 +131,7 @@ private const val MULTISTATUS_TAIL = "\n</D:multistatus>\n"
  * exception after the response has started cannot turn into a 404 any more.
  */
 private suspend fun ApplicationCall.respondPropfind() {
-    davAllowRequest()
+    davRequireQuota()
     val userId = requireDavToken().userId
     val depth = propfindDepth()
 
