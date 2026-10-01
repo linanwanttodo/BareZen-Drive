@@ -69,6 +69,18 @@ fun ApplicationCall.davWritable(): WebdavTokenRecord {
     return token
 }
 
-/** Consume from the mount's own request budget. */
-fun ApplicationCall.davAllowRequest(max: Int = DAV_MAX_PER_WINDOW, windowMs: Long = DAV_WINDOW_MS): Boolean =
-    Throttle.allow("dav:" + clientIp(), max, windowMs)
+/**
+ * Consume from the mount's own request budget, refusing with 429 when it is
+ * spent.
+ *
+ * Returns Unit on purpose. An earlier version returned a Boolean, and two of the
+ * three call sites discarded it - including PROPFIND, the single most frequent
+ * method a mount issues, which left the whole budget unenforced exactly where it
+ * mattered. A checker that can be ignored is not a limit; making the refusal
+ * happen here means a caller cannot forget it.
+ */
+fun ApplicationCall.davRequireQuota(max: Int = DAV_MAX_PER_WINDOW, windowMs: Long = DAV_WINDOW_MS) {
+    if (!Throttle.allow("dav:" + clientIp(), max, windowMs)) {
+        throw ApiException.rateLimited("挂载请求过于频繁")
+    }
+}

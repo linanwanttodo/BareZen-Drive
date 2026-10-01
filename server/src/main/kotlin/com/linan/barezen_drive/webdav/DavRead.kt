@@ -9,7 +9,9 @@ import com.linan.barezen_drive.storage.StorageRegistry
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.fromHttpToGmtDate
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.createRouteScopedPlugin
@@ -38,12 +40,14 @@ import java.util.UUID
  * know: which resource the path names, and whether the client already has it.
  */
 internal fun Route.davGetAndHead() {
-    get { handle { call.respondDavRead() } }
+    get { call.respondDavRead() }
+    // HEAD is the same handler behind a different registration: Ktor's method
+    // selector is an exact match, and its engine streams whatever the handler
+    // produces, so the body has to be dropped on the way out rather than by a
+    // second, divergent copy of the read path. `method(...)` rather than
+    // `head { }` only because the plugin has to be installed on the node that
+    // holds the handler - `head { }` hands over the handler and nothing else.
     method(HttpMethod.Head) {
-        // HEAD is registered separately and runs the identical handler: Ktor's
-        // method selector is an exact match, and its engine streams whatever the
-        // handler produces, so the body has to be dropped on the way out rather
-        // than by a second, divergent code path here.
         install(DavAutoHead)
         handle { call.respondDavRead() }
     }
@@ -59,8 +63,7 @@ private val DavAutoHead = createRouteScopedPlugin("DavAutoHead") {
      * which this never calls, a client asking only for the size does not pay for
      * the bytes. Same shape as Ktor's own head handling for static files.
      */
-    class HeadBody(private val original: io.ktor.http.content.OutgoingContent) :
-        io.ktor.http.content.OutgoingContent.NoContent() {
+    class HeadBody(private val original: OutgoingContent) : OutgoingContent.NoContent() {
         override val status: HttpStatusCode? get() = original.status
         override val contentType: ContentType? get() = original.contentType
         override val contentLength: Long? get() = original.contentLength
@@ -70,7 +73,7 @@ private val DavAutoHead = createRouteScopedPlugin("DavAutoHead") {
     on(ResponseBodyReadyForSend) { _, content ->
         // NoContent already has no body (304, 412); wrapping it would only
         // replace the 0 Content-Length those answers rely on.
-        if (content is io.ktor.http.content.OutgoingContent.NoContent) return@on
+        if (content is OutgoingContent.NoContent) return@on
         transformBodyTo(HeadBody(content))
     }
 }
@@ -87,13 +90,20 @@ internal sealed interface DavPrecondition {
     data object Failed : DavPrecondition
 }
 
-private const val DAV_PRECONDITION_FAILED = "dav-precondition-failed"
+/**
+ * Error code a failed `If-Match` / `If-Unmodified-Since` answers with.
+ *
+ * Internal rather than private because the write methods refuse on the same
+ * [davPrecondition] and must answer with the same code, or a client cannot tell
+ * "your validator is stale" from "the server does not implement preconditions".
+ */
+internal const val DAV_PRECONDITION_FAILED = "dav-precondition-failed"
 
 /** Children a collection GET lists before it says the listing is truncated. */
 private const val DAV_INDEX_PAGE = 200
 
 internal suspend fun ApplicationCall.respondDavRead() {
-    if (!davAllowRequest()) throw ApiException.rateLimited()
+    davRequireQuota()
     // GET and HEAD are reads, so a read-only mount passes davWritable() - which
     // is deliberately not called: it exists to refuse writes, not to gate reads.
     val userId = requireDavToken().userId
@@ -160,9 +170,7 @@ private suspend fun ApplicationCall.respondDavIndex(
     val base = segments.joinToString(prefix = "/dav", separator = "") { "/" + DavProperties.hrefSegment(it) }
     val title = segments.lastOrNull() ?: "BareZen Drive"
     respondText(
-        ContentType.parse("text/html; charset=utf-8"),
-        HttpStatusCode.OK,
-        buildString {
+        text = buildString {
             append("<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>")
             append(DavProperties.xmlEscaped(title)).append("</title></head><body>\n<h1>")
             append(DavProperties.xmlEscaped(title)).append("</h1>\n")
@@ -186,6 +194,8 @@ private suspend fun ApplicationCall.respondDavIndex(
             }
             append("</body></html>\n")
         },
+        contentType = ContentType.parse("text/html; charset=utf-8"),
+        status = HttpStatusCode.OK,
     )
 }
 
