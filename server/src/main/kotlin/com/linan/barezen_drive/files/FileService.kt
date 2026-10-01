@@ -201,6 +201,218 @@ object FileService {
         row.toFolderDto().copy(name = newName)
     }
 
+    /**
+     * True when [candidate] is [root] itself or lies inside its subtree; false
+     * for the account root ([candidate] null), which is above everything.
+     *
+     * Both halves are load-bearing. Counting [root] as "inside" is what makes
+     * "move this collection onto its own URL" a no-op rather than a
+     * destroy-then-move of the same row; leaving a null candidate out is what
+     * keeps a legitimate move into the account root from being refused.
+     */
+    fun isInSubtree(userId: UUID, root: UUID, candidate: UUID?): Boolean =
+        transaction(DatabaseFactory.db) {
+            candidate != null &&
+                (candidate == root || candidate in FileTree.descendants(userId, root))
+        }
+
+    /**
+     * Move a file, or a whole folder subtree, by rewriting the one row that
+     * names it. [destParentId] null is the account root.
+     *
+     * **One row, not a subtree walk with writes.** Every descendant points at a
+     * parent that did not move, so the whole operation is a single UPDATE
+     * however deep the tree is - and no blob is touched at all, which is why
+     * this returns Unit and no keys: a move changes where a row lives, never
+     * what it points at in storage.
+     *
+     * A row owned by somebody else is 403, not 404: the caller named an id and
+     * the honest answer is that it may not touch it. (The mount routes can never
+     * reach that branch - `resolveDavPath` is owner-scoped, so a client cannot
+     * even name another account's row.)
+     */
+    fun moveTo(userId: UUID, fileOrFolderId: UUID, destParentId: UUID?, destName: String) {
+        if (!nameOk(destName)) throw ApiException.badRequest("名称非法")
+        transaction(DatabaseFactory.db) {
+            val now = System.currentTimeMillis()
+            // Named folderRow / fileRow rather than folder / file: `it[folder]`
+            // inside the update builder would otherwise resolve to the local
+            // ResultRow and the column would have to be spelled out instead.
+            val folderRow = FoldersTable.selectAll().where { FoldersTable.id eq fileOrFolderId }.singleOrNull()
+            if (folderRow != null) {
+                if (folderRow[FoldersTable.user] != userId) throw ApiException.forbidden("无权访问该文件夹")
+                // The self-referencing parent FK would happily accept a folder
+                // inside itself and every later walk would loop, so this refusal
+                // is the whole point of the check.
+                if (destParentId != null &&
+                    (destParentId == fileOrFolderId || destParentId in FileTree.descendants(userId, fileOrFolderId))
+                ) {
+                    throw ApiException.conflict(ErrorCodes.FOLDER_INTO_DESCENDANT, "不能把文件夹移动到其自身之下")
+                }
+                mapNameConflict {
+                    FoldersTable.update({ FoldersTable.id eq fileOrFolderId }) {
+                        it[parent] = destParentId
+                        it[name] = destName
+                        it[updatedAt] = now
+                    }
+                }
+                return@transaction
+            }
+            val fileRow = FilesTable.selectAll().where { FilesTable.id eq fileOrFolderId }.singleOrNull()
+                ?: throw ApiException.notFound("资源不存在")
+            if (fileRow[FilesTable.user] != userId) throw ApiException.forbidden("无权访问该资源")
+            // A trashed row is not a resource a move may pick up; the path walk
+            // filters those out too, so this only guards the direct caller.
+            if (fileRow[FilesTable.deletedAt] != 0L) throw ApiException.notFound("资源不存在")
+            mapNameConflict {
+                FilesTable.update({ FilesTable.id eq fileOrFolderId }) {
+                    it[folder] = destParentId
+                    it[name] = destName
+                    it[updatedAt] = now
+                }
+            }
+        }
+    }
+
+    /**
+     * A second live row for [sourceFileId], under [destParentId] as [destName].
+     *
+     * **Rows, not bytes.** The new row names the *same* storage key, so the blob
+     * is shared and copying a 5 GB video costs one INSERT rather than another
+     * 5 GB. That is also the invariant that makes this method safe to call from
+     * a mount: the key did not lose a reference, it gained one, so nothing may
+     * be sent to the delete queue. It therefore returns only the new id and
+     * never a key - there is deliberately no `orphanBlobKeys` call anywhere in
+     * here, and no path from a copy to `deleteStoredBlobs`.
+     *
+     * No version rows either: the copy's only revision is the content it was
+     * born with, and a snapshot would hold a second reference nothing asked
+     * for. Gallery flags travel with the row (they describe the content), the
+     * trash timestamp does not - a copy is never born trashed.
+     */
+    fun copyFile(userId: UUID, sourceFileId: UUID, destParentId: UUID?, destName: String): UUID {
+        if (!nameOk(destName)) throw ApiException.badRequest("名称非法")
+        return transaction(DatabaseFactory.db) {
+            val source = FilesTable.selectAll().where { FilesTable.id eq sourceFileId }.singleOrNull()
+                ?: throw ApiException.notFound("文件不存在")
+            if (source[FilesTable.user] != userId) throw ApiException.forbidden("无权访问该文件")
+            if (source[FilesTable.deletedAt] != 0L) throw ApiException.notFound("文件不存在")
+            val id = UUID.randomUUID()
+            val now = System.currentTimeMillis()
+            mapNameConflict {
+                FilesTable.insert {
+                    it[FilesTable.id] = id
+                    it[FilesTable.user] = userId
+                    it[FilesTable.folder] = destParentId
+                    it[FilesTable.name] = destName
+                    it[FilesTable.size] = source[FilesTable.size]
+                    it[FilesTable.mimeType] = source[FilesTable.mimeType]
+                    it[FilesTable.sha256] = source[FilesTable.sha256]
+                    it[FilesTable.storageKey] = source[FilesTable.storageKey]
+                    it[FilesTable.hasThumbnail] = source[FilesTable.hasThumbnail]
+                    it[FilesTable.takenAt] = source[FilesTable.takenAt]
+                    it[FilesTable.isFavorite] = source[FilesTable.isFavorite]
+                    it[FilesTable.archivedAt] = source[FilesTable.archivedAt]
+                    it[FilesTable.deletedAt] = 0L
+                    it[FilesTable.createdAt] = now
+                    it[FilesTable.updatedAt] = now
+                }
+            }
+            id
+        }
+    }
+
+    /**
+     * Row-for-row copy of [sourceFolderId]'s whole subtree into [destParentId]
+     * as a collection named [destName]; the new folder's id.
+     *
+     * This is the one genuinely new domain operation the WebDAV surface needed:
+     * there was a recursive delete ([deleteFolder]) and a subtree walk
+     * ([FileTree.descendants]), but nothing that reproduced a tree. A mount used
+     * as a network drive is asked for this every time a folder is dragged in, so
+     * it is implemented rather than refused.
+     *
+     * Same two invariants as [copyFile], at subtree scale: the file rows keep
+     * their storage keys (blobs are shared, no bytes are copied) and therefore
+     * **no key is ever queued** - this returns an id and nothing else, and calls
+     * no refcount sweep. Folder rows have no blob at all.
+     *
+     * The walk is one SELECT plus one INSERT per row. Parent ids are rewritten
+     * through the old -> new `mapped` table, and rows are written in the
+     * breadth-first order [FileTree.descendants] returns, because the
+     * self-referencing parent FK forbids a child row pointing at a parent that
+     * does not exist yet.
+     */
+    fun copySubtree(userId: UUID, sourceFolderId: UUID, destParentId: UUID?, destName: String): UUID {
+        if (!nameOk(destName)) throw ApiException.badRequest("名称非法")
+        return transaction(DatabaseFactory.db) {
+            val source = FoldersTable.selectAll().where { FoldersTable.id eq sourceFolderId }.singleOrNull()
+                ?: throw ApiException.notFound("文件夹不存在")
+            if (source[FoldersTable.user] != userId) throw ApiException.forbidden("无权访问该文件夹")
+
+            // One read of the subtree's shape. FileTree already builds the
+            // parent -> children index from a single query over the account's
+            // folders; this only needs the names the inserts have to write back.
+            val below = FileTree.descendants(userId, sourceFolderId)
+            val shape = HashMap<UUID, Pair<UUID?, String>>(below.size + 1)
+            shape[sourceFolderId] = source[FoldersTable.parent] to source[FoldersTable.name]
+            if (below.isNotEmpty()) {
+                val op = SqlExpressionBuilder.run { FoldersTable.id inList below }
+                FoldersTable.select(FoldersTable.id, FoldersTable.parent, FoldersTable.name)
+                    .where { op }
+                    .forEach { shape[it[FoldersTable.id]] = it[FoldersTable.parent] to it[FoldersTable.name] }
+            }
+
+            val now = System.currentTimeMillis()
+            val mapped = HashMap<UUID, UUID>(below.size + 1)
+            mapped[sourceFolderId] = UUID.randomUUID()
+            val inOrder = ArrayList<UUID>(below.size + 1)
+            inOrder += sourceFolderId
+            inOrder += below
+            for (oldId in inOrder) {
+                val old = shape[oldId] ?: continue
+                val newId = mapped.getOrPut(oldId) { UUID.randomUUID() }
+                FoldersTable.insert {
+                    it[FoldersTable.id] = newId
+                    it[FoldersTable.user] = userId
+                    it[FoldersTable.parent] = if (oldId == sourceFolderId) destParentId else mapped[old.first]
+                    it[FoldersTable.name] = if (oldId == sourceFolderId) destName else old.second
+                    it[FoldersTable.createdAt] = now
+                    it[FoldersTable.updatedAt] = now
+                }
+            }
+
+            val subtree = ArrayList<UUID>(inOrder)
+            val fileOp = SqlExpressionBuilder.run { FilesTable.folder inList subtree }
+            FilesTable.selectAll()
+                .where { fileOp and (FilesTable.user eq userId) and (FilesTable.deletedAt eq 0L) }
+                .forEach { row ->
+                    // A row whose folder is not in `mapped` must not be written
+                    // with a null parent, which would turn it into a root-level
+                    // orphan pointing at nothing.
+                    val target = row[FilesTable.folder]?.let { mapped[it] } ?: return@forEach
+                    FilesTable.insert {
+                        it[FilesTable.id] = UUID.randomUUID()
+                        it[FilesTable.user] = userId
+                        it[FilesTable.folder] = target
+                        it[FilesTable.name] = row[FilesTable.name]
+                        it[FilesTable.size] = row[FilesTable.size]
+                        it[FilesTable.mimeType] = row[FilesTable.mimeType]
+                        it[FilesTable.sha256] = row[FilesTable.sha256]
+                        it[FilesTable.storageKey] = row[FilesTable.storageKey]
+                        it[FilesTable.hasThumbnail] = row[FilesTable.hasThumbnail]
+                        it[FilesTable.takenAt] = row[FilesTable.takenAt]
+                        it[FilesTable.isFavorite] = row[FilesTable.isFavorite]
+                        it[FilesTable.archivedAt] = row[FilesTable.archivedAt]
+                        it[FilesTable.deletedAt] = 0L
+                        it[FilesTable.createdAt] = now
+                        it[FilesTable.updatedAt] = now
+                    }
+                }
+            mapped.getValue(sourceFolderId)
+        }
+    }
+
     /** Folder deletion result: blob keys whose refcount drops to zero, and upload
      * sessions (removed rows) that targeted the deleted subtree. */
     data class FolderDeletion(val blobKeys: List<String>, val removedSessionIds: List<UUID>)

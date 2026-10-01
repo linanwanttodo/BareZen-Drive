@@ -101,6 +101,10 @@ private fun Route.davMethods() {
     method(HttpMethod("PROPFIND")) { handle { call.respondPropfind() } }
     davGetAndHead()
     davPut()
+    // MKCOL / MOVE / COPY / DELETE. Registered above the catch-all below, and
+    // before it rather than after, so an unmatched method still gets the DAV
+    // 404 rather than the SPA fallback.
+    davWriteMethods()
     handle { call.respond(HttpStatusCode.NotFound) }
 }
 
