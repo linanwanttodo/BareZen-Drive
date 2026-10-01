@@ -9,6 +9,7 @@ import com.linan.barezen_drive.core.dto.SharedContentsResponse
 import com.linan.barezen_drive.core.dto.SharedFileDto
 import com.linan.barezen_drive.core.dto.SharedFolderDto
 import com.linan.barezen_drive.core.dto.SharedInfoResponse
+import com.linan.barezen_drive.auth.TokenSecret
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
@@ -30,8 +31,6 @@ import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
-import java.security.MessageDigest
-import java.security.SecureRandom
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -80,20 +79,10 @@ internal fun activeShareQuery(
 }
 
 object ShareService {
-    private val rnd = SecureRandom()
-    private const val TOKEN_BYTES = 32
     private val MIN_TTL_MS = Duration.ofHours(1).toMillis()
     private val MAX_TTL_MS = Duration.ofDays(365).toMillis()
     private const val VIEW_DEDUP_MS = 5 * 60_000L
 
-    private fun hashToken(t: String) = MessageDigest.getInstance("SHA-256")
-        .digest(t.encodeToByteArray()).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
-
-    private fun newToken(): String {
-        val bytes = ByteArray(TOKEN_BYTES)
-        rnd.nextBytes(bytes)
-        return bytes.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
-    }
 
     // ---- Owner operations ----
 
@@ -139,13 +128,13 @@ object ShareService {
             }
             val id = UUID.randomUUID()
             val now = System.currentTimeMillis()
-            val token = newToken()
+            val token = TokenSecret.mint()
             ShareLinksTable.insert {
                 it[ShareLinksTable.id] = id
                 it[user] = userId
                 it[ShareLinksTable.file] = if (targetType == "file") UUID.fromString(fileId) else null
                 it[folder] = if (targetType == "folder") UUID.fromString(folderId) else null
-                it[tokenHash] = hashToken(token)
+                it[tokenHash] = TokenSecret.hash(token)
                 it[createdAt] = now
                 it[ShareLinksTable.expiresAt] = expiresAt
             }
@@ -304,7 +293,7 @@ object ShareService {
     /** Token -> share context; 404 for unknown/expired/revoked tokens without
      *  distinguishing the reason (no status oracle for guessers). */
     private fun resolveInTransaction(token: String): ResolvedShare {
-        val row = ShareLinksTable.selectAll().where { ShareLinksTable.tokenHash eq hashToken(token) }.singleOrNull()
+        val row = ShareLinksTable.selectAll().where { ShareLinksTable.tokenHash eq TokenSecret.hash(token) }.singleOrNull()
             ?: throw ApiException.notFound("链接无效或已过期")
         val now = System.currentTimeMillis()
         if (row[ShareLinksTable.revokedAt] != null) throw ApiException.notFound("链接无效或已过期")

@@ -6,7 +6,12 @@ import io.ktor.server.application.Application
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
-private val RESERVED_PREFIXES = listOf("api", "health")
+// "dav" is here for the same reason as "api": a WebDAV client that hits an
+// unmatched path must be told so by the WebDAV surface, which can answer 404 or
+// 401 with a DAV-shaped body. Falling through to the SPA fallback would hand a
+// mount an index.html with a 200, and Finder/Explorer report that as a
+// "corrupt or unreadable" server rather than as the missing resource it is.
+private val RESERVED_PREFIXES = listOf("api", "health", "dav")
 
 private val CONTENT_TYPES = mapOf(
     "html" to ContentType.Text.Html,

@@ -157,3 +157,33 @@ data class ContentsResponse(
 
 /** Owner request body for PATCH /api/settings/registration. */
 @Serializable data class RegistrationSettingRequest(val open: Boolean)
+
+// ---- WebDAV app passwords (mounted drives) ----
+
+/**
+ * One mounted device's credential, without the secret.
+ *
+ * The plaintext is never part of this: it exists only in
+ * [WebdavTokenCreatedResponse], at creation time.
+ */
+@Serializable data class WebdavTokenDto(
+    val id: String,
+    val label: String,
+    val readOnly: Boolean,
+    val createdAt: Long,
+    /** 0 when the mount has not authenticated yet, so the UI can say "never". */
+    val lastUsedAt: Long = 0,
+)
+
+@Serializable data class WebdavTokensResponse(val tokens: List<WebdavTokenDto> = emptyList())
+
+@Serializable data class WebdavTokenCreateRequest(
+    val label: String,
+    val readOnly: Boolean = false,
+)
+
+/** The single response that ever carries the plaintext. */
+@Serializable data class WebdavTokenCreatedResponse(
+    val token: WebdavTokenDto,
+    val plaintext: String,
+)
