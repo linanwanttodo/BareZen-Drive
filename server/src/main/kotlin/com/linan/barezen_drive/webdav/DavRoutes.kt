@@ -67,11 +67,16 @@ private fun Route.davSurface() {
     // and take precedence over the catch-all below.
     options {
         call.davRequireQuota()
-        call.respond(HttpStatusCode.OK)
+        // Every header must be set BEFORE respond(). respond() finishes the
+        // response, and a header written afterwards never reaches the wire - yet
+        // the in-process test client still reads it off the same response object,
+        // so the test suite passed while a real client saw no `DAV:` at all and
+        // refused to mount. Ordering like this is only observable over real HTTP.
         call.response.header(HttpHeaders.Allow, DAV_ALLOW)
         call.response.header("DAV", "1")
         // Office reads this; harmless elsewhere.
         call.response.header("MS-Author-Via", "DAV")
+        call.respond(HttpStatusCode.OK)
     }
 
     // The catch-all in davMethods() is not a cosmetic one. Ktor only runs the
@@ -95,6 +100,7 @@ private fun Route.davMethods() {
     // tries a transfer.
     method(HttpMethod("PROPFIND")) { handle { call.respondPropfind() } }
     davGetAndHead()
+    davPut()
     handle { call.respond(HttpStatusCode.NotFound) }
 }
 
