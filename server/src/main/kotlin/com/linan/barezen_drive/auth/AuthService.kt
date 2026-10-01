@@ -17,7 +17,6 @@ import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
-import java.security.SecureRandom
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -35,7 +34,6 @@ object AuthService {
      * window a revoked token may rotate once more; past it, replay is rejected.
      */
     private const val REFRESH_REUSE_GRACE_MS = 120_000L
-    private val rnd = SecureRandom()
     private val USERNAME_RE = Regex("^[a-zA-Z0-9_]{3,32}$")
 
     /**
@@ -47,8 +45,6 @@ object AuthService {
     private const val TIMING_DUMMY_PASSWORD = "barezen-timing-equalizer"
     private val timingDummyHash: String by lazy { PasswordHasher.hash(TIMING_DUMMY_PASSWORD) }
 
-    private fun hashToken(t: String) = java.security.MessageDigest.getInstance("SHA-256")
-        .digest(t.encodeToByteArray()).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
     private fun epochToIso(ms: Long): String = Instant.ofEpochMilli(ms).toString()
 
@@ -75,12 +71,8 @@ object AuthService {
     private fun toUserDto(id: UUID, username: String, createdAtIso: String): UserDto =
         UserDto(id.toString(), username, createdAtIso, id == ownerId())
 
-    private fun newRefreshToken(): Pair<String, Long> {
-        val bytes = ByteArray(32)
-        rnd.nextBytes(bytes)
-        val token = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
-        return token to (System.currentTimeMillis() + REFRESH_TTL_MS)
-    }
+    private fun newRefreshToken(): Pair<String, Long> =
+        TokenSecret.mintBase64Url() to (System.currentTimeMillis() + REFRESH_TTL_MS)
 
     fun register(
         username: String,
@@ -198,7 +190,7 @@ object AuthService {
         RefreshTokensTable.insert {
             it[id] = UUID.randomUUID()
             it[user] = uid
-            it[tokenHash] = hashToken(raw)
+            it[tokenHash] = TokenSecret.hash(raw)
             it[expiresAt] = expMs
         }
         val user = toUserDto(UsersTable.selectAll().where { UsersTable.id eq uid }.single())
@@ -206,7 +198,7 @@ object AuthService {
     }
 
     fun refresh(raw: String): RefreshResponse = transaction(DatabaseFactory.db) {
-        val h = hashToken(raw)
+        val h = TokenSecret.hash(raw)
         val now = System.currentTimeMillis()
         val row = RefreshTokensTable.selectAll().where { RefreshTokensTable.tokenHash eq h }.singleOrNull()
             ?: throw ApiException.unauthorized("refresh token 无效", ErrorCodes.TOKEN_INVALID)
@@ -257,7 +249,7 @@ object AuthService {
         RefreshTokensTable.insert {
             it[id] = UUID.randomUUID()
             it[user] = uid
-            it[tokenHash] = hashToken(newRaw)
+            it[tokenHash] = TokenSecret.hash(newRaw)
             it[expiresAt] = expMs
         }
         RefreshResponse(JwtService.issue(uid.toString()), newRaw)

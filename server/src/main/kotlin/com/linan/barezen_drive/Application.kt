@@ -12,6 +12,14 @@ import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.api.ApiException
 import com.linan.barezen_drive.api.Throttle
 import com.linan.barezen_drive.api.TrustedProxyRange
+import com.linan.barezen_drive.api.clientIp
+import com.linan.barezen_drive.webdav.DAV_AUTH_MAX_PER_WINDOW
+import com.linan.barezen_drive.webdav.DAV_AUTH_WINDOW_MS
+import com.linan.barezen_drive.webdav.WebdavTokenService
+import com.linan.barezen_drive.webdav.webdavTokenKey
+import com.linan.barezen_drive.webdav.davAllowRequest
+import com.linan.barezen_drive.webdav.webdavResourceRoutes
+import com.linan.barezen_drive.webdav.webdavTokenRoutes
 import com.linan.barezen_drive.files.fileContentRoutes
 import com.linan.barezen_drive.files.folderRoutes
 import com.linan.barezen_drive.files.shareOwnerRoutes
@@ -213,6 +221,33 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse(ApiError(ErrorCodes.TOKEN_INVALID, "未登录或 token 无效")))
             }
         }
+        // WebDAV mounts cannot present a JWT. Finder, Explorer, davfs2 and
+        // rclone all speak HTTP Basic and nothing else - there is no refresh
+        // round-trip available to them, which is exactly why RFC 7235 §2.1's
+        // assumption that HTTP authentication is stateless forces the credential
+        // to be self-contained. Hence a dedicated app password per device
+        // rather than trying to obtain a token a mount cannot renew.
+        basic("auth-webdav") {
+            realm = "BareZen Drive"
+            validate { credentials ->
+                val token = WebdavTokenService.authenticate(credentials.name, credentials.password)
+                if (token == null) {
+                    // Counted on its own axis, never on the login budget. A mount
+                    // re-sends credentials on every single request, so a stale
+                    // password producing a retry loop is routine use rather than
+                    // an attack - charging it to `login` would let the mount lock
+                    // its own owner out of the account (RFC 7617 warns about
+                    // exactly this for implicit retries).
+                    if (!Throttle.allow("dav-auth:" + clientIp(), DAV_AUTH_MAX_PER_WINDOW, DAV_AUTH_WINDOW_MS)) {
+                        application.log.warn("webdav: auth throttle hit for {}", clientIp())
+                    }
+                    null
+                } else {
+                    attributes.put(webdavTokenKey, token)
+                    UserIdPrincipal(token.userId.toString())
+                }
+            }
+        }
     }
     // --- Response hardening + a body ceiling, before routing -----------------
     // Both sit in Setup so they apply to 404s and error responses too: a
@@ -262,6 +297,9 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         adminUserRoutes(storage)
         avatarRoutes(storage)
         authRoutes()
+        // Minting and revoking mount credentials is account work, so it sits
+        // behind the ordinary session like every other settings action.
+        webdavTokenRoutes()
         // Optional: content/thumbnail GET accept a valid signature as an alternative
         // to Bearer (browser tabs, players). Strict endpoints inside check call.userId
         // themselves, which throws 401 when no principal is present.
@@ -280,6 +318,10 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         // Public share endpoints must stay outside any authenticate block:
         // share visitors have no account.
         sharePublicRoutes(storage)
+        // Registered last among the real routes so it cannot be shadowed, and
+        // before staticWeb() so an unmatched /dav path is a DAV-shaped 404
+        // rather than the SPA's index.html.
+        webdavResourceRoutes()
         staticWeb()
     }
 }

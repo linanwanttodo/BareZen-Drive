@@ -199,6 +199,38 @@ object FileVersionsTable : Table("file_versions") {
     }
 }
 
+// One revocable credential per mounted device (WebDAV).
+//
+// Deliberately NOT the account password. A mount authenticates on every single
+// request, and the account password is a bcrypt hash (cost 10, ~100ms), so
+// browsing one folder would spend minutes inside a KDF. Nextcloud documents the
+// same trade in the other direction: using the real password for WebDAV carries
+// "a significant performance penalty".
+//
+// So the value is 32 bytes of randomness stored as a SHA-256 hash and looked up
+// by exact match. That is safe precisely because it is high entropy: there is no
+// guessing surface offline, which is the only thing bcrypt buys here. The token
+// authenticates the WebDAV surface and nothing else.
+object WebdavTokensTable : Table("webdav_tokens") {
+    val id = uuid("id")
+    val user = uuid("user_id").references(UsersTable.id)
+    /** SHA-256 hex, unique so authentication is a single index lookup. */
+    val tokenHash = varchar("token_hash", 64).uniqueIndex()
+    /** What the user calls this device, so a stray token is recognisable. */
+    val label = varchar("label", 64)
+    /** A read-only mount cannot delete the library through a stray keystroke. */
+    val readOnly = bool("read_only").default(false)
+    // SQL-level default, not clientDefault: the ALTER for existing databases
+    // needs DEFAULT 0 to backfill rows instead of failing.
+    val lastUsedAt = long("last_used_at").default(0)
+    val createdAt = long("created_at").clientDefault { System.currentTimeMillis() }
+    override val primaryKey = PrimaryKey(id)
+    init {
+        // The settings list is "all my mounts", which filters on user_id alone.
+        index(customIndexName = "webdav_tokens_user_idx", isUnique = false, user)
+    }
+}
+
 // Read-only share links. The token is 32 random bytes shown once in the create
 // response; only its SHA-256 is stored so a DB leak does not expose valid links.
 // FK cascade keeps rows consistent when the shared file/folder is deleted.
