@@ -328,3 +328,24 @@ object ThumbnailService {
     /** Bridge for the (non-suspend) generation thread onto the suspend storage API. */
     private fun <T> runBlockingIo(block: suspend () -> T): T = runBlocking(Dispatchers.IO) { block() }
 }
+
+/**
+ * Strong ETag over the stored cover bytes.
+ *
+ * Cheap because covers are capped at 512KB by PUT validation and already
+ * buffered for the response. SHA-256 rather than a cheaper hash so the tag
+ * cannot be guessed to forge a match, and quoted per RFC 9110 §8.8.3 - an
+ * unquoted value is not an entity-tag at all, and a strict client cannot
+ * compare it byte-for-byte.
+ *
+ * Shared rather than private to one route because the two routes that serve
+ * covers had already drifted apart: one hashed the cover, the other hashed the
+ * *source file*, which cannot change when a cover is replaced. A client holding
+ * a corrected-but-stale cover was therefore handed a matching validator and kept
+ * the bad bytes. One definition, and the reason is written down.
+ */
+internal fun coverEtag(bytes: ByteArray): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+    val hex = digest.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+    return "\"" + hex + "\""
+}

@@ -90,16 +90,3 @@ fun Route.thumbnailRoutes(storage: StorageProvider) {
     }
 }
 
-/**
- * Strong ETag over the stored cover bytes.
- *
- * Cheap because covers are capped at 512KB by PUT validation and already
- * buffered for the response. SHA-256 rather than a cheaper hash so the tag
- * cannot be guessed to forge a match, and quoted per RFC 9110 - an unquoted
- * entity tag is weak and would not survive a byte-for-byte comparison.
- */
-private fun coverEtag(bytes: ByteArray): String {
-    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
-    val hex = digest.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
-    return "\"" + hex + "\""
-}

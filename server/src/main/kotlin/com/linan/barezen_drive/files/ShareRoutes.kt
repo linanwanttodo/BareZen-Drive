@@ -143,8 +143,22 @@ fun Route.sharePublicRoutes(storage: StorageProvider) {
                 // stream, and a thumbnail fetch happens once per visible row.
                 storage.get(key).toInputStream().use { it.readBytes() }
             }
-            call.response.header(HttpHeaders.ETag, meta.sha256)
-            call.response.header(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
+            // The tag identifies the cover BYTES, not the source file. The cover
+            // slot is replaceable and every row sharing this sha256 sees the new
+            // one, so a tag derived from meta.sha256 is identical before and after
+            // a replacement - a client holding the bad cover would match its own
+            // stale validator and keep serving it indefinitely.
+            val etag = coverEtag(bytes)
+            call.response.header(HttpHeaders.ETag, etag)
+            // Revalidate rather than cache-forever, for the same reason: a 304
+            // costs a round trip and no body, which is the point of the ETag,
+            // while "immutable" would pin whatever the first fetch happened to get
+            // for the full year.
+            call.response.header(HttpHeaders.CacheControl, "public, max-age=0, must-revalidate")
+            if (call.request.headers[HttpHeaders.IfNoneMatch]?.contains(etag) == true) {
+                call.respond(HttpStatusCode.NotModified)
+                return@get
+            }
             call.respondBytes(bytes, ContentType.Image.JPEG)
         }
     }
