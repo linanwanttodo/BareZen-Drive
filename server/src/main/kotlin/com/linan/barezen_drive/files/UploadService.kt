@@ -54,6 +54,15 @@ object UploadService {
     /** Sessions per DELETE statement in the expired sweep; see cleanupExpired. */
     private const val SESSION_DELETE_BATCH = 500
 
+    /**
+     * Prefix of the temp file a length-less WebDAV PUT is spooled into.
+     *
+     * Lives here rather than in the DAV route because the stale-file sweep below
+     * has to recognise it: a `kill -9` mid-upload skips every `finally` block in
+     * the process, so the leftover is collectable only by name.
+     */
+    const val SPOOL_PREFIX = "davput-"
+
     /** Fire-and-forget cover generation after a complete; never fails the upload. */
     private val bgScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
@@ -361,7 +370,22 @@ object UploadService {
         }
     }
 
-    suspend fun complete(userId: UUID, sessionId: UUID, storage: StorageProvider): UploadCompleteResponse = withContext(Dispatchers.IO) {
+    /**
+     * Merges the staged chunks and publishes the file.
+     *
+     * [snapshotOnOverwrite] is the one behaviour a caller outside the app has to
+     * choose: the API client wants the previous content kept as a revision, a
+     * WebDAV mount does not (see [VersionService.replaceInPlace]). It defaults to
+     * the snapshotting behaviour so every existing call site is unaffected, and
+     * the "false" branch still collects the superseded blob's key - skipping the
+     * snapshot is precisely what leaves that key unreferenced.
+     */
+    suspend fun complete(
+        userId: UUID,
+        sessionId: UUID,
+        storage: StorageProvider,
+        snapshotOnOverwrite: Boolean = true,
+    ): UploadCompleteResponse = withContext(Dispatchers.IO) {
         val row = openSession(userId, sessionId)
         val chunkSize = row[UploadSessionsTable.chunkSize]
         val total = row[UploadSessionsTable.size]
@@ -424,13 +448,21 @@ object UploadService {
                     val (orphans, snapshot) = if (clash[FilesTable.sha256] == sha) {
                         FilesTable.update({ FilesTable.id eq fileId }) { it[updatedAt] = System.currentTimeMillis() }
                         emptyList<String>() to null
-                    } else {
+                    } else if (snapshotOnOverwrite) {
                         VersionService.snapshotAndReplace(
                             fileId,
                             clash[FilesTable.sha256], clash[FilesTable.storageKey], clash[FilesTable.size], clash[FilesTable.mimeType], clash[FilesTable.takenAt],
                             sha, key, total, mime, sessionTakenAt ?: clash[FilesTable.takenAt],
                             hasThumb, System.currentTimeMillis(),
                         )
+                    } else {
+                        // Same row rewrite, no revision row: the superseded blob
+                        // comes back as an orphan and deleteStoredBlobs queues it.
+                        VersionService.replaceInPlace(
+                            fileId, clash[FilesTable.storageKey],
+                            sha, key, total, mime, sessionTakenAt ?: clash[FilesTable.takenAt],
+                            hasThumb, System.currentTimeMillis(),
+                        ) to null
                     }
                     UploadSessionsTable.update({ UploadSessionsTable.id eq sessionId }) { it[status] = "completed" }
                     Triple(FilesTable.selectAll().where { FilesTable.id eq fileId }.single().toFileDto(), orphans, snapshot)
@@ -511,15 +543,16 @@ object UploadService {
                 }
             }
             expired.forEach { sid -> cleanupSessionDir(storage, sid) }
-            // Crash leftovers: complete() merges into merge-*.bin and the S3
-            // provider stages into s3put-*.bin directly under tmpDir; a kill -9
-            // skips their finally blocks and orphans the files. Sweep anything
-            // idle for a full session TTL - no live merge or staging file is
-            // anywhere near this old.
+            // Crash leftovers: complete() merges into merge-*.bin, the S3 provider
+            // stages into s3put-*.bin and a length-less WebDAV PUT spools into
+            // davput-*.spool, all directly under tmpDir; a kill -9 skips their
+            // finally blocks and orphans the files. Sweep anything idle for a full
+            // session TTL - no live merge or staging file is anywhere near this old.
             val staleCutoff = now - SESSION_TTL_MILLIS
             storage.tmpDir.toFile().listFiles()?.forEach { f ->
                 if (f.isFile && f.lastModified() < staleCutoff &&
-                    (f.name.startsWith("merge-") || f.name.startsWith("s3put-"))
+                    (f.name.startsWith("merge-") || f.name.startsWith("s3put-") ||
+                        f.name.startsWith(SPOOL_PREFIX))
                 ) {
                     runCatching { f.delete() }
                 }

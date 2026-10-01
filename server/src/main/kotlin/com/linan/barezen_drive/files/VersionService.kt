@@ -77,6 +77,45 @@ object VersionService {
         return trim(fileId) to snapshot
     }
 
+    /**
+     * Rewrite a file row to new content *without* keeping the previous one.
+     *
+     * This is what a mount overwrite wants. WebDAV has no "save as a revision"
+     * verb and clients re-PUT a file they have just read - Explorer rewrites a
+     * file after any edit, rclone re-uploads what it cannot compare - so
+     * snapshotting here would fill `file_versions` with revisions nobody can tell
+     * apart and cap the history at twenty of them. The file keeps its id either
+     * way, so share links and flags survive.
+     *
+     * Not snapshotting is exactly what makes the orphan sweep load-bearing: the
+     * superseded blob loses its last reference right here, and whoever calls this
+     * has to hand the key to the delete queue. Returning it is the whole contract
+     * - [snapshotAndReplace] returns the same kind of list for the same reason.
+     *
+     * No row lock: unlike a snapshot there is no revision number to claim, so
+     * two concurrent rewrites simply serialize on the UPDATE itself.
+     *
+     * Must run inside the caller's transaction so the recount below sees this
+     * rewrite and not a state where neither row held the key.
+     */
+    fun replaceInPlace(
+        fileId: UUID,
+        oldKey: String,
+        newSha: String, newKey: String, newSize: Long, newMime: String?, newTakenAt: Long?,
+        newHasThumb: Boolean, now: Long,
+    ): List<String> {
+        FilesTable.update({ FilesTable.id eq fileId }) {
+            it[sha256] = newSha
+            it[storageKey] = newKey
+            it[size] = newSize
+            it[mimeType] = newMime
+            it[takenAt] = newTakenAt
+            it[hasThumbnail] = newHasThumb
+            it[updatedAt] = now
+        }
+        return FileService.orphanBlobKeys(listOf(oldKey))
+    }
+
     /** Drops revisions older than the retention cap; returns orphaned keys. */
     private fun trim(fileId: UUID, now: Long = System.currentTimeMillis()): List<String> {
         val rows = FileVersionsTable.selectAll().where { FileVersionsTable.file eq fileId }
