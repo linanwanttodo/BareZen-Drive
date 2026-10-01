@@ -275,7 +275,12 @@ already terminates TLS.
 3. **No instant upload.** The protocol has no hook for a client to announce a hash
    first, so every WebDAV upload is a full one. Large files are slower here than
    through the Web client.
-4. **Not verified against real clients.** This is verified only to "the protocol
+4. **Deleting a collection is not recoverable.** Deleting a *file* goes to the
+   trash and can be restored; deleting a *folder* hard-deletes the whole
+   subtree, because the data model has no soft-delete column for folders
+   (see api.md). Move rather than delete when you want a way back - WebDAV
+   clients usually show no confirmation dialog.
+5. **Not verified against real clients.** This is verified only to "the protocol
    tests pass" and "a real-HTTP smoke script passes" (`scripts/dav_smoke.sh`). No
    usable Windows or macOS client was available while building it, so the claim
    "Explorer and Finder actually mount it" is untested. Try it in a scratch folder

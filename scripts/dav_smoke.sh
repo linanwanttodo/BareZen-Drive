@@ -87,6 +87,13 @@ esac
 
 AUTH=(-u "$USER_NAME:$DAV")
 
+# Minted up front: both the read-only section and the structural-method section
+# need it, and `set -u` rightly refuses to let them read a variable that does not
+# exist yet.
+RO="$(curl -s -X POST "$BASE/api/webdav/tokens" -H "Authorization: Bearer $JWT" \
+  -H 'Content-Type: application/json' -d '{"label":"dav-smoke-ro","readOnly":true}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin).get("plaintext",""))' 2>/dev/null)"
+
 # A unique folder per run so repeated runs do not collide on the name.
 STAMP="$(date +%s)$$"
 FOLDER="dav-smoke-$STAMP"
@@ -253,9 +260,6 @@ assert_status "a missing path is 404" 404 "$(status_of -X GET "$BASE/dav/no-such
 # ---------------------------------------------------------------- read-only
 head_ "Read-only mount"
 
-ro="$(curl -s -X POST "$BASE/api/webdav/tokens" -H "Authorization: Bearer $JWT" \
-  -H 'Content-Type: application/json' -d '{"label":"dav-smoke-ro","readOnly":true}')"
-RO="$(printf '%s' "$ro" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("plaintext",""))' 2>/dev/null)"
 if [ -n "$RO" ]; then
   s="$(status_of -X PROPFIND "$BASE/dav/" -u "$USER_NAME:$RO")"
   if [ "$s" = "207" ]; then ok "a read-only mount can still read (207)"; else bad "read-only mount can read" "got $s"; fi
@@ -342,6 +346,95 @@ if [ "$(curl -s "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}")" = "first revision" ];
   ok "the refused PUT wrote nothing"
 else
   bad "the refused PUT wrote nothing" "content changed to '$(curl -s "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}")'"
+fi
+
+# ---------------------------------------------------------------- structure
+
+head_ "MKCOL, MOVE, COPY, DELETE"
+
+dav() { local m="$1" path="$2"; shift 2; status_of -X "$m" "$BASE/dav/$path" "${AUTH[@]}" "$@"; }
+
+# A name with a space and an ampersand. The URL has to carry the ENCODED form:
+# a raw space makes curl fail outright, and a raw "&" would silently turn the
+# rest of the name into a query string - which is precisely the client-side bug
+# the percent-encoding in href exists to prevent. Writing it unencoded here is
+# also a useful check that the server decodes what a real client sends.
+WEIRD="a%20b%26c"
+assert_status "MKCOL creates a collection" 201 "$(dav MKCOL "$FOLDER/$WEIRD")"
+assert_status "MKCOL onto an existing name is 405" 405 "$(dav MKCOL "$FOLDER/$WEIRD")"
+assert_status "MKCOL with a body is 415" 415 \
+  "$(dav MKCOL "$FOLDER/withbody" -H 'Content-Type: application/xml' --data-binary '<x/>')"
+
+# Build a two-level subtree so MOVE and COPY have something to carry. The inner
+# collection has to exist first: PUT into a missing parent is 409 by design, and
+# creating it here also pins that.
+printf 'deep payload' > "$tmp/deep.txt"
+assert_status "MKCOL creates the inner collection" 201 "$(dav MKCOL "$FOLDER/$WEIRD/inner")"
+assert_status "PUT into a missing collection is 409" 409 \
+  "$(dav PUT "$FOLDER/$WEIRD/nosuch/deep.txt" --data-binary "@$tmp/deep.txt")"
+assert_status "the nested file is created" 201 \
+  "$(dav PUT "$FOLDER/$WEIRD/inner/deep.txt" --data-binary "@$tmp/deep.txt")"
+assert_status "the nested file is readable" 200 "$(dav GET "$FOLDER/$WEIRD/inner/deep.txt")"
+
+assert_status "MOVE renames a collection" 201 "$(dav MOVE "$FOLDER/$WEIRD" -H "Destination: $BASE/dav/$FOLDER/moved")"
+# The whole subtree came along, which is the entire point of MOVE.
+if [ "$(dav GET "$FOLDER/moved/inner/deep.txt")" = "200" ]; then
+  ok "MOVE carried the whole subtree"
+else
+  bad "MOVE carried the whole subtree" "the grandchild is gone"
+fi
+assert_status "the old name is gone" 404 "$(dav GET "$FOLDER/$WEIRD/inner/deep.txt")"
+
+assert_status "COPY duplicates a collection" 201 "$(dav COPY "$FOLDER/moved" -H "Destination: $BASE/dav/$FOLDER/copied")"
+if [ "$(curl -s "$BASE/dav/$FOLDER/copied/inner/deep.txt" "${AUTH[@]}")" = "deep payload" ]; then
+  ok "the copy has the same bytes"
+else
+  bad "the copy has the same bytes" "got '$(curl -s "$BASE/dav/$FOLDER/copied/inner/deep.txt" "${AUTH[@]}")'"
+fi
+if [ "$(dav GET "$FOLDER/moved/inner/deep.txt")" = "200" ]; then
+  ok "COPY left the source alone"
+else
+  bad "COPY left the source alone" "MOVE semantics leaked into COPY"
+fi
+
+assert_status "MOVE without a Destination is 400" 400 "$(dav MOVE "$FOLDER/moved")"
+assert_status "a cross-origin Destination is 400" 400 \
+  "$(dav MOVE "$FOLDER/moved" -H 'Destination: https://evil.example/dav/x')"
+assert_status "MOVE into its own subtree is refused" 403 \
+  "$(dav MOVE "$FOLDER/moved" -H "Destination: $BASE/dav/$FOLDER/moved/inner")"
+
+# Overwrite: F must not destroy, T must.
+printf 'replacement' > "$tmp/repl.txt"
+dav PUT "$FOLDER/moved/target.txt" --data-binary "@$tmp/one.txt" >/dev/null
+assert_status "Overwrite F leaves the destination alone" 204 \
+  "$(dav COPY "$FOLDER/copied" -H "Destination: $BASE/dav/$FOLDER/moved/target.txt" -H 'Overwrite: F')"
+if [ "$(curl -s "$BASE/dav/$FOLDER/moved/target.txt" "${AUTH[@]}")" = "first revision" ]; then
+  ok "Overwrite F really did not destroy the target"
+else
+  bad "Overwrite F really did not destroy the target" "content is '$(curl -s "$BASE/dav/$FOLDER/moved/target.txt" "${AUTH[@]}")'"
+fi
+
+# DELETE of a file is recoverable; DELETE of a collection is not, and the
+# asymmetry is forced by the schema rather than chosen.
+assert_status "DELETE a file" 204 "$(dav DELETE "$FOLDER/moved/target.txt")"
+assert_status "the deleted file is gone from /dav" 404 "$(dav GET "$FOLDER/moved/target.txt")"
+trash="$(curl -s "$BASE/api/trash" -H "Authorization: Bearer $JWT")"
+if printf '%s' "$trash" | grep -q 'target.txt'; then
+  ok "the deleted file is in the trash (recoverable)"
+else
+  bad "the deleted file is in the trash" "DELETE bypassed the trash"
+fi
+
+assert_status "DELETE a collection" 204 "$(dav DELETE "$FOLDER/moved")"
+assert_status "the deleted collection is gone" 404 "$(dav PROPFIND "$FOLDER/moved" -H 'Depth: 0')"
+
+# A read-only mount must be refused on every structural method too, not just PUT.
+if [ -n "$RO" ]; then
+  for m in MKCOL MOVE COPY DELETE; do
+    s="$(status_of -X "$m" "$BASE/dav/$FOLDER/ro-$m" -u "$USER_NAME:$RO" \
+          -H "Destination: $BASE/dav/$FOLDER/ro-dest-$m" --data-binary "@$tmp/one.txt")"
+    if [ "$s" = "403" ]; then ok "a read-only mount cannot $m"; else bad "a read-only mount cannot $m" "got $s"; fi
+  done
 fi
 
 # ---------------------------------------------------------------- summary
