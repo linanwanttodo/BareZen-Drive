@@ -34,6 +34,9 @@ import com.linan.barezen_drive.core.dto.RegistrationSettingRequest
 import com.linan.barezen_drive.core.dto.AdminUsersResponse
 import com.linan.barezen_drive.core.dto.RegistrationStatusDto
 import com.linan.barezen_drive.core.dto.UserDto
+import com.linan.barezen_drive.core.dto.WebdavTokenCreateRequest
+import com.linan.barezen_drive.core.dto.WebdavTokenCreatedResponse
+import com.linan.barezen_drive.core.dto.WebdavTokensResponse
 import com.linan.barezen_drive.data.local.TokenStorage
 import com.linan.barezen_drive.platform.monotonicNowMs
 import com.linan.barezen_drive.data.local.TokenStore
@@ -534,6 +537,30 @@ class ApiClient(
 
     suspend fun revokeShare(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/shares/$id")
+    }
+
+    // ---- WebDAV app passwords (mounted drives, authenticated) ----
+
+    /**
+     * Mints a mount credential. The returned plaintext is the only copy that
+     * will ever exist - the server stores a hash - so the caller has to show it
+     * before dropping the response.
+     */
+    suspend fun createWebdavToken(label: String, readOnly: Boolean): Result<WebdavTokenCreatedResponse> = runApi {
+        http.post("$baseUrl/api/webdav/tokens") {
+            contentType(ContentType.Application.Json)
+            setBody(WebdavTokenCreateRequest(label, readOnly))
+        }.body()
+    }
+
+    /** Every mount credential of this account, newest first (server-sorted). */
+    suspend fun listWebdavTokens(): Result<WebdavTokensResponse> = runApi {
+        http.get("$baseUrl/api/webdav/tokens").body()
+    }
+
+    /** Cuts one device off without disturbing the others' mounts. */
+    suspend fun revokeWebdavToken(id: String): Result<Unit> = runApi {
+        http.delete("$baseUrl/api/webdav/tokens/$id")
     }
 
     // ---- Public share endpoints (no auth; Bearer stays absent when no token) ----

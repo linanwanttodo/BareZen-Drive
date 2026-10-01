@@ -362,6 +362,31 @@ interface Strings {
     val backupFailedRetryHint: String
     val showBackupSettings: String
 
+    // WebDAV app passwords (mounted drives)
+    val webdavSettings: String
+    val webdavSettingsSubtitle: String
+    val webdavNoTokens: String
+    val webdavNoTokensHint: String
+    val webdavNewMount: String
+    val webdavTokenLabel: String
+    val webdavTokenLabelHint: String
+    val webdavReadOnly: String
+    val webdavReadOnlyHint: String
+    val webdavCreateMount: String
+    /** Past-tense result, and it carries the secret: this is the only time it
+     *  is ever readable, so the wording says so rather than hinting at it. */
+    fun webdavTokenCreated(label: String): String
+    val webdavTokenSavedAck: String
+    val webdavTokenShownOnce: String
+    val webdavTokenCopy: String
+    val webdavTokenCopyFailed: String
+    val webdavTokenCopied: String
+    val webdavTokenRevoke: String
+    fun webdavTokenRevokeConfirm(label: String): String
+    fun webdavLastUsed(dateTime: String): String
+    val webdavNeverUsed: String
+    fun webdavCreatedAt(dateTime: String): String
+
     /** Notification channels and worker-side strings (non-Compose callers read
      *  these through [com.linan.barezen_drive.i18n.I18n.strings]). */
     val notifyChannelBackup: String
