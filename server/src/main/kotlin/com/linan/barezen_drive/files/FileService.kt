@@ -38,7 +38,30 @@ object FileService {
     /** How long a trashed file waits before the cleanup loop purges it. */
     const val TRASH_RETENTION_DAYS = 30L
 
-    private fun nameOk(name: String) = name.isNotBlank() && name.length <= 255 && !name.contains('/')
+    /**
+     * Legal names, for the API and for WebDAV alike.
+     *
+     * "/" is rejected because a name is one path segment - both protocols
+     * address a resource by joining encoded segments with slashes.
+     *
+     * "." and ".." are rejected because they are relative-path directives, not
+     * names: a filesystem-shaped client resolves "/a/../b" as "/b", so a real
+     * folder called ".." makes the intent ambiguous, and textually resolving a
+     * path that contains one is how a request walks out of the user's root.
+     *
+     * C0 controls and DEL are rejected because XML 1.0 cannot carry them raw.
+     * A single such name turns a WebDAV Multi-Status listing into a document
+     * no client can parse, which hides the entire directory rather than the one
+     * broken file. Rejecting at the door also keeps them out of logs and
+     * terminal output everywhere else.
+     */
+    private fun nameOk(name: String) =
+        name.isNotBlank() &&
+            name.length <= 255 &&
+            !name.contains('/') &&
+            name != "." &&
+            name != ".." &&
+            name.none { it.code < 0x20 || it.code == 0x7F }
 
     /**
      * `column IS NULL` for a null [parent] (the account root) and `column = ?`
