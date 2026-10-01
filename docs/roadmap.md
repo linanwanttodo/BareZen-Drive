@@ -48,9 +48,10 @@
 - npm `ws` 8.20.1（High，GHSA-96hv-2xvq-fx4p）为 Kotlin/JS 构建工具链（webpack dev server）传递依赖，仅构建期存在、不进生产运行时；KGP 钉版无法通过 yarn 升级，待 Kotlin 插件更新后自然消除（Opsera 扫描 2026-09-09）
 - `jackson-databind` 2.22.0（两条 Medium）与 `netty-codec-http` 4.2.16（一条 Medium）均由 ktor 3.5.2 传递引入，仓库未直接声明，只能随 ktor 版本升级收敛；服务端未使用 jackson 的反序列化路径（序列化走 kotlinx.serialization）（Opsera 扫描 2026-09-12）
 
-- [x] WebDAV 挂载为网络盘：每设备应用密码（32 字节随机 + SHA-256 精确查，不用 bcrypt——挂载每个请求都要鉴权一次，bcrypt cost=10 约 100ms/次）、OPTIONS/PROPFIND/GET/HEAD/PUT/MKCOL/MOVE/COPY/DELETE 读写齐全、回收站可恢复（2026-10-01）
+- [x] WebDAV 挂载为网络盘：每设备应用密码（32 字节随机 + SHA-256 精确查，不用 bcrypt——挂载每个请求都要鉴权一次，bcrypt cost=10 约 100ms/次）、OPTIONS/PROPFIND/GET/HEAD/PUT/MKCOL/MOVE/COPY/DELETE 读写齐全（2026-10-01）
   - 不实现 LOCK/UNLOCK（501 且不宣告），代价是用 Office 打开网盘上的文档保存可能失败；必须 HTTPS（Basic 明文，Windows 在 HTTP 上默认禁用 Basic）
   - 覆盖写不产生版本（WebDAV 专用语义），旧 blob 走宽限期删除队列；无秒传（协议没有先报哈希的钩子）
+  - 删除不对称：文件进回收站可恢复，**集合是硬删除整棵子树**——`folders` 没有 `deleted_at` 而 `files.folder_id` 有外键，模型上无法表达「文件夹进回收站」
   - 未经真实 Windows/macOS 客户端验证：只到协议层测试与真实 HTTP 冒烟脚本（`scripts/dav_smoke.sh`）全绿
 ## v0.3+（远期）
 
