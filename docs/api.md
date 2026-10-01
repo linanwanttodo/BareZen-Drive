@@ -393,6 +393,88 @@ DTO 一次性序列化进响应体与堆内存。`nextCursor` 为 `null` 表示�
 
 放弃上传：session 置 aborted、清理 tmp。204。
 
+## WebDAV（挂载为网络盘）
+
+`/dav` 把账号的文件树暴露成可挂载的 WebDAV 共享，macOS Finder、Windows 资源管理器、Linux Nautilus / davfs2 / rclone 都能把它当网络盘读写。
+
+与 `/api` 完全分离的两点设计约束：
+
+- **认证方式不同。** 挂载客户端只会说 HTTP Basic —— 没有刷新令牌那个来回可用。RFC 7235 §2.1 规定 HTTP 认证被假定为无状态，认证所需信息必须由请求自身提供，所以凭据必须自包含。这就是「每设备应用密码」存在的协议层理由。
+- **不能用主账号密码。** 挂载后每个请求都要鉴权一次，而账号密码是 bcrypt（cost 10，约 100ms/次），浏览一个目录就是几百次。Nextcloud 文档以「significant performance penalty」劝阻用主密码，本项目的数字更难看。应用密码是 32 字节随机、按 SHA-256 **精确查**（不做 bcrypt）：高熵没有离线爆破面，精确匹配不引入任何 KDF 延迟。
+
+### GET /api/webdav/tokens（需登录）
+
+挂载凭据的增删查，是普通的 Bearer 端点（挂载自身无法管理凭据 —— 它没有提示输入新密码的办法）。无头部署也可以直接用 curl 调这里铸一个。
+
+```json
+// POST /api/webdav/tokens  {"label":"公司 iMac","readOnly":false}
+{"token": {"id":"<uuid>","label":"公司 iMac","readOnly":false,
+           "createdAt":"2026-10-01T07:00:00Z","lastUsedAt":0},
+ "plaintext":"<64位hex>"}
+```
+
+`plaintext` **只在这一条响应里出现一次**，之后不可再取（服务端只存 SHA-256）。`GET` 返回 `{"tokens":[...]}`，明文不在其中；`DELETE /api/webdav/tokens/{id}` 吊销单个，204。
+
+每台设备一个凭据：WebDAV 客户端会把密码明文存进配置或系统钥匙串，唯一能兜住泄露的方式是能只掐断一台设备而不动其他。`readOnly` 为 true 的挂载点所有写方法返 403。令牌对 `/api/**` 完全无效（不能登录 Web UI、不能调管理端点），与 Nextcloud 一致。
+
+### 方法一览
+
+| 方法 | 说明 |
+|---|---|
+| `OPTIONS` | 200 + `DAV: 1` + `Allow` + `MS-Author-Via: DAV` |
+| `PROPFIND` | Depth 0/1，207 Multi-Status |
+| `GET` / `HEAD` | 支持 Range / 206 / 416 / 条件请求 |
+| `PUT` | 新建 201，覆盖 204 |
+| `MKCOL` | 新建集合 201 |
+| `MOVE` / `COPY` | 新建 201，覆盖 204，无变化 204 |
+| `DELETE` | 204（进回收站，可恢复） |
+| `LOCK` / `UNLOCK` | **501，且不进 `Allow`** |
+
+### 五条必须知道的限制
+
+1. **没有锁。** `LOCK`/`UNLOCK` 返 501，并且**刻意不**在 `Allow` 与 `DAV:` 里宣告。宣告了会让客户端以为锁可用从而改变行为：资源管理器拒绝打开它锁不了的���件，Office 拒绝保存。**实际后果：用 Office 打开网盘上的文档，保存可能失败**，因为 Office 保存前要加锁。
+2. **必须 HTTPS。** HTTP Basic 以 base64 明文传应用密码，且 Windows 客户端在明文 HTTP 上默认禁用 Basic。服务端**不拒绝**明文请求 —— compose 部署里 Caddy 与本进程之间本就是明文，在这一层拒绝会把受支持的部署一起打死；只在启动时打一条 WARN。
+3. **没有秒传。** 协议没有让客户端「先报哈希」的钩子，所以 WebDAV PUT 永远走完整上传。桌面客户端拖文件基本都带 `Content-Length`；不带时（chunked 传输）服务端先落盘测大小再切块。
+4. **覆盖不产生版本。** 挂载覆盖走的是 WebDAV 专用语义，不进 `file_versions`。被替换掉的 blob 会进入宽限期删除队列（与回收站同一套），所以不会留下无主孤儿，但它确实不在版本历史里 —— 需要历史请用 Web UI 或 `/api`。
+5. **未经真实客户端验证。** 本功能只到「协议层测试全绿 + 真实 HTTP 冒烟脚本全绿」（`scripts/dav_smoke.sh`）。开发环境没有可用的 Windows / macOS 客户端，所以「Explorer 与 Finder 实际挂得上」这句话没有被验证过。
+
+### 资源模型与 href 编码
+
+`/dav/` 是该用户自己的根。文件夹 ↔ 集合，文件（`deleted_at = 0`）↔ 非集合，回收站不可见。相册树按普通文件夹原样暴露（`相册/我的手机/相机/…`）—— 隐藏它会让手机自动备份的文件在网盘里凭空消失，比显示目录结构更反直觉。
+
+路径逐段解析（每段一次索引查询），不使用前缀匹配全表扫。名字里不允许 `/`，所以每个名字恰好对应一个路径段。
+
+**href 与 displayname 走两套不同的编码**，这是经典 bug 源，实现与测试都分别钉住：
+
+- `href`：RFC 3986 百分号编码，逐段编码后用 `/` 连接。客户端靠它解析路径，`#` 会截断 href、`?` 会开启查询串。
+- `displayname`：只做 XML 转义，**绝不百分号编码** —— 客户端要的是原名，编码过会让用户在文件浏览器里看到 `a%20b.txt`。
+
+返回的属性：`resourcetype`、`displayname`、`getcontentlength`、`getlastmodified`、`getetag`、`creationdate`。
+
+- `getlastmodified` 取 `updated_at` 而非 `taken_at`。客户端拿它决定要不要重取，用拍摄时间会让一张 2021 年的照片看起来「自 2021 年起从未修改」。
+- `getetag` 是 blob key 的**末段 sha256**（内容寻址，天然强标签），带引号。不用整个 storage key —— 它形如 `blobs/ab/cd/<sha>`，塞进 ETag 等于把内部存储布局发给客户端。集合没有内容，故**不返回** `getetag`。
+- 请求里点名了但不存在的属性，按 RFC 在 multistatus 内联返 404。`propname`（只要名字）与空 `<D:prop/>`（等同 allprop）都支持。
+
+### 两处对 RFC 的有意偏离
+
+**缺 `Depth` 头按 1 处理。** RFC 4918 §9.1 说缺 Depth 应视同 infinity。但本服务对 infinity 的回答是 403，于是「缺头 → infinity → 403」等于用拒绝来回应「只是想列个目录」的客户端 —— 而最常见的列目录方式恰恰是不带这个头。带 `Depth: infinity` 仍然返 403，并在响应体里给出 `propfind-finite-depth`，客户端据此退回逐集合 Depth 1。
+
+**`PROPFIND` 打在非集合上且 `Depth: 1` 返 400**（RFC 4918 §9.1 规定 403）。400 是更诚实的回答：这个请求与资源自身的类型矛盾，而不是在问调用方没有权限的东西；而且遍历挂载的客户端对这两种状态码都无法恢复。
+
+### 大目录
+
+`PROPFIND` 必须返回**整个目录**（客户端要缓存完整列表），所以不能用既有的 `/api/folders/{id}/contents`：那个接口对文件夹完全没有游标，且在无 limit 时整集 `map { toFileDto() }` —— 10 万文件的目录会一次性物化 10 万个 DTO。WebDAV 侧有专用的 keyset 游标列举器，只读 6 个轻量列，按 `(lowerCase(name), id)` 分批取，207 响应边取边写（不整体缓冲）。
+
+### 错误映射
+
+命名冲突 409、超出大小上限 **507 Insufficient Storage**（响应体 `<D:error xmlns:D="DAV:"><D:quota-not-exceeded/></D:error>`，不是 413）、不可满足的 Range 416、条件请求失败 412、鉴权 401 + `WWW-Authenticate: Basic realm="BareZen Drive"`、方法不支持 405、infinity 403、只读挂载点写操作 403、限流 429。
+
+限流走 `/dav` **自己的**预算，与登录额度彻底分开：挂载的每个请求都带凭据，密码过期的客户端重试循环是日常而非攻击，共用额度会让挂载把自己的属主锁在盘外（RFC 7617 附录专门警告过隐式重试的这个问题）。失败计数同理走独立的 `dav-auth` 桶。
+
+### 未鉴权时的行为
+
+未鉴权请求任何方法都返 401 并带 `WWW-Authenticate`，而不是 404 —— 否则客户端拿不到 challenge，无从完成认证。`/dav` 之外的任何路径都不会被 WebDAV 的挑战答复，也不会落到 SPA 兜底（那会让挂载客户端把一个 404 报成「服务器损坏」）。
+
 ## Web 静态托管
 
 `GET /` 与任意非保留路径返回 Web 客户端（SPA 回退 index.html）；真实 wasm/js/css 资源在 `/` 下按名服务；`/api/**` 与 `/health` 优先于静态路由，未知 `/api/*` 子路径返回 404。

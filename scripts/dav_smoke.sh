@@ -269,6 +269,81 @@ for p in /api/me /api/server/stats; do
   if [ "$s" = "401" ]; then ok "$p rejects a WebDAV token"; else bad "$p rejects a WebDAV token" "got $s"; fi
 done
 
+# ---------------------------------------------------------------- PUT
+head_ "PUT"
+
+dav_put() { # path, body-file, extra curl args...
+  local path="$1" file="$2"; shift 2
+  status_of -X PUT "$BASE/dav/$path" "${AUTH[@]}" --data-binary "@$file" "$@"
+}
+
+printf 'first revision' > "$tmp/one.txt"
+printf 'second revision, longer' > "$tmp/two.txt"
+
+assert_status "PUT creates a new file (201)" 201 "$(dav_put "$FOLDER/new.txt" "$tmp/one.txt")"
+if [ "$(curl -s "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}")" = "first revision" ]; then
+  ok "the new file reads back"
+else
+  bad "the new file reads back" "got '$(curl -s "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}")'"
+fi
+
+assert_status "PUT over an existing file is 204" 204 "$(dav_put "$FOLDER/new.txt" "$tmp/two.txt")"
+if [ "$(curl -s "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}")" = "second revision, longer" ]; then
+  ok "the overwrite took effect"
+else
+  bad "the overwrite took effect" "got '$(curl -s "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}")'"
+fi
+
+# Chunked transfer encoding: no Content-Length at all. The in-process suite
+# cannot produce this, and it is the path a browser or a streaming client takes,
+# so the server has to spool to learn the size before it can cut chunks.
+h="$(headers_of -X PUT "$BASE/dav/$FOLDER/chunked.txt" "${AUTH[@]}" \
+      -H 'Transfer-Encoding: chunked' --data-binary "@$tmp/one.txt")"
+assert_status "PUT without Content-Length is 201" 201 "$(printf '%s' "$h" | head -1 | awk '{print $2}')"
+if [ "$(curl -s "$BASE/dav/$FOLDER/chunked.txt" "${AUTH[@]}")" = "first revision" ]; then
+  ok "the chunked upload stored the right bytes"
+else
+  bad "the chunked upload stored the right bytes" "got '$(curl -s "$BASE/dav/$FOLDER/chunked.txt" "${AUTH[@]}")'"
+fi
+
+assert_status "PUT into a missing collection is 409" 409 "$(dav_put "no-such-dir/x.txt" "$tmp/one.txt")"
+assert_status "PUT onto an existing collection is 405" 405 "$(dav_put "$FOLDER" "$tmp/one.txt")"
+assert_status "a read-only mount cannot PUT" 403 \
+  "$(status_of -X PUT "$BASE/dav/$FOLDER/nope.txt" -u "$USER_NAME:$RO" --data-binary "@$tmp/one.txt")"
+
+# Over the configured cap the answer must be 507, not 413: WebDAV uses
+# Insufficient Storage for quota-shaped refusals, and a client that only knows
+# 413 will report the wrong thing to the user.
+dd if=/dev/zero of="$tmp/big.bin" bs=1M count=12 2>/dev/null
+cap="$(status_of -X PUT "$BASE/dav/$FOLDER/big.bin" "${AUTH[@]}" --data-binary "@$tmp/big.bin")"
+if [ "$cap" = "507" ] || [ "$cap" = "413" ]; then
+  ok "an oversized PUT is refused ($cap)"
+  if [ "$cap" = "507" ]; then
+    if curl -s -X PUT "$BASE/dav/$FOLDER/big.bin" "${AUTH[@]}" --data-binary "@$tmp/big.bin" \
+         | grep -q 'quota-not-exceeded'; then
+      ok "the 507 body names quota-not-exceeded"
+    else
+      bad "the 507 body names quota-not-exceeded" "a client cannot explain the refusal without it"
+    fi
+  fi
+else
+  bad "an oversized PUT is refused" "got $cap"
+fi
+
+# An If-Match naming the current tag must succeed; a stale one must not, and must
+# not have written.
+etag_now="$(headers_of -X GET "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}" \
+  | grep -i '^ETag:' | sed 's/^[^:]*: *//' | tr -d '\r')"
+assert_status "a matching If-Match PUT is allowed" 204 \
+  "$(status_of -X PUT "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}" -H "If-Match: $etag_now" --data-binary "@$tmp/one.txt")"
+assert_status "a stale If-Match PUT is 412" 412 \
+  "$(status_of -X PUT "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}" -H 'If-Match: "0000deadbeef"' --data-binary "@$tmp/two.txt")"
+if [ "$(curl -s "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}")" = "first revision" ]; then
+  ok "the refused PUT wrote nothing"
+else
+  bad "the refused PUT wrote nothing" "content changed to '$(curl -s "$BASE/dav/$FOLDER/new.txt" "${AUTH[@]}")'"
+fi
+
 # ---------------------------------------------------------------- summary
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1
