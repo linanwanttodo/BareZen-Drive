@@ -18,6 +18,8 @@ import com.linan.barezen_drive.core.dto.VersionInfoResponse
 import com.linan.barezen_drive.core.dto.AdminUsersResponse
 import com.linan.barezen_drive.core.dto.UserDto
 import com.linan.barezen_drive.core.dto.RegistrationStatusDto
+import com.linan.barezen_drive.core.dto.WebdavTokenCreatedResponse
+import com.linan.barezen_drive.core.dto.WebdavTokensResponse
 import com.linan.barezen_drive.data.api.ApiClient
 import io.ktor.utils.io.ByteReadChannel
 
@@ -105,6 +107,15 @@ class FilesRepository(private val api: ApiClient) : UploadApi {
 
     /** Full share URL for copy/paste: baseUrl + /s/<token>. */
     fun shareUrl(path: String): String = api.baseUrl + path
+
+    // ---- WebDAV app passwords (mounted drives) ----
+
+    suspend fun createWebdavToken(label: String, readOnly: Boolean): Result<WebdavTokenCreatedResponse> =
+        api.createWebdavToken(label, readOnly)
+    suspend fun listWebdavTokens(): Result<WebdavTokensResponse> =
+        api.listWebdavTokens()
+    suspend fun revokeWebdavToken(id: String): Result<Unit> =
+        api.revokeWebdavToken(id)
 
     // ---- Public share access (no authentication) ----
 

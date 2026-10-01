@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
@@ -162,6 +163,9 @@ fun SettingsScreen(
     /** Instance owner: the user-management row is hidden for everyone else. */
     isOwner: Boolean = false,
     onOpenShareManager: () -> Unit,
+    /** WebDAV app passwords. Defaults to a no-op so the screen still builds for
+     *  callers that do not navigate; App.kt supplies the real push. */
+    onOpenWebdavTokens: () -> Unit = {},
     onOpenTrash: () -> Unit = {},
     onOpenArchive: () -> Unit = {},
     onLogout: () -> Unit,
@@ -381,54 +385,61 @@ fun SettingsScreen(
             }
             }
 
-            // Both rows in this section are owner-only. They used to be listed
-            // for every account, so a guest tapped "用户管理" and got a page
-            // whose whole content was a red 403 line: permission was checked
-            // after the navigation instead of before it. The whole section goes
-            // - a header over nothing is its own kind of noise.
-            if (isOwner) {
+            // The section header is no longer owner-only, because the
+            // mount-password row applies to every account. The other two rows
+            // stay gated: they used to be listed for everyone, so a guest tapped
+            // "用户管理" and got a page whose whole content was a red 403 line -
+            // permission was checked after the navigation, not before it.
             GlassSectionHeader(LocalStrings.current.settingsServer)
             GlassCard {
+                SettingsRow(
+                    title = LocalStrings.current.webdavSettings,
+                    subtitle = LocalStrings.current.webdavSettingsSubtitle,
+                    onClick = onOpenWebdavTokens,
+                    trailing = { Icon(Icons.Default.Cloud, contentDescription = null) },
+                )
+                if (isOwner) {
+                    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
                     SettingsRow(
                         title = LocalStrings.current.userManagement,
                         subtitle = LocalStrings.current.userManagementHint,
                         onClick = onOpenUsers,
                         trailing = { Icon(Icons.Default.Person, contentDescription = null) },
                     )
-                    HorizontalDivider(Modifier.padding(horizontal = 16.dp))
-                if (registrationOpen != null) {
-                    SettingsRow(
-                        title = LocalStrings.current.openRegistration,
-                        subtitle = if (registrationOpen) LocalStrings.current.openRegistrationOnHint
-                        else LocalStrings.current.openRegistrationOffHint,
-                        trailing = {
-                            // suspend callback, not fire-and-forget: the switch
-                            // flips optimistically and the parent rolls it back
-                            // when the server says no. Without the result the
-                            // rollback was invisible - the switch sprang back and
-                            // nothing said why.
-                            Switch(
-                                checked = registrationOpen,
-                                onCheckedChange = { next ->
-                                    scope.launch {
-                                        registrationError =
-                                            if (onRegistrationOpenChange(next)) null
-                                            else I18n.strings.settingRejected
-                                    }
-                                },
-                            )
-                        },
-                    )
-                    registrationError?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(start = 16.dp, top = 2.dp),
+                    if (registrationOpen != null) {
+                        HorizontalDivider(Modifier.padding(horizontal = 16.dp))
+                        SettingsRow(
+                            title = LocalStrings.current.openRegistration,
+                            subtitle = if (registrationOpen) LocalStrings.current.openRegistrationOnHint
+                            else LocalStrings.current.openRegistrationOffHint,
+                            trailing = {
+                                // suspend callback, not fire-and-forget: the switch
+                                // flips optimistically and the parent rolls it back
+                                // when the server says no. Without the result the
+                                // rollback was invisible - the switch sprang back and
+                                // nothing said why.
+                                Switch(
+                                    checked = registrationOpen,
+                                    onCheckedChange = { next ->
+                                        scope.launch {
+                                            registrationError =
+                                                if (onRegistrationOpenChange(next)) null
+                                                else I18n.strings.settingRejected
+                                        }
+                                    },
+                                )
+                            },
                         )
+                        registrationError?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(start = 16.dp, top = 2.dp),
+                            )
+                        }
                     }
                 }
-            }
             }
 
             GlassSectionHeader(LocalStrings.current.actionShare)
