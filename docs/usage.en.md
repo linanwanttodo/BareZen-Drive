@@ -223,4 +223,64 @@ packages are produced yet**:
   artifacts), but Apple targets cannot be compiled on Linux - only the GitHub
   macOS runner can verify this end.
 
-Deployable today: **server, Web, and Android**.
+Deployable today: **server, Web, and Android**. What you would use a desktop
+client for is available now over the network drive in the next section.
+
+## 8. Mounting as a network drive (WebDAV)
+
+Usable before any desktop client exists. Mount `/dav` as a network drive and
+Finder, Explorer or Nautilus can read and write it like a local directory, which
+means `:app:desktopApp` no longer gates desktop use.
+
+**To set one up**: Web or Android client -> Settings -> WebDAV -> create a mount,
+give it a name you will recognise later (e.g. "work iMac"), and you get a 64-character
+app password.
+
+**Why an app password and not the account password**: a mount authenticates on
+*every single request*, and the account password is a bcrypt hash (cost 10,
+~100ms), so opening one folder costs hundreds of those. The app password is 32
+bytes of randomness stored as a SHA-256 hash and looked up by exact match (no
+bcrypt) - high entropy has no offline guessing surface, which is what makes exact
+matching sound here. It also cannot sign in to the Web UI or call any `/api/**`
+endpoint, so a leak stays confined to the drive itself.
+
+**One per device.** WebDAV clients keep the password in a plaintext config file or
+the system keychain, so the only way to contain a leak is to cut one device off
+without disturbing the rest. Revoke an individual mount from settings, or mark it
+read-only so every write method answers 403 - that keeps a stray keystroke on the
+mount from deleting the library.
+
+**To mount** (the username is your account name, the password is the app password
+you just generated):
+
+- **macOS Finder**: Go -> Connect to Server -> `https://<your-domain>/dav`
+- **Windows Explorer**: This PC -> Map network drive -> `https://<your-domain>/dav`
+- **Linux**: `sudo mount -t davfs https://<your-domain>/dav /mnt/point`
+
+**HTTPS is required.** HTTP Basic sends the credential in the clear, and Windows
+clients disable Basic over plain HTTP by default. The Caddy mode of `install.sh`
+already terminates TLS.
+
+### Four limits, stated plainly
+
+1. **No locking.** `LOCK`/`UNLOCK` answer 501 and are deliberately absent from
+   `Allow` - advertising them makes clients expect lock semantics, and Explorer
+   then declines to open a file it cannot lock while Office refuses to save.
+   **The practical consequence: saving an Office document you opened from the
+   mount may fail**, because Office locks before saving.
+2. **An overwrite produces no version history.** Mount overwrites use WebDAV
+   semantics and skip the version table. The replaced blob goes to the trash
+   queue's grace period, so nothing is orphaned, but there is no history to consult
+   - use the Web UI when you need that.
+3. **No instant upload.** The protocol has no hook for a client to announce a hash
+   first, so every WebDAV upload is a full one. Large files are slower here than
+   through the Web client.
+4. **Not verified against real clients.** This is verified only to "the protocol
+   tests pass" and "a real-HTTP smoke script passes" (`scripts/dav_smoke.sh`). No
+   usable Windows or macOS client was available while building it, so the claim
+   "Explorer and Finder actually mount it" is untested. Try it in a scratch folder
+   first.
+
+For the method table, property set, status codes and the two deliberate deviations
+from RFC 4918, see [the WebDAV chapter of api.md](api.md).
+

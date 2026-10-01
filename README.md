@@ -51,6 +51,25 @@ Android packages are on the [Releases](https://github.com/linanwanttodo/BareZen-
   interface (English / Simplified Chinese).
 - Storage backend: local disk, or any S3-compatible object store (MinIO,
   Cloudflare R2, Tencent COS).
+- WebDAV: mount the drive as a network drive in Finder, Explorer or Nautilus, with
+  a separate app password per device.
+
+## Mounting as a network drive
+
+Settings -> WebDAV -> create a mount, which generates an app password for that
+device, then:
+
+- **macOS Finder**: Go -> Connect to Server -> `https://<your-domain>/dav`
+- **Windows Explorer**: This PC -> Map network drive -> `https://<your-domain>/dav`
+- **Linux**: `sudo mount -t davfs https://<your-domain>/dav /mnt/point`
+
+The username is your account name and the password is the app password you just
+generated. **HTTPS is required**: HTTP Basic sends the credential in the clear,
+and Windows clients disable Basic over plain HTTP by default.
+
+Known limits: no locking (so Office may refuse to save a document it opened from
+the mount), no instant upload (the protocol has no hook for a client to announce a
+hash first), and it has not been verified against real Windows or macOS clients.
 
 ## Screenshots
 

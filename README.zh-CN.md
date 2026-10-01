@@ -40,6 +40,21 @@ Android 安装包见 [Releases](https://github.com/linanwanttodo/BareZen-Drive/r
 - 媒体库：收藏、归档、30 天回收站、文件版本历史（每个文件最多 20 版）。
 - 运维：首页状态仪表盘、服务端统一检查更新、双语界面（简体中文 / English）。
 - 存储后端：本地磁盘，或任意 S3 兼容对象存储（MinIO、Cloudflare R2、腾讯云 COS）。
+- WebDAV：挂载为网络盘（Finder / 资源管理器 / Nautilus），每台设备一个独立应用密码。
+
+## 挂载为网络盘
+
+设置 -> 挂载与 WebDAV -> 新建挂载，为这台设备生成一个应用密码，然后：
+
+- **macOS Finder**：前往 -> 连接服务器 -> `https://<你的域名>/dav`
+- **Windows 资源管理器**：此电脑 -> 映射网络驱动器 -> `https://<你的域名>/dav`
+- **Linux**：`sudo mount -t davfs https://<你的域名>/dav /mnt/xxx`
+
+用户名是账号名，密码是刚生成的应用密码。**必须用 HTTPS**：HTTP Basic 以明文传输
+凭据，且 Windows 客户端在明文 HTTP 上默认禁用 Basic。
+
+已知限制：不支持锁（因此用 Office 打开网盘上的文档时保存可能失败）、无秒传（协议
+没有让客户端先报哈希的钩子）、未经真实 Windows / macOS 客户端验证。
 
 ## 界面
 
