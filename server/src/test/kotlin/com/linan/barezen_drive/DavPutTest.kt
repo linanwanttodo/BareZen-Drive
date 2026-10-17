@@ -385,6 +385,52 @@ class DavPutTest {
         assertEquals(emptyList(), openSessions())
     }
 
+    /**
+     * A PUT opens its *own* upload session, even when an unrelated one already
+     * matches the name and size.
+     *
+     * The resume key is user + folder + name + size, and neither side declares a
+     * content hash, so an app upload that is mid-flight looks exactly like the
+     * mount's next write. Adopting it means both writers fill the same `0.part`
+     * slot and whichever completes second publishes a mixture of the two bodies -
+     * silently, with a 2xx. A mount always streams its whole body, so it has
+     * nothing to resume and must never share somebody else's session.
+     */
+    @Test
+    fun aPutDoesNotWriteIntoAnotherUploadsSession() = testApplication {
+        setup()
+        val theirs = "A".repeat(4096)
+        val init = client.post("/api/uploads/init") {
+            header(HttpHeaders.Authorization, auth)
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"clash.bin","size":${theirs.length},"overwrite":true}""")
+        }
+        assertEquals(HttpStatusCode.OK, init.status, init.bodyAsText())
+        val uploadId = (json.parseToJsonElement(init.bodyAsText()) as JsonObject)["uploadId"]!!
+            .jsonPrimitive.content
+        client.put("/api/uploads/$uploadId/chunks/0") {
+            header(HttpHeaders.Authorization, auth)
+            setBody(theirs.encodeToByteArray())
+        }
+
+        val mine = "B".repeat(4096)
+        assertEquals(HttpStatusCode.Created, put("/dav/clash.bin", mine).status)
+        assertEquals(mine, davGet("/dav/clash.bin").bodyAsText())
+
+        // The other upload is untouched: still open, its own bytes still staged.
+        assertTrue(uploadId in openSessions(), "a PUT must not consume an unrelated open session")
+        val staged = Path.of(storageDir).resolve("tmp").resolve(uploadId).resolve("0.part")
+        assertTrue(Files.exists(staged), "a PUT must not write into another session's staging file")
+        assertEquals(theirs.length.toLong(), Files.size(staged))
+
+        // ... and finishing it publishes exactly what it uploaded.
+        val done = client.post("/api/uploads/$uploadId/complete") {
+            header(HttpHeaders.Authorization, auth)
+        }
+        assertEquals(HttpStatusCode.OK, done.status, done.bodyAsText())
+        assertEquals(theirs, davGet("/dav/clash.bin").bodyAsText())
+    }
+
     // ---- overwrite semantics -------------------------------------------------
 
     @Test

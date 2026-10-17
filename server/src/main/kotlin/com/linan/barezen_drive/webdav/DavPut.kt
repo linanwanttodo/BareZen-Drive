@@ -251,14 +251,25 @@ private suspend fun ApplicationCall.davWriteBody(
         // overwrite = true: a mount has no "rename on conflict" verb, and a
         // client saving over an existing file means exactly that. It never takes
         // the instant-upload branch, because no hash is sent.
-        val init = UploadService.initUpload(
-            userId,
-            UploadInitRequest(
-                folderId = parent?.toString(), name = name, size = size,
-                mimeType = mime, chunkSize = UploadService.MAX_CHUNK, overwrite = true,
-            ),
-            storage,
-        )
+        //
+        // allowResume = false: the resume key is user + folder + name + size +
+        // an unhashed content match, and a mount supplies no hash, so two PUTs of
+        // the same name and size that overlap in time would be handed ONE session
+        // and would write the same `$i.part` slots over each other - the merge
+        // would publish a byte-mixture of two files as a valid one. A PUT carries
+        // its whole body, so there is nothing to resume; always allocating a fresh
+        // session is what makes the two uploads independent.
+        val init = withContext(Dispatchers.IO) {
+            UploadService.initUpload(
+                userId,
+                UploadInitRequest(
+                    folderId = parent?.toString(), name = name, size = size,
+                    mimeType = mime, chunkSize = UploadService.MAX_CHUNK, overwrite = true,
+                ),
+                storage,
+                allowResume = false,
+            )
+        }
         val sid = UUID.fromString(init.uploadId)
         sessionId = sid
         // The session's own chunk size, never the one this request asked for: a

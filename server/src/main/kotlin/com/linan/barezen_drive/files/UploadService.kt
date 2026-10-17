@@ -107,7 +107,21 @@ object UploadService {
             .firstOrNull()?.get(FilesTable.size)
             ?: storage.resolvePath(key)?.toFile()?.length()?.takeIf { it > 0 }
 
-    suspend fun initUpload(userId: UUID, req: UploadInitRequest, storage: StorageProvider): UploadInitResponse {
+    suspend fun initUpload(
+        userId: UUID,
+        req: UploadInitRequest,
+        storage: StorageProvider,
+        /**
+         * Whether this init may adopt an open session that matches name and size.
+         *
+         * The app's uploads pass true: a client that was interrupted resumes the
+         * chunks it already paid for. A caller that streams the whole body every
+         * time must pass false, because a match it cannot tell apart from its own
+         * earlier attempt means two live uploads writing one set of `$i.part`
+         * slots, and the merge would publish a mixture of both.
+         */
+        allowResume: Boolean = true,
+    ): UploadInitResponse {
         if (req.name.isBlank() || req.name.contains('/') || req.name.length > 255) throw ApiException.badRequest("文件名非法")
         if (req.size < 0) throw ApiException.badRequest("size 非法")
         if (req.size > maxFileSize) throw ApiException.tooLarge("文件超过服务器上限 ${maxFileSize / MIB} MiB")
@@ -202,12 +216,13 @@ object UploadService {
         // name and size landed in ONE session, both wrote the same `$i.part`
         // slot, and the merge could end up a mixture of the two files. Same
         // content means the same upload and may resume; different content gets a
-        // session of its own. A request without a hash only matches a session
-        // that had none either - it has told us nothing that could separate two
-        // hash-less uploads, so they keep the old behaviour rather than silently
-        // dropping half of a genuine resume.
+        // session of its own. A request without a hash has told us nothing that
+        // could separate two uploads, so it may only resume when the caller says
+        // the whole body is being sent again anyway - [allowResume] is false for
+        // exactly that case, and such a caller always gets a fresh session rather
+        // than sharing an unrelated one.
         val nowMs = System.currentTimeMillis()
-        val existing = transaction(DatabaseFactory.db) {
+        val existing = if (!allowResume) null else transaction(DatabaseFactory.db) {
             UploadSessionsTable.selectAll().where {
                 (UploadSessionsTable.user eq userId) and
                     (UploadSessionsTable.name eq req.name) and
