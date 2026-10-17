@@ -230,19 +230,36 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         basic("auth-webdav") {
             realm = "BareZen Drive"
             validate { credentials ->
+                // The budget is claimed BEFORE the credential lookup, so a spent
+                // window stops reaching the database at all - which is the only
+                // thing an address-keyed limit can protect here. A success hands
+                // its unit back: the window counts failures, never users, and
+                // `Throttle.refund` ignores one whose window already rolled so it
+                // cannot free budget a later attacker never spent.
+                //
+                // Counted on its own axis, never on the login budget. A mount
+                // re-sends credentials on every single request, so a stale
+                // password producing a retry loop is routine use rather than
+                // an attack - charging it to `login` would let the mount lock
+                // its own owner out of the account (RFC 7617 warns about
+                // exactly this for implicit retries). The 20-per-5-minutes
+                // allowance is why that loop stays harmless: it only ends once
+                // the retries stop being wrong.
+                val budgetKey = "dav-auth:" + clientIp()
+                if (!Throttle.tryConsume(budgetKey, DAV_AUTH_MAX_PER_WINDOW, DAV_AUTH_WINDOW_MS)) {
+                    application.log.warn("webdav: auth attempts from {} exceeded the budget", clientIp())
+                    // Thrown rather than answered here: the Basic provider has no
+                    // hook for a challenge of its own, and `validate` is called
+                    // outside the routing response, so the only way this reaches
+                    // the client as anything other than a bare 401 is as an
+                    // exception StatusPages turns into a 429.
+                    throw ApiException.rateLimited("WebDAV 鉴权失败次数过多，请稍后再试")
+                }
                 val token = WebdavTokenService.authenticate(credentials.name, credentials.password)
                 if (token == null) {
-                    // Counted on its own axis, never on the login budget. A mount
-                    // re-sends credentials on every single request, so a stale
-                    // password producing a retry loop is routine use rather than
-                    // an attack - charging it to `login` would let the mount lock
-                    // its own owner out of the account (RFC 7617 warns about
-                    // exactly this for implicit retries).
-                    if (!Throttle.allow("dav-auth:" + clientIp(), DAV_AUTH_MAX_PER_WINDOW, DAV_AUTH_WINDOW_MS)) {
-                        application.log.warn("webdav: auth throttle hit for {}", clientIp())
-                    }
                     null
                 } else {
+                    Throttle.refund(budgetKey, DAV_AUTH_WINDOW_MS)
                     attributes.put(webdavTokenKey, token)
                     UserIdPrincipal(token.userId.toString())
                 }
