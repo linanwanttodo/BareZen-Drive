@@ -7,6 +7,24 @@ interface StorageProvider {
     fun blobKey(sha256: String): String
     suspend fun put(key: String, channel: ByteReadChannel)
     suspend fun get(key: String): ByteReadChannel
+
+    /**
+     * The bytes of [key] from [from] up to but excluding [untilExclusive].
+     *
+     * Ranged reads are the normal shape of media playback - a player seeks, the
+     * client asks for the tail - so the prefix must never be transferred to be
+     * thrown away. Implementations that can address a subrange on the server
+     * (a local seek, an object store `Range` request) override this and hand
+     * back exactly the slice; the fallback only skips the prefix, so it still
+     * delivers the tail of the object beyond [untilExclusive] and callers must
+     * bound the copy by length.
+     */
+    suspend fun getRange(key: String, from: Long, untilExclusive: Long): ByteReadChannel {
+        val source = get(key)
+        source.discard(from)
+        return source
+    }
+
     suspend fun delete(key: String)
     suspend fun exists(key: String): Boolean
 

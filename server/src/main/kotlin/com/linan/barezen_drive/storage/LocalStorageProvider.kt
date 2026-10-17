@@ -4,10 +4,16 @@ import io.ktor.utils.io.*
 import io.ktor.utils.io.jvm.javaio.toByteReadChannel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.nio.channels.Channels
+import java.nio.channels.SeekableByteChannel
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import kotlin.math.min
 
 class LocalStorageProvider(private val root: Path) : StorageProvider {
     private val blobsDir = root.resolve("blobs")
@@ -61,6 +67,13 @@ class LocalStorageProvider(private val root: Path) : StorageProvider {
         java.io.FileInputStream(resolvePath(key).toFile()).toByteReadChannel()
     }
 
+    override suspend fun getRange(key: String, from: Long, untilExclusive: Long): ByteReadChannel =
+        withContext(Dispatchers.IO) {
+            val length = untilExclusive - from
+            require(length >= 0) { "negative range length: $from..$untilExclusive" }
+            LimitedInputStream(Channels.newInputStream(openRange(resolvePath(key), from)), length).toByteReadChannel()
+        }
+
     override suspend fun delete(key: String): Unit = withContext(Dispatchers.IO) {
         Files.deleteIfExists(resolvePath(key))
         return@withContext
@@ -75,4 +88,57 @@ class LocalStorageProvider(private val root: Path) : StorageProvider {
         require(resolved.startsWith(root.normalize())) { "storage key escapes root: $key" }
         return resolved
     }
+}
+
+/**
+ * Opens [path] already positioned at [from], so serving a byte range costs the
+ * bytes after the offset and not everything before it: a read-and-discard pulls
+ * the whole prefix through the page cache on every media seek, which on a 1 GB
+ * box is the difference between a seek and a stall.
+ */
+internal fun openRange(path: Path, from: Long): SeekableByteChannel {
+    require(from >= 0) { "negative range start: $from" }
+    val channel = try {
+        Files.newByteChannel(path)
+    } catch (_: NoSuchFileException) {
+        // Same signal a missing blob gives on the whole-file path and on S3, so
+        // callers keep mapping it to 404 rather than 500.
+        throw FileNotFoundException(path.toString())
+    }
+    return try {
+        channel.position(from)
+        channel
+    } catch (t: Throwable) {
+        channel.close()
+        throw t
+    }
+}
+
+/**
+ * The first [limit] bytes of [source], and nothing after them. The seek supplies
+ * the range start; this supplies the range end, so a caller that reads the
+ * channel to EOF gets the slice it asked for instead of the rest of the object.
+ */
+private class LimitedInputStream(
+    private val source: InputStream,
+    private var remaining: Long,
+) : InputStream() {
+    override fun read(): Int {
+        if (remaining == 0L) return -1
+        val b = source.read()
+        if (b != -1) remaining--
+        return b
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+        if (remaining == 0L) return -1
+        val n = source.read(buffer, offset, min(length.toLong(), remaining).toInt())
+        if (n > 0) remaining -= n
+        return n
+    }
+
+    override fun available(): Int = min(source.available().toLong(), remaining).toInt()
+
+    override fun close(): Unit = source.close()
 }

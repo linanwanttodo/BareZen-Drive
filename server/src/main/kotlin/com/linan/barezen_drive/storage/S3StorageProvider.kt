@@ -72,7 +72,13 @@ class S3StorageProvider(
     private fun isDefaultPort(port: Int): Boolean =
         port == (if (endpoint.scheme == "https") 443 else 80)
 
-    private fun request(method: String, key: String, payloadHash: String, body: HttpRequest.BodyPublisher?): HttpRequest {
+    private fun request(
+        method: String,
+        key: String,
+        payloadHash: String,
+        body: HttpRequest.BodyPublisher?,
+        range: LongRange? = null,
+    ): HttpRequest {
         val now = java.time.LocalDateTime.now(ZoneOffset.UTC)
         val amzDate = now.format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'"))
         val dateStamp = now.format(DateTimeFormatter.BASIC_ISO_DATE)
@@ -82,6 +88,10 @@ class S3StorageProvider(
             "x-amz-date" to amzDate,
             "x-amz-content-sha256" to payloadHash,
         )
+        // `Range` has to be inside the signed header set: S3 verifies the
+        // signature over exactly the headers it received.
+        val rangeValue = range?.let { "bytes=${it.first}-${it.last}" }
+        if (rangeValue != null) headers["range"] = rangeValue
         val auth = SigV4.authorization(
             method = method,
             canonicalUri = uri.s3CanonicalUri(),
@@ -99,6 +109,7 @@ class S3StorageProvider(
             .header("Authorization", auth)
             .header("x-amz-date", amzDate)
             .header("x-amz-content-sha256", payloadHash)
+            .apply { if (rangeValue != null) header("range", rangeValue) }
             .timeout(Duration.ofMinutes(10))
             .method(method, body ?: HttpRequest.BodyPublishers.noBody())
             .build()
@@ -122,6 +133,32 @@ class S3StorageProvider(
         }
         res.body().toByteReadChannel()
     }
+
+    /**
+     * A `Range` request: the store answers 206 with just those bytes, so a media
+     * seek costs the slice instead of the whole object crossing the network. A
+     * store that ignores the header answers 200 with everything and the caller
+     * stops at the length it asked for - same bytes either way.
+     */
+    override suspend fun getRange(key: String, from: Long, untilExclusive: Long): ByteReadChannel =
+        withContext(Dispatchers.IO) {
+            val res = client.send(
+                request("GET", key, SigV4.EMPTY_PAYLOAD_HASH, null, from..(untilExclusive - 1)),
+                HttpResponse.BodyHandlers.ofInputStream(),
+            )
+            when (val status = res.statusCode()) {
+                200, 206 -> Unit
+                404 -> {
+                    res.body().close()
+                    throw FileNotFoundException("S3 GET $key -> 404")
+                }
+                else -> {
+                    res.body().close()
+                    throw IOException("S3 GET $key -> $status")
+                }
+            }
+            res.body().toByteReadChannel()
+        }
 
     override suspend fun delete(key: String): Unit = withContext(Dispatchers.IO) {
         val res = client.send(request("DELETE", key, SigV4.EMPTY_PAYLOAD_HASH, null), HttpResponse.BodyHandlers.discarding())

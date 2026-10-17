@@ -40,12 +40,14 @@ internal class StoredFileContent(
         if (range.isEmpty()) ByteReadChannel.Empty else pipe(range)
 
     private fun pipe(range: LongRange?): ByteReadChannel = COPY_SCOPE.writer(autoFlush = true) {
-        val source = open()
+        val source = open(range)
         try {
             if (range == null) {
                 source.copyTo(channel)
             } else {
-                source.discard(range.first)
+                // The storage layer starts at range.first, so nothing before it
+                // is ever read; this length only trims the tail the store may
+                // have handed back beyond the requested end.
                 source.copyTo(channel, range.last - range.first + 1)
             }
         } finally {
@@ -55,7 +57,9 @@ internal class StoredFileContent(
         }
     }.channel
 
-    private suspend fun open(): ByteReadChannel = withContext(Dispatchers.IO) { storage.get(key) }
+    private suspend fun open(range: LongRange?): ByteReadChannel = withContext(Dispatchers.IO) {
+        if (range == null) storage.get(key) else storage.getRange(key, range.first, range.last + 1)
+    }
 
     private companion object {
         /**
