@@ -34,7 +34,13 @@ sealed interface DavTarget {
  *
  * A malformed escape (`%`, `%z`) is a different matter and is kept literal, the
  * same call StaticWeb makes: plenty of clients emit an unescaped `%` in a
- * filename, and refusing to list "50%.txt" helps nobody.
+ * filename, and refusing to list "50%.txt" helps nobody. A well-formed `%25`
+ * means the same character and names a file called "%".
+ *
+ * The decoded name is then checked for a lone surrogate. [percentDecode] refuses
+ * one because it runs only on a segment that contains a percent sign - without
+ * this second check the same character arriving in a plain `/xxx.jpg` path would
+ * slip through and be written to a row whose name no client can ask for again.
  */
 fun davSegments(rawPath: String): List<String>? {
     val parts = rawPath.split('/').filter { it.isNotEmpty() }
@@ -42,14 +48,44 @@ fun davSegments(rawPath: String): List<String>? {
     for (part in parts) {
         val decoded = percentDecode(part) ?: return null
         if (decoded.contains('/') || decoded.isEmpty()) return null
+        if (hasUnpairedSurrogate(decoded)) return null
         out += decoded
     }
     return out
 }
 
+/**
+ * True when a surrogate in the string is not half of a well-formed pair.
+ *
+ * A name carrying one cannot be stored: the JDBC driver turns it into a `?` on
+ * the way to PostgreSQL, so the row would get a name no client can ask for
+ * again. Refusing it here is the same verdict [percentDecode] already gives an
+ * escaped one - that check alone does not cover it, because decoding only runs
+ * on a segment that contains a percent sign.
+ */
+private fun hasUnpairedSurrogate(s: String): Boolean {
+    var i = 0
+    while (i < s.length) {
+        val c = s[i]
+        when {
+            c.isHighSurrogate() -> {
+                if (i + 1 >= s.length || !s[i + 1].isLowSurrogate()) return true
+                i += 2
+            }
+            c.isLowSurrogate() -> return true
+            else -> i++
+        }
+    }
+    return false
+}
+
 private fun percentDecode(s: String): String? {
     if ('%' !in s) return s
-    val bytes = ByteArray(s.length)
+    // A raw non-ASCII character occupies up to three UTF-8 bytes, so a buffer
+    // sized by character count is too small for the very paths this branch exists
+    // to accept. Three per character also covers a surrogate pair: two characters
+    // encoding to four bytes.
+    val bytes = ByteArray(s.length * 3)
     var n = 0
     var i = 0
     while (i < s.length) {
@@ -62,14 +98,21 @@ private fun percentDecode(s: String): String? {
         } else {
             if (c.code > 0x7F) {
                 // Raw non-ASCII in a URL is illegal but clients send it anyway;
-                // treat the character as its own UTF-8 bytes rather than 400.
-                val encoded = c.toString().toByteArray(StandardCharsets.UTF_8)
+                // treat the character as its own UTF-8 bytes rather than 400. A
+                // surrogate pair is one code point and must be encoded as a pair:
+                // each half on its own would be replaced by '?', turning the name
+                // into a different one. An unpaired half names nothing at all, so
+                // it is refused here rather than guessed at.
+                val paired = c.isHighSurrogate() && i + 1 < s.length && s[i + 1].isLowSurrogate()
+                if (c.isSurrogate() && !paired) return null
+                val encoded = s.substring(i, i + if (paired) 2 else 1).toByteArray(StandardCharsets.UTF_8)
                 encoded.copyInto(bytes, n)
                 n += encoded.size
+                i += if (paired) 2 else 1
             } else {
                 bytes[n++] = c.code.toByte()
+                i++
             }
-            i++
         }
     }
     return try {
