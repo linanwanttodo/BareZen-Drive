@@ -272,21 +272,30 @@ fun FilesScreen(
 
     fun msg(e: Throwable, fallback: String) = e.message?.takeIf { it.isNotBlank() } ?: fallback
 
+    /**
+     * Fetches the first page and replaces the list with it, carrying the cursor
+     * so `loadMore()` can continue from there. This is the only listing path:
+     * entry, post-action reloads and pull-to-refresh all show the same first
+     * page, so a refresh that asked for the whole folder would both move more
+     * bytes than the screen can hold and drop the cursor that paging reads.
+     */
+    suspend fun refresh() {
+        repo.contents(folderId, PAGE_SIZE).fold(
+            onSuccess = {
+                // At the root level the dedicated album folder is pinned first.
+                val folders = if (folderId == ROOT_FOLDER_ID) {
+                    it.folders.sortedByDescending { f -> f.name == AlbumFolder.ROOT_NAME }
+                } else it.folders
+                state = ContentsUi(folders, it.files, it.nextCursor)
+                loadError = null
+                loadMoreError = null
+            },
+            onFailure = { loadError = msg(it, I18n.strings.loadFailed); snackbar.showSnackbar(loadError ?: I18n.strings.loadFailed) },
+        )
+    }
+
     fun reload() {
-        scope.launch {
-            repo.contents(folderId, PAGE_SIZE).fold(
-                onSuccess = {
-                    // At the root level the dedicated album folder is pinned first.
-                    val folders = if (folderId == ROOT_FOLDER_ID) {
-                        it.folders.sortedByDescending { f -> f.name == AlbumFolder.ROOT_NAME }
-                    } else it.folders
-                    state = ContentsUi(folders, it.files, it.nextCursor)
-                    loadError = null
-                    loadMoreError = null
-                },
-                onFailure = { loadError = msg(it, I18n.strings.loadFailed); snackbar.showSnackbar(loadError ?: I18n.strings.loadFailed) },
-            )
-        }
+        scope.launch { refresh() }
     }
 
     /** Fetches the next page and appends it; the list is never rebuilt. */
@@ -705,21 +714,11 @@ fun FilesScreen(
             onRefresh = {
                 refreshing = true
                 scope.launch {
-                    repo.contents(folderId).fold(
-                        onSuccess = {
-                            val folders = if (folderId == ROOT_FOLDER_ID) {
-                                it.folders.sortedByDescending { f -> f.name == AlbumFolder.ROOT_NAME }
-                            } else it.folders
-                            state = ContentsUi(folders, it.files)
-                            loadError = null
-                        },
-                        onFailure = { e ->
-                            // A silent failure would read as "nothing new";
-                            // say what happened instead.
-                            scope.launch { snackbar.showSnackbar(msg(e, I18n.strings.loadFailed)) }
-                        },
-                    )
-                    refreshing = false
+                    try {
+                        refresh()
+                    } finally {
+                        refreshing = false
+                    }
                 }
             },
             modifier = Modifier
