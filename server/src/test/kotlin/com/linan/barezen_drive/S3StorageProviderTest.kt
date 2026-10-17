@@ -9,6 +9,7 @@ import io.ktor.utils.io.jvm.javaio.toByteReadChannel
 import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.readString
+import kotlinx.io.readByteArray
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -28,6 +29,7 @@ class S3StorageProviderTest {
     private val region = "us-east-1"
     private val objects = HashMap<String, ByteArray>()
     private var putCount = 0
+    private var lastRange: String? = null
     private lateinit var server: HttpServer
     private lateinit var provider: S3StorageProvider
 
@@ -36,7 +38,7 @@ class S3StorageProviderTest {
 
     @BeforeTest
     fun start() {
-        objects.clear(); putCount = 0
+        objects.clear(); putCount = 0; lastRange = null
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { ex -> handle(ex) }
         server.start()
@@ -71,9 +73,23 @@ class S3StorageProviderTest {
                 "PUT" -> { putCount++; objects[key] = body; ex.sendResponseHeaders(200, -1) }
                 "GET" -> {
                     val data = objects[key] ?: run { ex.sendResponseHeaders(404, -1); return }
+                    val range = ex.requestHeaders.getFirst("range")
+                    lastRange = range
+                    val slice = if (range == null) data else run {
+                        val spec = range.removePrefix("bytes=")
+                        val first = spec.substringBefore('-').toInt()
+                        val last = spec.substringAfter('-', (data.size - 1).toString()).toInt()
+                        data.copyOfRange(first, last + 1)
+                    }
                     ex.responseHeaders.add("Content-Type", "application/octet-stream")
-                    ex.sendResponseHeaders(200, data.size.toLong())
-                    ex.responseBody.use { it.write(data) }
+                    if (range == null) {
+                        ex.sendResponseHeaders(200, slice.size.toLong())
+                    } else {
+                        // What a real object store answers for a ranged GET, and
+                        // the answer is bytes rather than the whole object.
+                        ex.sendResponseHeaders(206, slice.size.toLong())
+                    }
+                    ex.responseBody.use { it.write(slice) }
                 }
                 "HEAD" -> ex.sendResponseHeaders(if (objects.containsKey(key)) 200 else 404, -1)
                 "DELETE" -> { objects.remove(key); ex.sendResponseHeaders(204, -1) }
@@ -103,7 +119,14 @@ class S3StorageProviderTest {
             method = ex.requestMethod,
             canonicalUri = SigV4.canonicalUri(ex.requestURI.rawPath),
             canonicalQuery = SigV4.canonicalQuery(query),
-            headers = mapOf("host" to host, "x-amz-date" to amzDate, "x-amz-content-sha256" to sentHash),
+            headers = buildMap {
+                put("host", host)
+                put("x-amz-date", amzDate)
+                put("x-amz-content-sha256", sentHash)
+                // A ranged GET signs the Range header too, so the fake has to
+                // include it or the recomputed signature would not match.
+                ex.requestHeaders.getFirst("range")?.let { put("range", it) }
+            }.toMap(),
             payloadHash = sentHash,
             accessKey = accessKey,
             secretKey = secretKey,
@@ -138,6 +161,27 @@ class S3StorageProviderTest {
     @Test
     fun getMissingThrowsFileNotFound() = runBlocking {
         assertFailsWith<java.io.FileNotFoundException> { provider.get("nope") }
+        Unit
+    }
+
+    @Test
+    fun rangeReadAsksTheStoreForJustTheSlice() = runBlocking {
+        val bytes = ByteArray(4096) { (it % 251).toByte() }
+        provider.put("big", ByteReadChannel(bytes))
+        lastRange = null
+        val got = provider.getRange("big", 2048, 3048).readRemaining().readByteArray()
+        // The prefix never crosses the wire: the request carries the range and
+        // the store answers with the slice only.
+        assertEquals("bytes=2048-3047", lastRange)
+        assertContentEquals(bytes.copyOfRange(2048, 3048), got)
+        lastRange = null
+        assertContentEquals(bytes, provider.get("big").readRemaining().readByteArray())
+        assertNull(lastRange, "a whole-object read must not send a range")
+    }
+
+    @Test
+    fun rangeReadOfMissingKeyThrowsFileNotFound() = runBlocking {
+        assertFailsWith<java.io.FileNotFoundException> { provider.getRange("nope", 0, 10) }
         Unit
     }
 
