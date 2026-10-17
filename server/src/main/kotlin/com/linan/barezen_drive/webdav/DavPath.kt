@@ -3,6 +3,8 @@ package com.linan.barezen_drive.webdav
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.or
 import org.jetbrains.exposed.sql.select
@@ -136,27 +138,33 @@ private fun percentDecode(s: String): String? {
  * answers 404 rather than confirming that it exists.
  *
  * [segments] must already be decoded - see [davSegments].
+ *
+ * The dispatch belongs to the helper rather than to its many call sites because
+ * this walk is `depth + 1` blocking JDBC round trips, and a DAV route runs on the
+ * request's event-loop thread: parking that thread stalls every other connection
+ * the process holds, which is what the rest of this surface is written around.
  */
-fun resolveDavPath(userId: UUID, segments: List<String>): DavTarget {
-    if (segments.isEmpty()) return DavTarget.Collection(null)
-    return transaction(DatabaseFactory.db) {
-        var parent: UUID? = null
-        for (i in 0 until segments.size - 1) {
-            val next = FoldersTable.select(FoldersTable.id).where {
-                (FoldersTable.user eq userId) and (FoldersTable.name eq segments[i]) and
+internal suspend fun resolveDavPath(userId: UUID, segments: List<String>): DavTarget =
+    withContext(Dispatchers.IO) {
+        if (segments.isEmpty()) return@withContext DavTarget.Collection(null)
+        transaction(DatabaseFactory.db) {
+            var parent: UUID? = null
+            for (i in 0 until segments.size - 1) {
+                val next = FoldersTable.select(FoldersTable.id).where {
+                    (FoldersTable.user eq userId) and (FoldersTable.name eq segments[i]) and
+                        if (parent == null) FoldersTable.parent.isNull() else (FoldersTable.parent eq parent)
+                }.firstOrNull() ?: return@transaction DavTarget.Missing
+                parent = next[FoldersTable.id]
+            }
+            val last = segments.last()
+            FoldersTable.select(FoldersTable.id).where {
+                (FoldersTable.user eq userId) and (FoldersTable.name eq last) and
                     if (parent == null) FoldersTable.parent.isNull() else (FoldersTable.parent eq parent)
-            }.firstOrNull() ?: return@transaction DavTarget.Missing
-            parent = next[FoldersTable.id]
+            }.firstOrNull()?.let { return@transaction DavTarget.Collection(it[FoldersTable.id]) }
+            FilesTable.select(FilesTable.id).where {
+                (FilesTable.user eq userId) and (FilesTable.name eq last) and (FilesTable.deletedAt eq 0L) and
+                    if (parent == null) FilesTable.folder.isNull() else (FilesTable.folder eq parent)
+            }.firstOrNull()?.let { return@transaction DavTarget.Blob(it[FilesTable.id]) }
+            DavTarget.Missing
         }
-        val last = segments.last()
-        FoldersTable.select(FoldersTable.id).where {
-            (FoldersTable.user eq userId) and (FoldersTable.name eq last) and
-                if (parent == null) FoldersTable.parent.isNull() else (FoldersTable.parent eq parent)
-        }.firstOrNull()?.let { return@transaction DavTarget.Collection(it[FoldersTable.id]) }
-        FilesTable.select(FilesTable.id).where {
-            (FilesTable.user eq userId) and (FilesTable.name eq last) and (FilesTable.deletedAt eq 0L) and
-                if (parent == null) FilesTable.folder.isNull() else (FilesTable.folder eq parent)
-        }.firstOrNull()?.let { return@transaction DavTarget.Blob(it[FilesTable.id]) }
-        DavTarget.Missing
     }
-}
