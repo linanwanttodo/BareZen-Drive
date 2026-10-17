@@ -66,8 +66,55 @@ move to the bucket (enable bucket versioning and cross-region replication if you
 is migrated for you: copy the existing `blobs/` and `thumbs/` prefixes into the bucket first, keys stay
 identical, or already uploaded files stop resolving the moment you restart on s3.
 
-Backups need exactly two things: the `./data/storage` directory (file content)
-and the PostgreSQL volume (metadata).
+### Backup and restore
+
+A usable backup takes both halves, neither one is enough alone: file content lives in `./data/storage`
+(`blobs/` finished objects, `thumbs/` previews, `tmp/` chunk staging), metadata lives in PostgreSQL
+(the folder tree, versions, favorites, trash, shares, accounts). Back up only the database and every
+file is gone; back up only the directory and the UI shows nothing.
+
+Dump the database with `pg_dump` (already inside the container, no host install needed):
+
+```bash
+cd <install-dir>
+docker compose exec -T db pg_dump -U barezen barezen | gzip > barezen-$(date -u +%Y%m%d-%H%M%S).sql.gz
+```
+
+The role and database name come from `POSTGRES_USER` / `POSTGRES_DB` in `.env`, both `barezen` by
+default. Before an upgrade `install.sh` runs this same dump for you into `<install-dir>/backups/`.
+
+Archive the storage directory with `tar`; the server does not need to stop (an upload in progress sits
+in `tmp/` and can be discarded on restore, finished files are content-addressed):
+
+```bash
+tar -czf barezen-storage-$(date -u +%Y%m%d-%H%M%S).tar.gz -C <install-dir> data/storage
+```
+
+To restore onto an empty machine, put `docker-compose.yml`, `.env` and `data/storage` in place first.
+The database has to be loaded **before** the server starts, because startup recreates the admin account
+on an empty schema:
+
+```bash
+docker compose up -d --wait db   # database only, block until it is ready
+gunzip -c barezen-xxx.sql.gz | docker compose exec -T db psql -U barezen -d barezen
+docker compose up -d             # then the server
+```
+
+Do not skip `--wait`: on an empty volume postgres runs initdb, starts a throwaway instance to finish
+initialization, then restarts - loading a dump into that window fails with "the database system is
+shutting down".
+
+`docker compose up -d db` creates the target database from `POSTGRES_DB`. Restore into an empty volume:
+keep the old `pgdata` around or drop it after `docker compose down`, otherwise the dump's `CREATE`
+statements collide with the objects already there. Store backups off-box - a backup on the same disk as
+the data is not a backup. Nightly at 01:00:
+
+```
+0 1 * * * cd <install-dir> && docker compose exec -T db pg_dump -U barezen barezen | gzip > /backup/barezen.sql.gz
+```
+
+With `STORAGE_BACKEND=s3`, `./data/storage` holds only `tmp/` and that responsibility moves to the
+bucket (enable versioning); the database dump above stays exactly the same.
 
 ### Without Docker
 

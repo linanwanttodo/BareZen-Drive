@@ -59,7 +59,50 @@ docker compose down                           # 停止（数据保留）
 搬数据：先把现有的 `blobs/` 与 `thumbs/` 两个前缀按同样的 key 复制进桶（`s3 sync`、`mc mirror` 都可以），
 否则一换成 s3 后端，已上传的文件立刻取不到内容。
 
-数据备份只需要两样：`./data/storage` 目录（文件内容）和 PostgreSQL 数据卷（元数据）。
+### 备份与恢复
+
+一套备份要同时拿走两样东西，缺一不可：文件内容是 `./data/storage`（`blobs/` 成品、`thumbs/` 缩略图、
+`tmp/` 分块暂存），元数据是 PostgreSQL（目录树、版本、收藏、回收站、分享、账号）。只备份数据库，
+文件全丢；只备份目录，页面上什么都看不到。
+
+数据库走 `pg_dump`（容器内自带客户端，不必在宿主机装）：
+
+```bash
+cd <安装目录>
+docker compose exec -T db pg_dump -U barezen barezen | gzip > barezen-$(date -u +%Y%m%d-%H%M%S).sql.gz
+```
+
+`-U` 和库名取自 `.env` 的 `POSTGRES_USER` / `POSTGRES_DB`，默认都是 `barezen`。升级前 `install.sh`
+已会自动做一次同样的 dump，落到 `<安装目录>/backups/`。
+
+文件目录用 `tar`，不必停服（正在进行中的分块上传在 `tmp/` 里，恢复时丢弃即可，不影响已完成的文件）：
+
+```bash
+tar -czf barezen-storage-$(date -u +%Y%m%d-%H%M%S).tar.gz -C <安装目录> data/storage
+```
+
+恢复到一台空机器：先把 `docker-compose.yml`、`.env` 与 `data/storage` 放好，数据库必须在服务器起来
+**之前**灌回去，因为启动时会在空库上重建管理员账号：
+
+```bash
+docker compose up -d --wait db   # 只起数据库，等它就绪
+gunzip -c barezen-xxx.sql.gz | docker compose exec -T db psql -U barezen -d barezen
+docker compose up -d             # 再起服务器
+```
+
+`--wait` 不能省：空卷首次启动时 postgres 会先跑一遍 initdb、临时起一个实例做初始化再重启，不等就绪
+直接灌 dump 会撞上「the database system is shutting down」。
+
+目标库由 `docker compose up -d db` 按 `.env` 的 `POSTGRES_DB` 建好，恢复要落到一个空卷上：旧的 `pgdata`
+卷留着不动，先把新卷名指向别处或 `docker compose down` 后删掉它，否则 dump 里的建表语句会和已有对象撞车。
+备份本身要放到另一台机器或另一个桶：跟数据同盘的备份不算备份。每天一点钟定时：
+
+```
+0 1 * * * cd <安装目录> && docker compose exec -T db pg_dump -U barezen barezen | gzip > /backup/barezen.sql.gz
+```
+
+切到 `STORAGE_BACKEND=s3` 后，`./data/storage` 只剩 `tmp/`，备份责任转移到桶自身（开版本控制），
+数据库那份照旧。
 
 ### 不用 Docker 的情况
 
