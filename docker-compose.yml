@@ -14,6 +14,14 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
+    # Docker's json-file driver is unbounded by default, and both containers
+    # here write to the same disk the database lives on. 50 MB per service is
+    # the ceiling; the app logs at INFO, so that is days of history.
+    logging: &app-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   server:
     # Pulls the prebuilt image by default; `docker compose build` rebuilds from
@@ -68,6 +76,7 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    logging: *app-logging
 
 volumes:
   pgdata:
