@@ -17,6 +17,7 @@ import com.linan.barezen_drive.platform.legacyDeviceName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -128,13 +129,24 @@ object SyncUploadQueue {
                     // Persist a freshly computed hash on the terminal row so a
                     // later retry of an unchanged file skips the whole-file read.
                     var freshHash: String? = null
-                    val outcome = runCatching {
-                        uploader.upload(
-                            picked, target,
-                            reportTransfer = false,
-                            cachedSha256 = item.hashCache,
-                            onHashed = { h -> freshHash = h },
+                    // Not runCatching: a cancelled pass must not look like a
+                    // failed upload. Swallowing the cancellation let "stop
+                    // sync" walk the rest of the snapshot, mark every remaining
+                    // row FAILED and burn one of its retries for a request that
+                    // was never even sent.
+                    val outcome = try {
+                        Result.success(
+                            uploader.upload(
+                                picked, target,
+                                reportTransfer = false,
+                                cachedSha256 = item.hashCache,
+                                onHashed = { h -> freshHash = h },
+                            )
                         )
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (t: Throwable) {
+                        Result.failure(t)
                     }
                     val cachedHash = item.hashCache ?: freshHash
                     outcome.fold(
