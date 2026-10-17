@@ -51,6 +51,7 @@
 - [x] WebDAV 挂载为网络盘：每设备应用密码（32 字节随机 + SHA-256 精确查，不用 bcrypt——挂载每个请求都要鉴权一次，bcrypt cost=10 约 100ms/次）、OPTIONS/PROPFIND/GET/HEAD/PUT/MKCOL/MOVE/COPY/DELETE 读写齐全（2026-10-01）
   - 不实现 LOCK/UNLOCK（501 且不宣告），代价是用 Office 打开网盘上的文档保存可能失败；必须 HTTPS（Basic 明文，Windows 在 HTTP 上默认禁用 Basic）
   - 覆盖写不产生版本（WebDAV 专用语义），旧 blob 走宽限期删除队列；无秒传（协议没有先报哈希的钩子）
+  - MOVE/COPY 只会覆盖**文件**；目标是已存在的**集合**一律 409，不代为硬删那棵子树（要删就显式 DELETE）
   - 删除不对称：文件进回收站可恢复，**集合是硬删除整棵子树**——`folders` 没有 `deleted_at` 而 `files.folder_id` 有外键，模型上无法表达「文件夹进回收站」
   - 未经真实 Windows/macOS 客户端验证：只到协议层测试与真实 HTTP 冒烟脚本（`scripts/dav_smoke.sh`）全绿
 ## v0.3+（远期）

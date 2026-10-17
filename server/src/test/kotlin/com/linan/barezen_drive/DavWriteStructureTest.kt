@@ -43,7 +43,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 /**
  * The structural write methods: MKCOL, MOVE, COPY, DELETE.
@@ -399,34 +398,74 @@ class DavWriteStructureTest {
         assertNotNull(folderRow("outer"))
     }
 
+    /**
+     * A destination holding a collection is never replaced.
+     *
+     * `folders` has no `deleted_at`, so clearing a collection is the app's folder
+     * delete: the whole subtree goes with no trash and nothing to restore. That is
+     * far too large a blast radius for a drag that a file manager can start on its
+     * own, so both verbs answer 409 and leave the destination - and the source -
+     * exactly as they were. `Overwrite: F` keeps its own 204: the request was
+     * skipped, which is not the same answer as a refusal.
+     */
     @Test
-    fun overwriteDecidesWhetherAnOccupiedDestinationIsReplaced() = testApplication {
+    fun anOccupiedCollectionDestinationIsRefusedAndChangedNowhere() = testApplication {
         setup()
         val victim = makeFolder("victim")
         makeFile("v.txt", "original", folder = victim)
         val target = makeFolder("target")
         makeFile("t.txt", "target original", folder = target)
 
-        val skipped = mov("/dav/victim", davUrl("/dav/target"), overwrite = "F")
-        assertEquals(HttpStatusCode.NoContent, skipped.status, skipped.bodyAsText())
-        assertEquals("target original", davGet("/dav/target/t.txt").bodyAsText(), "Overwrite: F must change nothing")
-        assertNotNull(folderRow("victim"))
-        assertNotNull(folderRow("target"))
+        assertEquals(
+            HttpStatusCode.NoContent,
+            mov("/dav/victim", davUrl("/dav/target"), overwrite = "F").status,
+            "Overwrite: F must still be a skip",
+        )
+        for ((verb, r) in listOf(
+            "MOVE" to mov("/dav/victim", davUrl("/dav/target"), overwrite = "T"),
+            "COPY" to cp("/dav/victim", davUrl("/dav/target"), overwrite = "T"),
+        )) {
+            assertEquals(HttpStatusCode.Conflict, r.status, "$verb onto a collection: ${r.bodyAsText()}")
+        }
 
-        val replaced = mov("/dav/victim", davUrl("/dav/target"), overwrite = "T")
-        assertEquals(HttpStatusCode.NoContent, replaced.status, replaced.bodyAsText())
-        assertEquals("original", davGet("/dav/target/v.txt").bodyAsText(), "the moved subtree must be in place")
-        assertNull(folderRow("victim"), "the source path must be gone")
-        assertNull(fileRows("t.txt").firstOrNull(), "the replaced destination subtree is gone")
-        // The row answering to "target" is now the moved subtree, not the row
-        // that used to be there: a MOVE rewrites one row, so the source's
-        // descendants (which point at it) keep working only if it is the source
-        // row that survives under the new name.
-        assertEquals(victim, folderRow("target")!![FoldersTable.id].toString(), "the moved row took the name")
-        assertNotEquals(target, folderRow("target")!![FoldersTable.id].toString())
-        // The replaced file's blob really did lose its last reference, so it is
-        // queued - the opposite of what a COPY does.
-        assertTrue(queuedKeys().isNotEmpty(), "the overwritten subtree's orphan blob must be queued")
+        // Both names still answer about the rows they did before - the moved
+        // source keeps its own identity too, because it never moved.
+        assertEquals(victim, folderRow("victim")!![FoldersTable.id].toString())
+        assertEquals(target, folderRow("target")!![FoldersTable.id].toString())
+        assertEquals("original", davGet("/dav/victim/v.txt").bodyAsText())
+        assertEquals("target original", davGet("/dav/target/t.txt").bodyAsText())
+        assertEquals(0, trashPage().files.size, "a refused overwrite must not have trashed the destination")
+        assertEquals(
+            emptyList(), queuedKeys(),
+            "a refusal that cleared nothing may not queue anything either",
+        )
+    }
+
+    /**
+     * Replacing a *file* destination stays what it was: 204, and the older row
+     * goes to the trash rather than being deleted.
+     *
+     * This is the half of the old folder-overwrite test that was correct, kept
+     * alive on the one destination shape where an overwrite is undoable.
+     */
+    @Test
+    fun moveOntoAnExistingFileReplacesItAndTrashesTheOlderRow() = testApplication {
+        setup()
+        makeFile("a.txt", "the first content")
+        val moved = makeFile("b.txt", "the second content")
+
+        val r = mov("/dav/b.txt", davUrl("/dav/a.txt"))
+        assertEquals(HttpStatusCode.NoContent, r.status, r.bodyAsText())
+        assertEquals("the second content", davGet("/dav/a.txt").bodyAsText())
+        assertEquals(emptyList(), fileRows("b.txt"), "the source name is gone once it moved")
+        val rows = fileRows("a.txt")
+        assertEquals(2, rows.size, "the replaced row lives on in the trash")
+        assertEquals(moved, rows.first { it[FilesTable.deletedAt] == 0L }[FilesTable.id].toString())
+        assertEquals(1, trashPage().files.count { it.name == "a.txt" })
+        assertEquals(
+            emptyList(), queuedKeys(),
+            "the trashed row still references its blob, so overwriting a file queues nothing",
+        )
     }
 
     // ---- COPY ----------------------------------------------------------------
