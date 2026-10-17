@@ -544,6 +544,33 @@ class DavWriteStructureTest {
         assertNotNull(folderRow("src2"))
     }
 
+    /**
+     * The same refusal for a file, which is the case a mount hits by accident.
+     *
+     * Duplicate-and-overwrite is how a client spells "keep a second copy here",
+     * and the destination is the source's own URL. The clear runs before the
+     * write, so without the refusal the only copy of these bytes goes to the
+     * trash and the copy then has nothing to read back - a self-inflicted data
+     * loss that a 403 (RFC 4918 §9.8.5) costs nothing to give.
+     */
+    @Test
+    fun copyOfAFileOntoItsOwnUrlIsForbiddenAndChangesNothing() = testApplication {
+        setup()
+        val id = makeFile("self.txt", "only copy of these bytes")
+
+        val r = cp("/dav/self.txt", davUrl("/dav/self.txt"), overwrite = "T")
+        assertEquals(HttpStatusCode.Forbidden, r.status, r.bodyAsText())
+        assertEquals(listOf(id), fileRows("self.txt").map { it[FilesTable.id].toString() })
+        assertEquals("only copy of these bytes", davGet("/dav/self.txt").bodyAsText())
+        assertEquals(0, trashPage().files.size, "a refused COPY must not have trashed the only row")
+        assertEquals(emptyList(), queuedKeys())
+
+        // The two verbs still differ in exactly one place: a MOVE onto its own
+        // URL asks for no change at all, so it stays the legal no-op.
+        assertEquals(HttpStatusCode.NoContent, mov("/dav/self.txt", davUrl("/dav/self.txt")).status)
+        assertEquals(listOf(id), fileRows("self.txt").map { it[FilesTable.id].toString() })
+    }
+
     // ---- Destination ---------------------------------------------------------
 
     @Test
