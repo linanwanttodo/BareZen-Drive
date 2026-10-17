@@ -4,7 +4,14 @@
             <pattern>%d{YYYY-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
-    <root level="trace">
+    <!-- INFO, not TRACE: CallLogging already writes one line per request, and a
+         TRACE root adds the internals of Ktor, Exposed and HikariCP on top of
+         it - including SQL with its parameters. Deployments pipe this stream
+         into Docker's json-file driver on disks measured in gigabytes, so the
+         default level is what keeps the log from filling them. Raise a package
+         for one session rather than the root:
+           <logger name="org.jetbrains.exposed.sql" level="DEBUG"/> -->
+    <root level="INFO">
         <appender-ref ref="STDOUT"/>
     </root>
     <logger name="org.eclipse.jetty" level="INFO"/>
