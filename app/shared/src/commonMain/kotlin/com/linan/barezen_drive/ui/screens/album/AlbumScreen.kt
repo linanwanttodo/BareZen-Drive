@@ -195,7 +195,16 @@ fun AlbumScreen(
     // Bumped on a scope switch that lands on the SAME folder id, which the
     // key-based reload effect below would otherwise not notice.
     var reloadTick by remember { mutableStateOf(0) }
-    var pendingUploads by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
+    // Batches waiting to be sent. A pick appends to this queue instead of
+    // overwriting the list the upload effect is keyed on: overwriting restarted
+    // that effect, which cancelled the upload running at that moment and lost
+    // the rest of the first batch.
+    val uploadBatches = remember {
+        kotlinx.coroutines.channels.Channel<List<PickedFile>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    }
+    // The batch being sent right now, kept for the progress dialog and the
+    // speed sampler; the worker owns it while it runs.
+    var activeUploads by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
     var uploadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     // The progress dialog is a shortcut view, not a gate: dismissing it must not
     // touch the upload, which is owned by the LaunchedEffect below and mirrored
@@ -390,8 +399,8 @@ fun AlbumScreen(
     var speedText by remember { mutableStateOf("…") }
     // Same clock as the dialog: the batch's own onProgress feed, not a global
     // flow that another upload could move under our feet.
-    LaunchedEffect(pendingUploads) {
-        if (pendingUploads.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(activeUploads) {
+        if (activeUploads.isEmpty()) return@LaunchedEffect
         var lastAt = monotonicNowMs()
         var lastBytes = 0L
         snapshotFlow { uploadProgress?.bytesDone }.collect { bytesDone ->
@@ -407,7 +416,7 @@ fun AlbumScreen(
     }
 
     val imagePicker = rememberImagePicker { picks ->
-        if (picks.isNotEmpty()) pendingUploads = picks
+        if (picks.isNotEmpty()) uploadBatches.trySend(picks)
     }
 
     /** Starts the next page read; the returned job finishes when the page
@@ -542,20 +551,18 @@ fun AlbumScreen(
         }
     }
 
-    // Upload the picked photos sequentially into THIS DEVICE's album folder;
-    // cancelling the current one aborts its session and moves to the next.
-    LaunchedEffect(pendingUploads) {
-        if (pendingUploads.isEmpty()) return@LaunchedEffect
+    // Sends one batch sequentially into THIS DEVICE's album folder; cancelling
+    // the current photo aborts its session and moves to the next.
+    suspend fun sendBatch(worker: kotlinx.coroutines.CoroutineScope, picks: List<PickedFile>) {
         val target = deviceFolderId
             ?: AlbumFolder.resolve(repo, device, legacyDeviceName()).also { deviceFolderId = it }
         if (target == null) {
             // Offline album resolution must not silently drop photos into the
             // general file tree (folderId null): fail the batch visibly.
-            pendingUploads = emptyList()
+            activeUploads = emptyList()
             snackbar.showSnackbar(I18n.strings.uploadFailedRetry)
-            return@LaunchedEffect
+            return
         }
-        val picks = pendingUploads
         uploadDialogVisible = true
         failedUploads = emptyList()
         // Failures are collected instead of dropped: `upload` returns a Result
@@ -576,7 +583,7 @@ fun AlbumScreen(
             // can still abort the file in flight; the Result is captured from
             // inside the child so a failure is not thrown away.
             var outcome: Result<com.linan.barezen_drive.core.dto.FileDto>? = null
-            uploadJob = launch {
+            uploadJob = worker.launch {
                 outcome = uploader.upload(
                     picked,
                     perFile,
@@ -595,7 +602,7 @@ fun AlbumScreen(
             }
         }
         uploadJob = null
-        pendingUploads = emptyList()
+        activeUploads = emptyList()
         // Refresh the grid so new photos appear immediately.
         generation++
         loading = false
@@ -611,6 +618,17 @@ fun AlbumScreen(
             uploadDialogVisible = true
         } else {
             snackbar.showSnackbar(I18n.strings.uploadDoneCount(picks.size))
+        }
+    }
+
+    // One worker for as long as the screen lives: it waits on the queue and
+    // sends batches back to back. Keying the effect on the batch list instead
+    // meant that picking a second set of photos restarted the effect and
+    // cancelled the photo being sent, losing the tail of the first batch.
+    LaunchedEffect(Unit) {
+        for (picks in uploadBatches) {
+            activeUploads = picks
+            sendBatch(this, picks)
         }
     }
 
@@ -1320,11 +1338,11 @@ fun AlbumScreen(
                 confirmButton = {
                     TextButton(onClick = {
                         // Re-queue exactly the failed photos; the LaunchedEffect
-                        // keyed on pendingUploads picks them up again.
+                        // on the queue picks them up again.
                         val retry = failedUploads
                         failedUploads = emptyList()
                         uploadDialogVisible = false
-                        pendingUploads = retry
+                        uploadBatches.trySend(retry)
                     }) { Text(LocalStrings.current.actionRetry) }
                 },
                 dismissButton = {
@@ -1333,7 +1351,7 @@ fun AlbumScreen(
                     }
                 },
             )
-        } else if (pendingUploads.isNotEmpty() && uploadDialogVisible) {
+        } else if (activeUploads.isNotEmpty() && uploadDialogVisible) {
             val p = uploadProgress
             AlertDialog(
                 containerColor = MaterialTheme.colorScheme.surface,
