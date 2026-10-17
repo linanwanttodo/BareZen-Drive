@@ -272,7 +272,15 @@ private suspend fun ApplicationCall.davRefuseSelfNesting(
         }
         return false
     }
-    if (!copying && occupied is DavTarget.Blob && from is DavTarget.Blob && occupied.id == from.id) return true
+    if (occupied is DavTarget.Blob && from is DavTarget.Blob && occupied.id == from.id) {
+        // A MOVE onto its own URL changes nothing, so it is the one legal no-op
+        // and the caller answers 204. A COPY onto the same URL is not: it would
+        // have to write a duplicate over the row it is reading, which RFC 4918
+        // §9.8.5 forbids, and here it would first trash the only copy of the
+        // bytes and then fail to read them back.
+        if (copying) throw ApiException(DAV_INTO_SELF, HttpStatusCode.Forbidden, "不能复制到自身")
+        return true
+    }
     return false
 }
 
