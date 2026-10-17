@@ -69,6 +69,9 @@ private const val DAV_BAD_OVERWRITE = "dav-overwrite-invalid"
 /** A destination that would sit inside the source, or contain it. */
 private const val DAV_INTO_SELF = "dav-into-self"
 
+/** A destination occupied by a collection, which cannot be replaced. */
+private const val DAV_DEST_IS_COLLECTION = "dav-destination-is-collection"
+
 /** A body on a method whose definition has none. */
 private const val DAV_BODY_NOT_ALLOWED = "dav-body-not-allowed"
 
@@ -138,6 +141,10 @@ internal suspend fun ApplicationCall.respondMkcol() {
  * completely ordinary, and 412 reads to it as "your validator is stale, reload
  * and retry" - the wrong instruction for "you already have this".
  *
+ * "Replaced" means a file, and only a file. An existing *collection* is answered
+ * 409 instead: see the refusal in [respondDavMoveCopy] for why nothing may
+ * silently take its place.
+ *
  * Everything is decided before a row is written: the conditional headers, the
  * destination shape, and the self-nesting checks all run before
  * [davClearDestination] destroys what is in the way.
@@ -189,6 +196,22 @@ internal suspend fun ApplicationCall.respondDavMoveCopy(copying: Boolean) {
     if (davRefuseSelfNesting(userId, from, destParent, occupied, copying)) {
         respond(HttpStatusCode.NoContent)
         return
+    }
+    // An occupied collection is refused rather than replaced. A file destination
+    // can be sent to the trash, which is what makes an overwrite undoable; a
+    // collection cannot, because `folders` has no `deleted_at` and a trashed file
+    // still points at its folder. Clearing one is therefore the app's folder
+    // delete: its whole subtree, file rows included, goes with no trash and no
+    // version - and the clear is a separate transaction from the write that
+    // follows it, so a write failure leaves the destination destroyed *and* its
+    // blobs unreferenced but never queued. RFC 4918 leaves this case undefined
+    // and the servers that matter answer it as a conflict; a scripted client that
+    // really wants the tree gone can DELETE it.
+    if (occupied is DavTarget.Collection) {
+        throw ApiException(
+            DAV_DEST_IS_COLLECTION, HttpStatusCode.Conflict,
+            "目标是已存在的集合，不会被覆盖，请先删除它",
+        )
     }
 
     val replaced = occupied !is DavTarget.Missing
