@@ -4,6 +4,8 @@ import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
 import com.linan.barezen_drive.db.UsersTable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
@@ -166,29 +168,40 @@ object DavListing {
      * It has no folder row, so its dates come from the account: epoch zero would
      * reach clients as 1 January 1970, which reads as "this drive has never been
      * written to" on a drive that is full.
+     *
+     * These three single-row reads dispatch to [Dispatchers.IO] themselves for
+     * the same reason [page] is called inside a `withContext` at its own call
+     * site - a DAV route runs on the request's event-loop thread, and blocking
+     * JDBC there stalls every other connection the process holds.
      */
-    fun root(userId: UUID): DavEntry = transaction(DatabaseFactory.db) {
-        val created = UsersTable.select(UsersTable.createdAt)
-            .where { UsersTable.id eq userId }.first()[UsersTable.createdAt]
-        // The all-zero id stands in for "no row"; the root is never a page cursor.
-        DavEntry(UUID(0, 0), "", true, 0L, created, created, null)
+    suspend fun root(userId: UUID): DavEntry = withContext(Dispatchers.IO) {
+        transaction(DatabaseFactory.db) {
+            val created = UsersTable.select(UsersTable.createdAt)
+                .where { UsersTable.id eq userId }.first()[UsersTable.createdAt]
+            // The all-zero id stands in for "no row"; the root is never a page cursor.
+            DavEntry(UUID(0, 0), "", true, 0L, created, created, null)
+        }
     }
 
     /** One live file as a listing entry; null when it is not this user's, or trashed. */
-    fun blob(userId: UUID, fileId: UUID): DavEntry? = transaction(DatabaseFactory.db) {
-        FilesTable.select(
-            FilesTable.id, FilesTable.name, FilesTable.size,
-            FilesTable.createdAt, FilesTable.updatedAt, FilesTable.sha256,
-        ).where {
-            (FilesTable.id eq fileId) and (FilesTable.user eq userId) and (FilesTable.deletedAt eq 0L)
-        }.firstOrNull()?.toFileEntry()
+    suspend fun blob(userId: UUID, fileId: UUID): DavEntry? = withContext(Dispatchers.IO) {
+        transaction(DatabaseFactory.db) {
+            FilesTable.select(
+                FilesTable.id, FilesTable.name, FilesTable.size,
+                FilesTable.createdAt, FilesTable.updatedAt, FilesTable.sha256,
+            ).where {
+                (FilesTable.id eq fileId) and (FilesTable.user eq userId) and (FilesTable.deletedAt eq 0L)
+            }.firstOrNull()?.toFileEntry()
+        }
     }
 
     /** One folder as a listing entry; null when it is not this user's. */
-    fun collection(userId: UUID, folderId: UUID): DavEntry? = transaction(DatabaseFactory.db) {
-        FoldersTable.select(FoldersTable.id, FoldersTable.name, FoldersTable.createdAt, FoldersTable.updatedAt)
-            .where { (FoldersTable.id eq folderId) and (FoldersTable.user eq userId) }
-            .firstOrNull()?.toFolderEntry()
+    suspend fun collection(userId: UUID, folderId: UUID): DavEntry? = withContext(Dispatchers.IO) {
+        transaction(DatabaseFactory.db) {
+            FoldersTable.select(FoldersTable.id, FoldersTable.name, FoldersTable.createdAt, FoldersTable.updatedAt)
+                .where { (FoldersTable.id eq folderId) and (FoldersTable.user eq userId) }
+                .firstOrNull()?.toFolderEntry()
+        }
     }
 
     private fun ResultRow.toFolderEntry() = DavEntry(

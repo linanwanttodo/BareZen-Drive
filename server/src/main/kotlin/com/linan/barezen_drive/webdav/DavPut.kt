@@ -24,6 +24,7 @@ import io.ktor.utils.io.copyTo
 import io.ktor.utils.io.jvm.javaio.toByteReadChannel
 import io.ktor.utils.io.readAvailable
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -284,10 +285,21 @@ private suspend fun ApplicationCall.davWriteBody(
         // WebDAV has no abort verb, so a dropped client cannot clean up after
         // itself and the route must. The staging directory is the only thing
         // holding the bytes; the session row is swept with its TTL either way.
-        sessionId?.let { runCatching { UploadService.abort(userId, it, storage) } }
+        // It runs on the IO pool because `abort` is two JDBC statements before
+        // its own dispatch, and a failure here must not become the failure the
+        // client sees.
+        sessionId?.let {
+            runCatching { withContext(Dispatchers.IO) { UploadService.abort(userId, it, storage) } }
+        }
         throw t
     } finally {
-        spool?.delete()
+        // A filesystem unlink belongs off the request thread for the same reason
+        // the rest of this function's IO does. `NonCancellable` because a finally
+        // runs while the job may already be cancelled: without it the dispatch
+        // would be skipped and the spool would outlive the request that made it.
+        spool?.let { s ->
+            runCatching { withContext(NonCancellable + Dispatchers.IO) { s.delete() } }
+        }
     }
 }
 
@@ -391,7 +403,12 @@ private suspend fun ApplicationCall.davSpoolBody(
         }
         return file to written
     } catch (t: Throwable) {
-        file.delete()
+        // This is the only cleanup for a spool that never got as far as being
+        // measured, so `davWriteBody`'s finally cannot be relied on here - its
+        // local reference is still null. NonCancellable because the failure this
+        // catches is often a cancelled request, and an unlink skipped for that
+        // reason would leave the body on the disk.
+        runCatching { withContext(NonCancellable + Dispatchers.IO) { file.delete() } }
         throw t
     }
 }

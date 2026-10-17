@@ -202,9 +202,13 @@ internal suspend fun ApplicationCall.respondDavMoveCopy(copying: Boolean) {
         }
     }
     // Blob deletion and staging cleanup happen AFTER the transaction committed:
-    // "this key lost its last reference" is only true then.
+    // "this key lost its last reference" is only true then. The staging walk is a
+    // filesystem traversal of an entire upload, so it goes to the IO pool rather
+    // than to the request's event-loop thread.
     deleteStoredBlobs(storage, keys)
-    sessions.forEach { storage.tmpDir.resolve(it.toString()).toFile().deleteRecursively() }
+    if (sessions.isNotEmpty()) withContext(Dispatchers.IO) {
+        sessions.forEach { storage.tmpDir.resolve(it.toString()).toFile().deleteRecursively() }
+    }
     respond(if (replaced) HttpStatusCode.NoContent else HttpStatusCode.Created)
 }
 
@@ -384,7 +388,9 @@ internal suspend fun ApplicationCall.respondDavDelete() {
     val storage = davWriteStorage()
     val (keys, sessions) = withContext(Dispatchers.IO) { davClearDestination(userId, target) }
     deleteStoredBlobs(storage, keys)
-    sessions.forEach { storage.tmpDir.resolve(it.toString()).toFile().deleteRecursively() }
+    if (sessions.isNotEmpty()) withContext(Dispatchers.IO) {
+        sessions.forEach { storage.tmpDir.resolve(it.toString()).toFile().deleteRecursively() }
+    }
     respond(HttpStatusCode.NoContent)
 }
 
