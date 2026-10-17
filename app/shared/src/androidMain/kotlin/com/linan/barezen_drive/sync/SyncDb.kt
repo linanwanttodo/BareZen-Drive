@@ -259,7 +259,11 @@ object SyncDb {
      *  (the user deleted the photo, or uninstalled the producing app). */
     fun pruneMissing(presentUris: Set<String>) {
         val d = db()
-        val all = queryList("SELECT uri FROM $TABLE", null).map { it.uri }
+        // This projection carries `uri` only, so it must not go through the
+        // full-row mapper: that one asks for size/date/state columns that are
+        // not in the result set and throws on the first row, which would leave
+        // every deleted photo parked in the queue forever.
+        val all = queryListOn(d, "SELECT uri FROM $TABLE", null) { c -> c.str("uri") ?: "" }
         val doomed = all.filter { it !in presentUris }
         if (doomed.isEmpty()) return
         d.beginTransaction()
