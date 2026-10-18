@@ -118,7 +118,7 @@ object DatabaseFactory {
         connectionTimeoutMs: Long,
         leakDetectionMs: Long,
     ): HikariConfig = HikariConfig().apply {
-        this.jdbcUrl = jdbcUrl
+        this.jdbcUrl = postgresBatchInserts(jdbcUrl)
         this.username = user
         this.password = password
         maximumPoolSize = poolSize.coerceAtLeast(1)
@@ -127,6 +127,28 @@ object DatabaseFactory {
         // anything smaller.
         this.leakDetectionThreshold = if (leakDetectionMs > 0) leakDetectionMs.coerceAtLeast(2_000) else 0
         isAutoCommit = false
+    }
+
+    /**
+     * The JDBC url, with the driver's batch rewrite turned on for PostgreSQL.
+     *
+     * Copying a tree writes hundreds of rows through one batched insert, and the
+     * pgjdbc default is to send an accumulated batch one statement at a time: against
+     * a real server a copy of a few hundred rows arrived as one INSERT per row, so the
+     * batching on our side bought nothing on the wire. `reWriteBatchedInserts=true`
+     * makes the driver collapse the batch into a multi-row INSERT, which is what a
+     * batch insert is supposed to mean - a 336-row copy measured 3 statements
+     * afterwards.
+     *
+     * A url that already names the setting is left alone (an operator can turn it off
+     * or set it to a different value), and other dialects are passed through
+     * unchanged - the parameter is not theirs to parse, and H2 would refuse the
+     * connection outright.
+     */
+    internal fun postgresBatchInserts(jdbcUrl: String): String {
+        if (!jdbcUrl.startsWith("jdbc:postgresql:")) return jdbcUrl
+        if (jdbcUrl.contains("reWriteBatchedInserts")) return jdbcUrl
+        return jdbcUrl + (if ('?' in jdbcUrl) '&' else '?') + "reWriteBatchedInserts=true"
     }
 
     /**

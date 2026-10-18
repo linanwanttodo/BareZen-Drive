@@ -74,6 +74,42 @@ class StartupConfigTest {
         assertEquals(2_000L, cfg.leakDetectionThreshold)
     }
 
+    /**
+     * A batch insert that arrives as one statement per row is not batched, and the
+     * pgjdbc default is exactly that. Without the rewrite, copying a tree writes
+     * hundreds of rows one round trip at a time - measured against a real PostgreSQL
+     * server, a 330-row copy showed up as 330 INSERTs.
+     */
+    @Test
+    fun postgresUrlsGetTheBatchRewrite() {
+        assertTrue(
+            DatabaseFactory.postgresBatchInserts("jdbc:postgresql://db:5432/drive")
+                .endsWith("?reWriteBatchedInserts=true"),
+        )
+        // An operator who already named it - either way - keeps their own setting.
+        assertEquals(
+            "jdbc:postgresql://db:5432/drive?reWriteBatchedInserts=false",
+            DatabaseFactory.postgresBatchInserts("jdbc:postgresql://db:5432/drive?reWriteBatchedInserts=false"),
+        )
+        // A parameter already present means the separator is `&`, not a second `?`.
+        assertTrue(
+            DatabaseFactory.postgresBatchInserts("jdbc:postgresql://db:5432/drive?sslmode=require")
+                .endsWith("&reWriteBatchedInserts=true"),
+        )
+    }
+
+    @Test
+    fun otherDialectsAreLeftAlone() {
+        // H2 would refuse the connection over a parameter it does not own, and the
+        // test suite runs on it.
+        assertEquals(
+            "jdbc:h2:mem:pool;MODE=PostgreSQL",
+            DatabaseFactory.postgresBatchInserts("jdbc:h2:mem:pool;MODE=PostgreSQL"),
+        )
+        val cfg = DatabaseFactory.poolConfig("jdbc:h2:mem:pool4;MODE=PostgreSQL", "sa", "", 5, 30_000, 0)
+        assertEquals("jdbc:h2:mem:pool4;MODE=PostgreSQL", cfg.jdbcUrl)
+    }
+
     @Test
     fun theEventLoopIsNeverUndersized() {
         val threads = nettyEventLoopThreads()
