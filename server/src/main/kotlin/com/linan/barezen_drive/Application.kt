@@ -63,6 +63,9 @@ import io.ktor.util.AttributeKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.sql.Database
+import org.jetbrains.exposed.sql.transactions.transaction
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
@@ -110,6 +113,25 @@ internal fun nettyEventLoopThreads(): Int =
     maxOf(MIN_EVENT_LOOP_THREADS, Runtime.getRuntime().availableProcessors() * 2)
 
 private const val MIN_EVENT_LOOP_THREADS = 4
+
+/**
+ * Status and body for the readiness route, kept as a pure decision so both
+ * answers are testable without tearing a live pool down.
+ */
+internal fun readinessBody(dbReachable: Boolean): Pair<HttpStatusCode, String> =
+    if (dbReachable) HttpStatusCode.OK to """{"status":"ready","db":"ok"}"""
+    else HttpStatusCode.ServiceUnavailable to """{"status":"unready","db":"down"}"""
+
+/**
+ * Borrow one connection and run one trivial statement.
+ *
+ * This is the whole promise `/readyz` makes: a database that stopped answering
+ * has to change the answer, because the container's HEALTHCHECK reads it. The
+ * wait for a connection is bounded by the pool's own timeout, so a dead
+ * database fails here instead of hanging the probe forever.
+ */
+internal fun Database.probe(): Boolean =
+    runCatching { transaction(this) { exec("SELECT 1") { it.next() } } }.isSuccess
 
 fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     JwtService.init(cfg.jwtSecret)
@@ -300,7 +322,14 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         }
     }
     routing {
+        // Liveness only: it answers as long as the HTTP engine is up, which is
+        // exactly what a restart-on-hang supervisor needs to know.
         get("/health") { call.respondText("""{"status":"ok"}""", ContentType.Application.Json) }
+        get("/readyz") {
+            val reachable = withContext(Dispatchers.IO) { DatabaseFactory.db.probe() }
+            val (status, body) = readinessBody(reachable)
+            call.respondText(body, ContentType.Application.Json, status = status)
+        }
         // Public: clients and the web bundle compare versions before login.
         versionRoutes(cfg)
         // Public update-package proxy: streams GitHub release assets so the
