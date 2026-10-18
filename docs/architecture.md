@@ -1,6 +1,6 @@
 # 总体架构
 
-BareZen-Drive 是自托管个人云盘：全 Kotlin 技术栈，KMP + Compose Multiplatform 客户端（Android + Web），Ktor 服务器，PostgreSQL，Docker Compose 部署。目标环境 1 核 1 GB 服务器。当前版本 v0.0.1。
+BareZen-Drive 是自托管个人云盘：全 Kotlin 技术栈，KMP + Compose Multiplatform 客户端（Android + Web），Ktor 服务器，PostgreSQL，Docker Compose 部署。目标环境 1 核 1 GB 服务器。当前版本 v0.2.0。
 
 ## 模块布局
 
@@ -175,7 +175,12 @@ server/src/main/kotlin/com/linan/barezen_drive/
 
 ## 部署
 
-三段 Docker 构建（web dist 拷入 server resources/web），`docker-compose.yml` 按 1G1C 调优：JVM `-Xmx256m`，PG `shared_buffers=64MB / max_connections=20 / work_mem=4MB` + healthcheck。内容存储默认落在 `STORAGE_DIR` 卷；`STORAGE_BACKEND=s3` 时改写入任意 S3 兼容桶（`S3_ENDPOINT/S3_BUCKET/S3_REGION/S3_ACCESS_KEY/S3_SECRET_KEY/S3_PATH_STYLE`），`STORAGE_DIR` 仍需可写（分块暂存目录）。`TRUST_PROXY=true` 仅在该 compose 前面还有会重写
+三段 Docker 构建（web dist 拷入 server resources/web；第二段先清空该目录再灌入本次产物，本地残留的旧
+哈希文件进不了镜像），`docker-compose.yml` 按 1G1C 调优：server 容器 `mem_limit: 768m`，JVM 堆取容器内存
+的 50%（`-XX:MaxRAMPercentage`）另加 128m 直接缓冲区上限，PG `shared_buffers=64MB / max_connections=20 /
+work_mem=4MB` + healthcheck。镜像的 `HEALTHCHECK` 读 `/readyz`（借一条连接跑 `SELECT 1`），`/health` 只答
+存活；install.sh 的就绪等待同样读 `/readyz`，只有纯静态安装才退回读 `/`。选了域名 + HTTPS 的安装会把
+`SERVER_PORT` 只绑 `127.0.0.1`，对外只剩 Caddy 的 443。内容存储默认落在 `STORAGE_DIR` 卷；`STORAGE_BACKEND=s3` 时改写入任意 S3 兼容桶（`S3_ENDPOINT/S3_BUCKET/S3_REGION/S3_ACCESS_KEY/S3_SECRET_KEY/S3_PATH_STYLE`），`STORAGE_DIR` 仍需可写（分块暂存目录）。`TRUST_PROXY=true` 仅在该 compose 前面还有会重写
 `X-Forwarded-For` 的反向代理时开启，否则认证限流按 socket 对端计数。部署步骤见 `development.md`。
 
 ## 持续集成与预留平台

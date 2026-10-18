@@ -78,6 +78,20 @@
   - 全进程共用一份 `ApiClient` / `FilesRepository`：`ApiClient` 没有 `close()`，每轮同步新建一个就是每轮漏掉一套 dispatcher + 空闲长连接池，外加 `cacheDir/http` 上一个 64MB 缓存的 journal；两个 `Cache` 实例指向同一目录时 OkHttp 只会让其中一个真正缓存，而这块缓存正是为省这份流量买的
   - 视频封面按上限解码首帧：不带尺寸的 `getFrameAtTime` 交回的是全分辨率帧，4K 视频就是约 33MB 的 ARGB 位图，而它落在上传链路里——另一条车道正占着分块缓冲。API 27 起用 `getScaledFrameAtTime`（保比例、不超出给定框），27 以下没有可用的限尺寸接口，仍旧全尺寸解码后再缩
 
+- [x] 构建 / 发布 / 部署面的收敛（2026-10-18）
+  - 就绪与存活分家：新增 `GET /readyz`，从池里借一条连接跑 `SELECT 1`，答得上是 `200 {"status":"ready","db":"ok"}`，答不上是 `503 {"status":"unready","db":"down"}`；`/health` 退回只报存活。两个 Dockerfile 的 `HEALTHCHECK` 和 install.sh 的就绪等待都改读 `/readyz`——原来那行注释写的是「/health 的新鲜响应证明进程真在服务」，可 `/health` 是个静态串：PG 在启动之后挂掉，容器照日被 Docker 判成 healthy，任何照 HEALTHCHECK 做自愈的工具继承的是假信号
+  - 从源码构建不再可能静默带旧产物：Dockerfile 第二段灌入本次 wasm 产物前先 `rm -rf` 服务端 `resources/web`（`COPY` 只并集、从不删除），`.dockerignore` 同步排除该目录里本地遗留的 16MB `.wasm` / `composeResources` / map。「先删再拷」这条 CI 早就在做，以前只有 CI 有
+  - JVM 尺寸改按容器算：去掉写死的 `-Xmx256m`，换成 `-XX:MaxRAMPercentage=50.0 -XX:MaxDirectMemorySize=128m`，compose 给 server 容器 `mem_limit: 768m`，百分比这才有了分母。写死堆上限在大机器上永远只拿到 256MB，在 1G 机器上又拦不住「堆 + 直接缓冲区 + ffmpeg 子进程」一起把宿主机吃到 OOM
+  - 每个 CI job 补 `timeout-minutes`（Gradle 30 / 多架构 docker 45 / iOS 25 / 清单与发布 20 / 版本 10）：此前 11 个 job 全用 360 分钟默认值，一次卡死的 wasm 链接就能烧光当天免费额度
+  - `:latest` / `:edge` 改到 `webdav` 门后才推（`docker.needs` 加上 `webdav`）：它原先只 `needs: [version, server]`，而 install.sh 默认拉 `latest`，等于把没过协议验收的镜像发给所有一键安装
+  - 镜像名显式小写 `ghcr.io/<owner>/barezen-drive`，`update.json` 改写同一个值：Docker 引用语法不接受大写仓库名，GHCR 存时也统一小写，原先 CI 推的、清单公布的、compose 拉的拼写不一致，按 digest 核对时三处对不上
+  - HTTPS 安装不再同时留明文端口：生成的 Caddy override 用 `ports: !override` 把 server 的对外映射改成 `127.0.0.1:<端口>`，对外只剩 Caddy 的 443。README 明写 WebDAV Basic 走明文 HTTP 不可接受，而向导装完 `:8080` 照样朝外
+  - 安装类型从 web 切到 server 时补齐 `.env`：缺 `JWT_SECRET` / `POSTGRES_PASSWORD` 就地生成并告警，`POSTGRES_DB` / `POSTGRES_USER` 补默认值。以前 compose 是在 `mkdir` 之后才撞上 `${POSTGRES_PASSWORD:?}`，留下一个看着装完、实则起不来的目录
+  - 重跑安装不再无声覆盖 compose 文件：发布版先落到 `.new`，与本地那份不同就把本地版本留成 `docker-compose.yml.local` 并打印提示，再启用发布版；操作员自己加的挂载或资源限制还能 diff 回来
+  - compose 里 `DB_LEAK_DETECTION_MS` 默认从 `0` 改 `120000`：服务端本身默认开着，compose 显式写 0 等于关掉它；五条连接漏一条就是全站卡死，那条栈日志是唯一的预警
+  - 文档对回现状：`docs/development.md` 描述的 `ci.yml` / `docker-publish.yml` 早就不存在（只剩 `pipeline.yml`），CI 段按现状重写、部署自检的 curl 改指 `/readyz`；`docs/api.md` 补 `/readyz`；升级起不来时的回滚顺序写进 `usage.md` / `usage.en.md`
+  - 手工验收（install.sh / compose / Dockerfile 没有自动化测试可依托）：把脚本里生成 override、补齐 `.env`、拉取 compose 的三段原样抽出来执行，再用 `docker compose config` 核对渲染结果，30 项断言全过——明文端口朝外与 loopback 收口的对照、`mem_limit` 渲染成 805306368、残缺 `.env` 先被 compose 拒绝再被补齐可用、既有密钥不会被重新生成顶掉、改过的 compose 留下 `.local` 而未改过的不留、`timeout-minutes` 条数与 job 数相等、`docker.needs` 含 `webdav`
+
 ## v0.3+（远期）
 
 - 多设备同步与冲突解决
@@ -86,6 +100,17 @@
 - 团队空间（多用户共享目录）
 
 ## 已知的 v0.0.1 技术债（改进项）
+
+- `/readyz` 的探测不额外设超时：等连接靠的是池自己的 `DB_CONNECTION_TIMEOUT_MS`（默认 30s），比 Docker
+  探针的 5s 超时慢。不加 `withTimeout` 是有意的——取消打断不了阻塞中的 socket 读，每 30 秒就会留下一个
+  被占死的 IO 线程，一台中途断网的机器能在几十分钟内把调度器吃空；宁可让探针超时、由 Docker 判不健康
+- 镜像 `HEALTHCHECK` 里的 8080 是写死的：compose 把容器侧 `SERVER_PORT` 钉在 8080，所以只有单独 `docker run`
+  并改端口的用户会探错地址
+- schema 仍然没有版本表：启动 DDL 失败时能给的只有日志，数据退路是 `install.sh` 的事前 dump 与「把镜像
+  标签退回上一版」（只增列不改列，旧版本读得了新库）。是否引入迁移框架已决定暂缓，见 architecture.md
+- CI 的重复编译与探测成本没动：`test` / `webdav` / `server` / `web` 各自从零编译同一张 JVM+wasm 图，
+  `desktop` / `ios` 两个预留任务每次 push 仍要跑一遍（`continue-on-error`）。本轮只补超时和门禁；远程
+  build cache 与「只在 workflow_dispatch 跑预留任务」是另一件事
 
 - 宽限期删除表落地后的两个残留：① 删除后空间最坏要等「宽限期 2h + 清理周期 6h」才真正释放（约 8
   小时），换来的是秒传与物理删除不再可能交错；② 若进程恰好在「丢最后一个引用的事务提交」与「写入队

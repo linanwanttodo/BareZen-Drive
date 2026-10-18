@@ -37,7 +37,13 @@ N 次失败登录都能在计数落库前通过检查，把 20 次的上限一�
 
 ### GET /health
 
-无认证。响应：`{"status":"ok"}`
+无认证。响应：`{"status":"ok"}`。只做存活：HTTP 引擎起来了就返回 200，不碰数据库。
+
+### GET /readyz
+
+无认证。从连接池借一条连接跑 `SELECT 1`，因此它才是「能干活」的答案：库连不上时返回
+`503 {"status":"unready","db":"down"}`，连上时返回 `200 {"status":"ready","db":"ok"}`。
+镜像的 `HEALTHCHECK` 与 install.sh 的就绪等待都读这个。
 
 ## 版本查询
 

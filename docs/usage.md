@@ -23,7 +23,9 @@ curl -fsSL https://raw.githubusercontent.com/linanwanttodo/BareZen-Drive/master/
 
 安装完成后：
 
-- 浏览器打开 `http://<服务器地址>:8080` 就是 Web 客户端。
+- 浏览器打开 `http://<服务器地址>:8080` 就是 Web 客户端。选了「域名 + HTTPS」的安装请打开
+  `https://<域名>`：那种安装会把 `SERVER_PORT` 只绑到 `127.0.0.1`，明文端口不再对外，
+  WebDAV 也不会跑在没有 TLS 的链路上。
 - **第一件事：注册你的账号，然后到 设置 → 服务器 → 关闭「开放注册」**。私人网盘不该让所有人
   都能注册；关闭后登录页的注册入口自动消失，接口也会拒绝新的注册（错误码
   `REGISTRATION_DISABLED`）。想再加人再打开即可。
@@ -43,7 +45,7 @@ docker compose down                           # 停止（数据保留）
 | `JWT_SECRET` | 是 | 签发 JWT 的密钥，至少 32 字节。`openssl rand -base64 48` 生成，脚本可自动生成 |
 | `POSTGRES_PASSWORD` | 是 | PostgreSQL 密码，脚本可自动生成 |
 | `POSTGRES_DB` / `POSTGRES_USER` | 否 | 默认 `barezen` / `barezen` |
-| `SERVER_PORT` | 否 | 对外端口，默认 8080 |
+| `SERVER_PORT` | 否 | 对外端口，默认 8080；HTTPS 安装下只绑 127.0.0.1，对外由 Caddy 走 443 |
 | `STORAGE_DIR` | 否 | 容器内文件目录，compose 里固定 `/data/storage` 并挂载到 `./data/storage` |
 | `MAX_FILE_SIZE` | 否 | 单文件上限，默认 10 GiB |
 | `UPDATE_MANIFEST_URL` | 否 | 更新清单地址，默认指向本仓库最新 Release 的 `update.json` |
@@ -74,6 +76,16 @@ docker compose exec -T db pg_dump -U barezen barezen | gzip > barezen-$(date -u 
 
 `-U` 和库名取自 `.env` 的 `POSTGRES_USER` / `POSTGRES_DB`，默认都是 `barezen`。升级前 `install.sh`
 已会自动做一次同样的 dump，落到 `<安装目录>/backups/`。
+
+升级后 `server` 起不来（启动 DDL 报错，`restart: unless-stopped` 会把它反复重启）按这个顺序处理：先用
+`docker compose logs --tail 100 server` 找到那条 DDL 报错，再把镜像标签退回升级前的版本。schema 演进只
+增列不改列，旧版本能直接读加过列的库，所以回滚不用动数据：
+
+```bash
+bash install.sh --dir <安装目录> --version <旧版本号>   # 只换标签，其余答案直接回车沿用 .env
+```
+
+真要回到升级前的数据状态，就用 `<安装目录>/backups/` 里那份 dump，按下面的恢复步骤灌回去。
 
 文件目录用 `tar`，不必停服（正在进行中的分块上传在 `tmp/` 里，恢复时丢弃即可，不影响已完成的文件）：
 
