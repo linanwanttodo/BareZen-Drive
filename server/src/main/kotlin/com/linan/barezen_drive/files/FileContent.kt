@@ -112,15 +112,12 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
         val rootId = rootParam?.toUuidOrBadRequest()
         val rows = withContext(Dispatchers.IO) {
             transaction(DatabaseFactory.db) {
-                // Resolved inside the transaction: the subtree is a query of its own.
-                val subtree = rootId?.let { FileTree.descendants(call.userId, it) } ?: emptyList()
                 albumPageQuery(
                     userId = call.userId,
                     mediaFilter = albumMediaFilter(category),
                     favoriteOnly = favoriteOnly,
                     archivedOnly = archivedOnly,
                     rootId = rootId,
-                    subtree = subtree,
                     cursorTs = cursorTs,
                     cursorId = cursorId,
                 )
@@ -208,7 +205,6 @@ internal fun albumPageQuery(
     favoriteOnly: Boolean,
     archivedOnly: Boolean,
     rootId: UUID?,
-    subtree: List<UUID>,
     cursorTs: Long?,
     cursorId: UUID?,
 ): Query {
@@ -218,12 +214,49 @@ internal fun albumPageQuery(
     }
     if (favoriteOnly) q = q.andWhere { FilesTable.isFavorite eq true }
     if (rootId != null) {
-        q = q.andWhere { (FilesTable.folder inList subtree) or (FilesTable.folder eq rootId) }
+        q = q.andWhere { FolderInOwnSubtree(rootId, userId, FilesTable.folder) }
     }
     if (cursorTs != null && cursorId != null) {
         q = q.andWhere { AlbumCursorSeek(cursorTs, cursorId) }
     }
     return q.orderBy(albumSortTs() to SortOrder.DESC, FilesTable.id to SortOrder.DESC)
+}
+
+/**
+ * `folder IN (the subtree rooted at [rootId])`, expanded by the database.
+ *
+ * Scoping an album to a folder used to mean reading the account's whole folder set
+ * and handing back the descendants, and then pasting that id list into one `IN
+ * (...)` - once per pagination page, because a page cannot see the previous page's
+ * work. The read repeated the walk the client was scrolling through, and the
+ * parameter list grew with the folder count until the statement was no longer one
+ * the server would parse. The recursive CTE answers the same question inside the
+ * page query, with no list to build and no per-page tree read.
+ *
+ * The root is part of the CTE's anchor, so the row that *is* the root folder is in
+ * the subtree too - the old `inList subtree or folder eq rootId` needed both
+ * because the walk below excluded it.
+ *
+ * The anchor filters on [userId]: [rootId] arrives from the query string, and a
+ * subtree of somebody else's folders must resolve to nothing rather than leak their
+ * file names into this account's gallery. `UNION`, not `UNION ALL`, so a parent
+ * cycle - which the API cannot create but a hand-edited database might -
+ * terminates instead of looping.
+ */
+internal class FolderInOwnSubtree(
+    private val rootId: UUID,
+    private val userId: UUID,
+    private val folder: Expression<*>,
+) : Op<Boolean>() {
+    override fun toQueryBuilder(qb: QueryBuilder) {
+        folder.toQueryBuilder(qb)
+        qb.append(" IN (WITH RECURSIVE subtree(id) AS (SELECT id FROM folders WHERE id = ")
+        qb.registerArgument(FilesTable.id.columnType, rootId)
+        qb.append(" AND user_id = ")
+        qb.registerArgument(FilesTable.user.columnType, userId)
+        qb.append(" UNION SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id)")
+        qb.append(" SELECT id FROM subtree)")
+    }
 }
 
 /**
