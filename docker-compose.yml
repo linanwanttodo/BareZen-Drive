@@ -70,6 +70,10 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
     volumes:
       - ./data/storage:/data/storage
+    # The ceiling the JVM sizes its heap against (MaxRAMPercentage). Without it a
+    # container on the 1 GB box can reach for the whole host and leave PostgreSQL
+    # - which the app cannot work without - nothing to allocate from.
+    mem_limit: 768m
     ports:
       - "${SERVER_PORT:-8080}:8080"
     depends_on:
