@@ -59,7 +59,9 @@ actual object MediaSync {
     private const val BACKOFF_MINUTES = 10L
 
     /** Input flag: this pass only needs to look at media changed since the last
-     *  scan. Set by the change observer, which knows one new photo landed. */
+     *  scan. Set by the change observer, which knows one new photo landed, and by
+     *  the six-hour tick, which only has to drain the queue. Leaving it unset is
+     *  the full read, which belongs to the passes that may prune. */
     const val KEY_INCREMENTAL = "incremental"
 
     /** Input flag: the user pressed "sync now", so the pass runs even where the
@@ -93,6 +95,12 @@ actual object MediaSync {
             .build()
         val periodic = PeriodicWorkRequestBuilder<SyncWorker>(6, TimeUnit.HOURS)
             .setConstraints(constraints)
+            // Incremental: the six-hour tick exists to drain the queue, not to
+            // re-read the library. Everything it could discover was already
+            // discovered by the change observer (which fires within seconds) or
+            // belongs to the daily reconcile, the one pass allowed to prune and
+            // therefore the one that must scan everything.
+            .setInputData(workDataOf(KEY_INCREMENTAL to true))
             .setBackoffCriteria(BackoffPolicy.LINEAR, BACKOFF_MINUTES, TimeUnit.MINUTES)
             .build()
         wm.enqueueUniquePeriodicWork(SYNC_WORK, ExistingPeriodicWorkPolicy.UPDATE, periodic)

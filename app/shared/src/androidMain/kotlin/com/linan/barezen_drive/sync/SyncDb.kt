@@ -130,6 +130,8 @@ object SyncDb {
      * - rows already PENDING/UPLOADING keep their state (we only refresh
      *   the descriptive columns), so an in-flight or backoff-delayed item is
      *   never resurrected by a concurrent scan.
+     * - a row the scan describes exactly as it is stored is not written at all:
+     *   re-scanning an untouched library would otherwise rewrite all of it.
      */
     fun upsertScanned(items: List<ScannedMedia>) {
         if (items.isEmpty()) return
@@ -167,7 +169,20 @@ object SyncDb {
                     )
                     val retry = stale || budgetOver
                     val newState = if (retry) SyncState.PENDING else existingRow.state
-                    val cv = valuesOf(m, newState, if (retry) 0 else existingRow.attempts)
+                    val nextAttempts = if (retry) 0 else existingRow.attempts
+                    val scannedMeta = SyncPolicy.MediaMeta(
+                        bucket = m.bucket, name = m.name, size = m.size,
+                        dateModified = m.dateModified, dateTaken = m.dateTaken, isPhoto = m.isPhoto,
+                    )
+                    val storedMeta = SyncPolicy.MediaMeta(
+                        bucket = existingRow.bucket, name = existingRow.name, size = existingRow.size,
+                        dateModified = existingRow.dateModified, dateTaken = existingRow.dateTaken,
+                        isPhoto = existingRow.isPhoto,
+                    )
+                    if (!SyncPolicy.rescanRewritesRow(scannedMeta, storedMeta, retry || newState != existingRow.state)) {
+                        continue
+                    }
+                    val cv = valuesOf(m, newState, nextAttempts)
                     if (retry) {
                         cv.putNull("hash_cache")
                         cv.putNull("server_file_id")

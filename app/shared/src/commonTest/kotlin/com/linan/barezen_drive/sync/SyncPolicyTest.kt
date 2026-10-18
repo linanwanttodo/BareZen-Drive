@@ -225,4 +225,45 @@ class SyncPolicyTest {
         assertEquals(SyncState.PENDING, SyncState.fromKey("something-new"))
         assertEquals(SyncState.PENDING, SyncState.fromKey(""))
     }
+
+    // ---- rescan writes ----
+
+    private val storedRow = SyncPolicy.MediaMeta(
+        bucket = "Camera", name = "IMG_1.jpg", size = 4_000_000L,
+        dateModified = 1_700_000_000L, dateTaken = 1_700_000_000L, isPhoto = true,
+    )
+
+    @Test
+    fun anUnchangedScanRewritesNothing() {
+        // The bug was the opposite: every re-read row got an UPDATE because the
+        // upsert never compared the scan against what it had just loaded.
+        assertFalse(SyncPolicy.rescanRewritesRow(storedRow, storedRow, stateMoves = false))
+    }
+
+    @Test
+    fun everyDescriptiveColumnCanVoteForAWrite() {
+        val moved = listOf(
+            storedRow.copy(bucket = "Screenshots"),
+            storedRow.copy(name = "IMG_2.jpg"),
+            storedRow.copy(size = 4_000_001L),
+            storedRow.copy(dateModified = 1_700_000_001L),
+            // MediaStore losing its DATE_TAKEN is a change too: the row has to
+            // stop claiming a capture time it no longer has.
+            storedRow.copy(dateTaken = null),
+            storedRow.copy(isPhoto = false),
+        )
+        moved.forEach { scanned ->
+            assertTrue(
+                SyncPolicy.rescanRewritesRow(scanned, storedRow, stateMoves = false),
+                "$scanned differs from $storedRow",
+            )
+        }
+    }
+
+    @Test
+    fun aStateChangeWritesEvenWhenTheFileDidNotMove() {
+        // A FAILED row whose budget ran out is resurrected by the next scan; its
+        // file metadata is identical, so only the state can report the write.
+        assertTrue(SyncPolicy.rescanRewritesRow(storedRow, storedRow, stateMoves = true))
+    }
 }

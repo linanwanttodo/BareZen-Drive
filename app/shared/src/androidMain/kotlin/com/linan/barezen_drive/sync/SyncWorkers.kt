@@ -149,10 +149,11 @@ class SyncWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
             // graceful degradation.
             runCatching { setForeground(BackupNotification.foregroundInfo(0, 0)) }
 
-            // The change observer asks for an incremental read: only media whose
-            // DATE_MODIFIED moved past the last scan's watermark is re-read, so a
-            // photo landing no longer walks the whole library. The periodic tick and
-            // the reconcile job still pass null and take everything.
+            // The change observer and the six-hour tick ask for an incremental
+            // read: only media whose DATE_MODIFIED moved past the last scan's
+            // watermark is re-read, so a photo landing no longer walks the whole
+            // library. The reconcile job is the only pass that may prune, so it is
+            // the only one that still reads everything.
             val incremental = inputData.getBoolean(MediaSync.KEY_INCREMENTAL, false)
             val since = if (incremental) SyncPolicy.scanSinceSeconds(MediaSync.lastScanAt()) else null
             // The scan used to be swallowed whole: a revoked READ_MEDIA_IMAGES
