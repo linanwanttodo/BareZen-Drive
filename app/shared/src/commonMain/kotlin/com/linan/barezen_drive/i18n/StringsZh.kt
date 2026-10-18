@@ -111,6 +111,7 @@ object StringsZh : Strings {
     override val pickFromGallery: String = "从相册选择上传"
     override fun monthLabel(year: Int, month: Int): String = "${year}年${month}月"
     override val imageLoadFailed: String = "图片加载失败"
+    override val imageTooLargePreview: String = "原图较大，浏览器中不直接预览，可下载后查看"
     override val previewUnsupported: String = "该类型暂不支持在线预览"
     override val previewDownloadHint: String = "可在文件列表的菜单中选择下载"
     override val textPreviewTruncated: String = "仅显示前 256KB，完整内容请下载后查看"
