@@ -175,7 +175,7 @@ fun LoginScreen(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text(LocalStrings.current.fieldUsername) },
                         singleLine = true,
-                        shape = MaterialTheme.shapes.large,
+                        shape = MaterialTheme.shapes.small,
                     )
                     OutlinedTextField(
                         value = password,
@@ -183,7 +183,7 @@ fun LoginScreen(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text(LocalStrings.current.fieldPassword) },
                         singleLine = true,
-                        shape = MaterialTheme.shapes.large,
+                        shape = MaterialTheme.shapes.small,
                         visualTransformation = if (showPassword) {
                             VisualTransformation.None
                         } else {
@@ -245,7 +245,7 @@ fun LoginScreen(
                                 )
                             },
                             singleLine = true,
-                            shape = MaterialTheme.shapes.large,
+                            shape = MaterialTheme.shapes.small,
                         )
                     }
                     error?.let {

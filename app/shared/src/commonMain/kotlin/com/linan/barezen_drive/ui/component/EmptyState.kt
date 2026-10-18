@@ -1,6 +1,7 @@
 package com.linan.barezen_drive.ui.component
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.linan.barezen_drive.ui.theme.HairlineWidth
 
 /**
  * The one empty state every list screen uses: flat icon, one line of copy, an
@@ -58,7 +60,12 @@ fun EmptyState(
                 modifier = Modifier
                     .size(72.dp)
                     .background(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                        MaterialTheme.shapes.large,
+                    )
+                    .border(
+                        HairlineWidth,
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                         MaterialTheme.shapes.large,
                     ),
                 contentAlignment = Alignment.Center,

@@ -1,6 +1,7 @@
 package com.linan.barezen_drive.ui.screens.files
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -84,7 +85,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.linan.barezen_drive.ui.theme.HairlineWidth
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
+import com.linan.barezen_drive.ui.theme.hairlineColor
 import com.linan.barezen_drive.core.dto.ErrorCodes
 import com.linan.barezen_drive.ui.shell.BottomBarClearance
 import com.linan.barezen_drive.core.dto.FileDto
@@ -1353,6 +1356,7 @@ private fun FolderTile(
                 MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
                 MaterialTheme.shapes.small,
             )
+            .border(HairlineWidth, hairlineColor(), MaterialTheme.shapes.small)
             .combinedClickable(
                 onClick = { onAction(FolderAction.OPEN, folder) },
                 // Long-press opens the tile's overflow menu, matching the file
@@ -1442,6 +1446,7 @@ private fun FileTile(
                 MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
                 MaterialTheme.shapes.small,
             )
+            .border(HairlineWidth, hairlineColor(), MaterialTheme.shapes.small)
             .combinedClickable(
                 onClick = {
                     if (selectionMode) onAction(FileAction.TOGGLE_SELECT, file)
