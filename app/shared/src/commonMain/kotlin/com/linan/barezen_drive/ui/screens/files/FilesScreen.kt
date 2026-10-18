@@ -1586,7 +1586,11 @@ private fun FolderRow(
         Text(folder.name, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
         Box {
             IconButton(onClick = { onAction(FolderAction.TOGGLE_MENU, folder) }) {
-                Icon(Icons.Default.MoreVert, contentDescription = LocalStrings.current.moreActions)
+                Icon(
+                    Icons.Default.MoreVert,
+                    contentDescription = LocalStrings.current.moreActions,
+                    modifier = Modifier.size(20.dp),
+                )
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = dismissMenu) {
                 DropdownMenuItem(
@@ -1672,7 +1676,11 @@ private fun FileRow(
         } else {
         Box {
             IconButton(onClick = { onAction(FileAction.TOGGLE_MENU, file) }) {
-                Icon(Icons.Default.MoreVert, contentDescription = LocalStrings.current.moreActions)
+                Icon(
+                    Icons.Default.MoreVert,
+                    contentDescription = LocalStrings.current.moreActions,
+                    modifier = Modifier.size(20.dp),
+                )
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = dismissMenu) {
                 DropdownMenuItem(
