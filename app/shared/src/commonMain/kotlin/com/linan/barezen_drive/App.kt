@@ -321,6 +321,20 @@ fun App() {
         // closure reads the current value at call time and stays correct.
         val push: (Screen) -> Unit = remember { { screen -> stack = stack + screen } }
         val pop: () -> Unit = remember { { if (stack.size > 1) stack = stack.dropLast(1) } }
+        // The tab callbacks are remembered for the same reason: an inline lambda
+        // reads as a changed argument, so any app-level state change - a tab
+        // switch, the theme toggle, the album reporting its collection mode -
+        // recomposed the whole screen body instead of letting it skip.
+        val openLogin: () -> Unit = remember { { push(Screen.Login) } }
+        val openPreview: (List<FileDto>, Int) -> Unit = remember { { fs, idx -> push(Screen.Preview(fs, idx, true)) } }
+        val openAlbumPreview: (List<FileDto>, Int, Boolean) -> Unit = remember { { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) } }
+        val selectTab: (MainTab) -> Unit = remember { { t -> tab = t } }
+        val openAlbumTab: () -> Unit = remember { { tab = MainTab.ALBUM } }
+        val openFileUploads: () -> Unit = remember { { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.FILE)) } }
+        val openAlbumUploads: () -> Unit = remember { { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)) } }
+        val openFolder: (FolderDto) -> Unit = remember { { folder -> filesPath = filesPath + folder } }
+        val jumpToPath: (Int) -> Unit = remember { { idx -> filesPath = filesPath.take(idx + 1) } }
+        val onAlbumCollectionMode: (Boolean) -> Unit = remember { { inCollection -> albumInCollection = inCollection } }
         // One sign-out, because the session state has to be updated wherever
         // it happens: settings logout and "an owner deleted my own account"
         // used to be two copies that each forgot part of the list, and a path
@@ -443,46 +457,46 @@ fun App() {
                 }
                 MainShell(
                     selected = tab,
-                    onSelect = { tab = it },
+                    onSelect = selectTab,
                     glassBarEnabled = glassBlur,
                     showTabBar = !(tab == MainTab.ALBUM && albumInCollection),
                 ) {
                     when (tab) {
-                        MainTab.HOME -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else HomeScreen(
+                        MainTab.HOME -> if (!signedIn) NotSignedInPane(onLogin = openLogin) else HomeScreen(
                             repo = files,
                             thumbs = thumbs,
-                            onOpenAlbum = { tab = MainTab.ALBUM },
-                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
+                            onOpenAlbum = openAlbumTab,
+                            onPreview = openPreview,
                             themeToggle = themeToggle,
-                            onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.FILE)) },
+                            onOpenUploads = openFileUploads,
                             avatar = tabAvatar,
                         )
-                        MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else AlbumScreen(
+                        MainTab.ALBUM -> if (!signedIn) NotSignedInPane(onLogin = openLogin) else AlbumScreen(
                             repo = files,
                             thumbs = thumbs,
                             uploader = uploader,
                             onBack = null,
-                            onPreview = { fs, idx, _ -> push(Screen.Preview(fs, idx, true)) },
-                            onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.ALBUM)) },
-                            onCollectionModeChange = { albumInCollection = it },
+                            onPreview = openAlbumPreview,
+                            onOpenUploads = openAlbumUploads,
+                            onCollectionModeChange = onAlbumCollectionMode,
                             avatar = tabAvatar,
                         )
-                        MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else FilesScreen(
+                        MainTab.FILES -> if (!signedIn) NotSignedInPane(onLogin = openLogin) else FilesScreen(
                             path = filesPath,
                             repo = files,
                             uploader = uploader,
                             thumbs = thumbs,
-                            onOpenUploads = { push(Screen.Transfers(com.linan.barezen_drive.data.transfer.TransferLane.FILE)) },
-                            onOpenFolder = { filesPath = filesPath + it },
-                            onJumpTo = { idx -> filesPath = filesPath.take(idx + 1) },
-                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
+                            onOpenUploads = openFileUploads,
+                            onOpenFolder = openFolder,
+                            onJumpTo = jumpToPath,
+                            onPreview = openPreview,
                             themeToggle = themeToggle,
                             avatar = tabAvatar,
                         )
-                        MainTab.SEARCH -> if (!signedIn) NotSignedInPane(onLogin = { push(Screen.Login) }) else SearchScreen(
+                        MainTab.SEARCH -> if (!signedIn) NotSignedInPane(onLogin = openLogin) else SearchScreen(
                             files = files,
                             thumbs = thumbs,
-                            onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
+                            onPreview = openPreview,
                             avatar = tabAvatar,
                         )
                     }
@@ -561,7 +575,7 @@ fun App() {
                 onOpenTrash = { push(Screen.Trash) },
                 onOpenArchive = { push(Screen.Archive) },
                 onLogout = signOut,
-                onBack = { pop() },
+                onBack = pop,
             )
             is Screen.Preview -> PreviewScreen(
                 files = current.files,
@@ -577,7 +591,7 @@ fun App() {
                 repo = files,
                 thumbs = thumbs,
                 onBack = pop,
-                onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
+                onPreview = openPreview,
                 // Without this the page stops at the server's first page
                 // (100 rows) with no way to reach the rest: emptying a trash of
                 // 20k photos used to return them all, and the bounded response
@@ -588,7 +602,7 @@ fun App() {
                 repo = files,
                 thumbs = thumbs,
                 onBack = pop,
-                onPreview = { fs, idx -> push(Screen.Preview(fs, idx, true)) },
+                onPreview = openPreview,
             )
             is Screen.Users -> UsersScreen(
                 currentUserId = currentUserId,
