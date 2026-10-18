@@ -37,7 +37,11 @@ permissions:
 
 env:
   GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8"
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  # Lowercase on purpose: Docker's reference grammar rejects uppercase in a
+  # repository name, and GHCR stores packages lowercased anyway. The same value
+  # is what update.json advertises and what compose and install.sh pull, so a
+  # pinned image name is auditable against one string.
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/barezen-drive
 
 jobs:
   # Resolves the single version used by every job and decides whether this run
@@ -526,7 +530,7 @@ jobs:
             asset server any tar.gz "dist/BareZen-Drive-${VERSION}-server.tar.gz"; echo ""
             echo "  ],"
             echo "  \"docker\": {"
-            echo "    \"image\": \"ghcr.io/${repo}\","
+            echo "    \"image\": \"${IMAGE_NAME}\","
             echo "    \"tags\": [\"${VERSION}\", \"latest\"],"
             echo "    \"platforms\": [\"linux/amd64\", \"linux/arm64\"]"
             echo "  }"
