@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
+import com.linan.barezen_drive.ui.theme.hairlineStroke
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.library.LibraryRevision
 import com.linan.barezen_drive.data.repo.FilesRepository
@@ -399,6 +400,7 @@ private fun AlbumStripError(message: String, onRetry: () -> Unit) {
             .padding(horizontal = 16.dp, vertical = 4.dp),
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = LocalPanelAlpha.current),
+        border = hairlineStroke(),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -493,6 +495,7 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?, unavailable
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = (panelAlpha * 1.4f).coerceIn(0.55f, 0.97f)),
         contentColor = MaterialTheme.colorScheme.onSurface,
+        border = hairlineStroke(),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

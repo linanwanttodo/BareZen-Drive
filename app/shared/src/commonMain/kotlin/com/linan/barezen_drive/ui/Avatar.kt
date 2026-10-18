@@ -2,6 +2,7 @@ package com.linan.barezen_drive.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,8 +27,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.update.UpdateBadge
+import com.linan.barezen_drive.ui.theme.HairlineWidth
 import com.linan.barezen_drive.ui.theme.avatarColor
 import com.linan.barezen_drive.ui.theme.avatarLetter
+import com.linan.barezen_drive.ui.theme.hairlineColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -97,7 +100,8 @@ fun AvatarButton(
             Box(
                 Modifier
                     .size(size)
-                    .background(avatarColor(username.orEmpty()), CircleShape),
+                    .background(avatarColor(username.orEmpty()), CircleShape)
+                    .border(HairlineWidth, hairlineColor(0.4f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(

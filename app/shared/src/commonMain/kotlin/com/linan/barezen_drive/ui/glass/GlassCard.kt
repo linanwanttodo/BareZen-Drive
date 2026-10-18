@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.theme.LocalCardAlpha
+import com.linan.barezen_drive.ui.theme.hairlineStroke
 import androidx.compose.material3.Text
 
 /**
@@ -33,6 +34,7 @@ fun GlassCard(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = alpha),
         contentColor = MaterialTheme.colorScheme.onSurface,
+        border = hairlineStroke(),
         tonalElevation = 0.dp,
     ) {
         Column(content = content)
