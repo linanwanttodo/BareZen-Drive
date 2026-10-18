@@ -3,10 +3,9 @@ package com.linan.barezen_drive.sync
 import android.content.Context
 import android.net.Uri
 import com.linan.barezen_drive.AndroidContext
-import com.linan.barezen_drive.data.api.ApiClient
+import com.linan.barezen_drive.data.api.AppClient
 import com.linan.barezen_drive.data.api.ApiFailure
 import com.linan.barezen_drive.data.repo.AlbumFolder
-import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.transfer.TransferCenter
 import com.linan.barezen_drive.data.transfer.TransferKind
 import com.linan.barezen_drive.data.upload.UploadManager
@@ -55,7 +54,7 @@ object SyncUploadQueue {
     // notification (setForeground is itself a suspend call) from inside a pass.
     suspend fun runPass(lanes: Int, onProgress: suspend (Int, Int) -> Unit): SyncPass = coroutineScope {
         val ctx: Context = AndroidContext.app
-        val repo = FilesRepository(ApiClient())
+        val repo = AppClient.files
         // stoppedEarly is what makes the worker return retry(): an unreachable
         // server (or a still-migrating album root) must re-drive the queue on
         // the request's backoff, not park it until the next periodic run.

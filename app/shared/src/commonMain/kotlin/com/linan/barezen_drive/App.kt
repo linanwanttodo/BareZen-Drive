@@ -32,11 +32,10 @@ import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.graphics.ImageBitmap
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.core.dto.FolderDto
-import com.linan.barezen_drive.data.api.ApiClient
+import com.linan.barezen_drive.data.api.AppClient
 import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.data.local.TokenStorage
 import com.linan.barezen_drive.data.repo.AuthRepository
-import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.data.upload.UploadManager
 import com.linan.barezen_drive.ui.screens.album.AlbumScreen
 import com.linan.barezen_drive.ui.screens.files.FilesScreen
@@ -229,10 +228,13 @@ fun App() {
         if (wallpaperEnabled && wallpaperBitmap != null) {
             WallpaperLayer(wallpaperBitmap)
         }
-        // Single instances for the whole app lifetime of the composition.
-        val api = remember { ApiClient() }
+        // Single instances for the whole app lifetime of the composition. They
+        // come from AppClient rather than being built here: the background sync
+        // workers use the same two, because a second ApiClient means a second
+        // connection pool and a second cache over the same journal directory.
+        val api = AppClient.api
         val auth = remember { AuthRepository(api, TokenStorage) }
-        val files = remember { FilesRepository(api) }
+        val files = AppClient.files
         val uploader = remember { UploadManager(files) }
         val thumbs = remember { ThumbnailLoader(files) }
         // Server-side registration switch: null until the first load answers,
