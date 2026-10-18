@@ -1,6 +1,9 @@
 package com.linan.barezen_drive.files
 
 import com.linan.barezen_drive.db.DatabaseFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
@@ -76,6 +79,50 @@ internal object BlobPurgeLock {
                 log.warn("advisory lock unavailable for {}; falling back to the recount alone", key, it)
             }
             block()
+        }
+    }
+
+    /**
+     * Runs [block] while holding the same per-key lock, on a borrowed connection and
+     * with no transaction open.
+     *
+     * The purge needs the lock for longer than a transaction can sensibly be held:
+     * the work inside it is a network unlink, and the S3 client is configured with a
+     * ten-minute request timeout. Parking a transaction across that parks one of the
+     * five pooled connections idle-in-transaction, lock and all, and the sweep does
+     * it once per key.
+     *
+     * `pg_advisory_lock` shares the object space with the `pg_advisory_xact_lock` the
+     * upload side takes, so the two still serialize - only the transaction is gone,
+     * and the connection goes back the moment the unlink is done. The unlock runs
+     * under [NonCancellable]: a coroutine cancelled mid-sweep must still release the
+     * lock, because a pooled connection that returns holding it makes the next
+     * borrower wait on a lock nobody remembers taking.
+     */
+    suspend fun <T> withKeyHeld(key: String, block: suspend () -> T): T {
+        val db = DatabaseFactory.db
+        if (!isPostgres(db)) return block()
+        val id = keyToLockId(key)
+        val unavailable = { t: Throwable ->
+            log.warn("advisory lock unavailable for {}; falling back to the recount alone", key, t)
+        }
+        val conn = runCatching { DatabaseFactory.borrowConnection() }.onFailure(unavailable).getOrNull()
+            ?: return block()
+        return conn.use { c ->
+            val locked = runCatching {
+                c.autoCommit = true
+                c.createStatement().use { it.execute("SELECT pg_advisory_lock($id)") }
+            }.onFailure(unavailable).isSuccess
+            // Same verdict as losing the transaction-scoped lock: the recount still
+            // decides the delete, only the mutual exclusion is missing.
+            if (!locked) block() else try {
+                block()
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    runCatching { c.createStatement().use { it.execute("SELECT pg_advisory_unlock($id)") } }
+                        .onFailure { log.warn("could not release the advisory lock for {}", key, it) }
+                }
+            }
         }
     }
 

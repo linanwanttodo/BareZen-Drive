@@ -26,6 +26,21 @@ object DatabaseFactory {
     /** True once connect() has run on this process. */
     val connected: Boolean get() = ::db.isInitialized
 
+    /**
+     * A connection borrowed straight from the pool, for the caller to close itself.
+     *
+     * Exposed hands a transaction a connection and owns both; some work needs the
+     * connection while owning no transaction - holding a PostgreSQL advisory lock
+     * across a network unlink, for instance, where a transaction would sit
+     * idle-in-transaction for as long as the storage client is willing to wait. The
+     * pool lives here, so borrowing is this object's job rather than something each
+     * caller reaches for behind its back.
+     */
+    fun borrowConnection(): java.sql.Connection {
+        val ds = pool ?: error("no connection pool: DatabaseFactory.connect() has not run")
+        return ds.connection
+    }
+
     fun connect(
         jdbcUrl: String,
         user: String,

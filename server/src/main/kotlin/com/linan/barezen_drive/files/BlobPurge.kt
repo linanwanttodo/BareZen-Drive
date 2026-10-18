@@ -5,8 +5,8 @@ import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.storage.StorageProvider
 import com.linan.barezen_drive.storage.thumbKey
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insertIgnore
@@ -15,6 +15,16 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 
 private val log = LoggerFactory.getLogger("BlobPurge")
+
+/**
+ * Keys one sweep is allowed to look at.
+ *
+ * The due list is only bounded by how much trash has piled up, and every key on it
+ * is a network round trip: an uncapped pass is a job that grows with the backlog
+ * instead of draining it. Whatever the pass leaves behind is still queued, oldest
+ * first, for the next one.
+ */
+private const val PURGE_BATCH = 200
 
 /**
  * Grace period before a blob's bytes are unlinked.
@@ -83,18 +93,27 @@ internal fun enqueue(keys: List<String>, now: Long = System.currentTimeMillis())
  * Second half of the delete: unlink the keys whose grace period is up, unless
  * something referenced them again in the meantime.
  *
- * The recount, the unlink and the dequeue run per key inside one transaction
- * that holds the same per-key PostgreSQL advisory lock the upload side takes
- * (in UploadService). Recounting in a transaction of its own would release the
- * lock exactly where the sweep is most vulnerable - a dedup upload committing
- * in between, its new row pointing at bytes the unlink is about to remove.
- * Serialized this way the window is closed rather than merely narrowed. On H2
- * the lock is a no-op: the tests cover the queue, the grace window and the
- * recount, but not the mutual exclusion itself.
+ * The recount, the unlink and the dequeue all happen while holding the same
+ * per-key advisory lock the upload side takes (in UploadService), so the window
+ * a dedup upload could slip through is closed rather than merely narrowed. What
+ * deliberately does *not* span the unlink is a database transaction: the storage
+ * client allows a request ten minutes, and holding a transaction (with an
+ * idle-in-transaction connection out of a pool of five, plus row locks nobody can
+ * see) open across it turns one slow endpoint into a server that answers nothing.
+ * The lock is therefore session-scoped on a borrowed connection
+ * ([BlobPurgeLock.withKeyHeld]) and the two database steps are short transactions
+ * of their own.
+ *
+ * [batch] caps how many keys one sweep looks at, oldest first: the due list is
+ * only bounded by how much trash has accumulated, and an uncapped pass is a job
+ * that grows instead of draining. Whatever is left waits for the next sweep.
  *
  * A failing unlink is logged and the key stays queued for the next sweep: the
  * bytes are then unreachable garbage, which is a disk-space problem, not a
  * correctness one, and it must never turn a completed delete into a 500.
+ *
+ * On H2 (the test database) the lock is a no-op: the tests cover the queue, the
+ * grace window, the recount and the cap, but not the mutual exclusion itself.
  *
  * Returns how many blobs this pass actually unlinked.
  */
@@ -102,11 +121,14 @@ suspend fun processQueue(
     storage: StorageProvider,
     graceMs: Long = BLOB_GRACE_MS,
     now: Long = System.currentTimeMillis(),
+    batch: Int = PURGE_BATCH,
 ): Int {
     val due = withContext(Dispatchers.IO) {
         transaction(DatabaseFactory.db) {
-            BlobDeleteQueueTable.selectAll()
+            BlobDeleteQueueTable.select(BlobDeleteQueueTable.storageKey)
                 .where { BlobDeleteQueueTable.queuedAt lessEq (now - graceMs) }
+                .orderBy(BlobDeleteQueueTable.queuedAt to SortOrder.ASC)
+                .limit(batch)
                 .map { it[BlobDeleteQueueTable.storageKey] }
         }
     }
@@ -114,38 +136,28 @@ suspend fun processQueue(
     var unlinked = 0
     withContext(Dispatchers.IO) {
         for (key in due) {
-            // Everything for this key happens inside one lock *and* one
-            // transaction: recount, unlink, dequeue. The lock is
-            // transaction-scoped, so a recount that committed before the
-            // unlink would have released it and left the exact window this
-            // whole design exists to close.
-            // The inner transaction joins the lock's own (same database, same
-            // thread), so the dequeue commits with the unlink and the lock is
-            // still held when the work is done. On H2 the lock opens no
-            // transaction and the inner one is simply the only one.
-            val removed = BlobPurgeLock.withKey(key) {
-                transaction(DatabaseFactory.db) {
-                    if (FileService.orphanBlobKeys(listOf(key)).isEmpty()) {
-                        // Referenced again - most likely a dedup upload that
-                        // landed inside the window. Off the queue, so later
-                        // sweeps stop re-checking a live blob.
-                        dequeue(listOf(key))
-                        return@transaction false
-                    }
+            val removed = BlobPurgeLock.withKeyHeld(key) {
+                val orphan = transaction(DatabaseFactory.db) {
+                    FileService.orphanBlobKeys(listOf(key)).isNotEmpty()
+                }
+                if (!orphan) {
+                    // Referenced again - most likely a dedup upload that landed
+                    // inside the window. Off the queue, so later sweeps stop
+                    // re-checking a live blob.
+                    transaction(DatabaseFactory.db) { dequeue(listOf(key)) }
+                    false
+                } else {
                     val ok = runCatching {
-                        // Two deletes, not one transaction with them: an
-                        // unreachable blob left behind is a disk-space problem,
-                        // and it must never turn a completed delete into a 500.
-                        // The IO is one unlink locally and one DELETE on S3, so
-                        // the lock (and this transaction) is held for a
-                        // comparable moment to the upload side.
-                        runBlocking { storage.delete(key) }
-                        runBlocking { storage.delete(thumbKey(key.substringAfterLast('/'))) }
+                        // Two deletes, one after the other: an unreachable blob left
+                        // behind is a disk-space problem, and it must never turn a
+                        // completed delete into a 500.
+                        storage.delete(key)
+                        storage.delete(thumbKey(key.substringAfterLast('/')))
                     }.onFailure { log.warn("blob cleanup failed for {}", key, it) }.isSuccess
-                    // A failed unlink keeps its queue entry on purpose: the
-                    // next sweep retries it, whereas dropping it here would
-                    // leak the bytes forever.
-                    if (ok) dequeue(listOf(key))
+                    // A failed unlink keeps its queue entry on purpose: the next
+                    // sweep retries it, whereas dropping it here would leak the bytes
+                    // forever.
+                    if (ok) transaction(DatabaseFactory.db) { dequeue(listOf(key)) }
                     ok
                 }
             }

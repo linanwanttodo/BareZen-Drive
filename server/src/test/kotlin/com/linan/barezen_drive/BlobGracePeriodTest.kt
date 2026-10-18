@@ -226,4 +226,50 @@ class BlobGracePeriodTest {
 
         assertFalse(key in queued().keys, "the recount must stop a live key from being queued")
     }
+
+    @Test
+    fun aSweepTakesOnlyItsBatchAndLeavesTheRestQueued() = testApplication {
+        val auth = setup()
+        val keys = (1..4).map { upload(auth, "grace-batch-$it.txt") }
+        keys.forEach { (id, key, _) ->
+            client.delete("/api/files/$id") { header(HttpHeaders.Authorization, auth) }
+            client.delete("/api/trash/$id") { header(HttpHeaders.Authorization, auth) }
+        }
+        // Every key was queued a few milliseconds apart, so the clock has to be past
+        // the *newest* of them for all four to be due.
+        val dueNow = queued().values.max() + 60_001
+
+        // The due list is only bounded by how much trash has accumulated, and every
+        // key on it is a network round trip: a pass must take a batch and let the
+        // next one finish the job, not drain an unbounded backlog in one sitting.
+        val removed = processQueue(storage, graceMs = 60_000, now = dueNow, batch = 2)
+
+        assertEquals(2, removed, "one pass unlinks exactly its batch")
+        assertEquals(2, queued().size, "the rest waits for the next sweep")
+        assertEquals(2, keys.count { (_, key, _) -> runBlocking { exists(key) } }, "and keeps its bytes")
+    }
+
+    @Test
+    fun aFailedUnlinkKeepsTheKeyQueuedForTheNextSweep() = testApplication {
+        val auth = setup()
+        val (id, key, _) = upload(auth, "grace-fail.txt")
+        client.delete("/api/files/$id") { header(HttpHeaders.Authorization, auth) }
+        client.delete("/api/trash/$id") { header(HttpHeaders.Authorization, auth) }
+        val queuedAt = queued()[key] ?: error("not queued")
+
+        val failing = object : StorageProvider by storage {
+            override suspend fun delete(key: String) {
+                throw java.io.IOException("simulated storage failure")
+            }
+        }
+        val removed = processQueue(failing, graceMs = 60_000, now = queuedAt + 60_001)
+
+        assertEquals(0, removed, "nothing was unlinked, whatever the endpoint's excuse")
+        assertTrue(key in queued().keys, "the queue entry must survive the failure - dropping it would leak the bytes forever")
+        assertTrue(runBlocking { exists(key) }, "and a refused delete may not have touched the blob")
+
+        // The same key with a working storage still goes away on the next pass.
+        assertEquals(1, processQueue(storage, graceMs = 60_000, now = queuedAt + 60_002))
+        assertFalse(key in queued().keys)
+    }
 }
