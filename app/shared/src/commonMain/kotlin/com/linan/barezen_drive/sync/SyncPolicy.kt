@@ -93,6 +93,29 @@ object SyncPolicy {
             else -> false
         }
 
+    /** The descriptive columns the queue stores about one device file. */
+    data class MediaMeta(
+        val bucket: String?,
+        val name: String,
+        val size: Long,
+        val dateModified: Long,
+        val dateTaken: Long?,
+        val isPhoto: Boolean,
+    )
+
+    /**
+     * Whether folding a scan result into its stored row would write anything.
+     *
+     * Re-scanning an untouched library used to issue one UPDATE per row anyway,
+     * because the upsert never compared against what it had just read. With the
+     * periodic pass running every six hours that is ~100k statements a day for a
+     * 50k-photo library that did not move. A state change (an edited file going
+     * back to PENDING, an exhausted retry budget being resurrected) always counts
+     * as a write.
+     */
+    fun rescanRewritesRow(scanned: MediaMeta, stored: MediaMeta, stateMoves: Boolean): Boolean =
+        stateMoves || scanned != stored
+
     /**
      * Transport-level failures - no route, DNS, socket timeout - which a retry
      * can plausibly fix. A server-side rejection (404, 409, 400) is *not*
