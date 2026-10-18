@@ -673,6 +673,13 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+  # With a certificate in front, the plain mapping would keep the same drive
+  # reachable unencrypted on ${PORT} - and WebDAV Basic over plain HTTP is what
+  # the README rules out. Publish it on loopback only: the one outside door is
+  # Caddy's, and the readiness probe here stays reachable.
+  server:
+    ports: !override
+      - "127.0.0.1:${PORT}:8080"
 volumes:
   caddy_data:
   caddy_config:
