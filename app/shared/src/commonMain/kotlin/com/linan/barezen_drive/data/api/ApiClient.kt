@@ -239,8 +239,14 @@ class ApiClient(
                 Result.failure(e.toNetworkFailure())
             }
             if (result.isSuccess) return result
-            val retryable = failure is ConnectTimeoutException ||
-                failure?.message?.contains("Failed to connect", ignoreCase = true) == true
+            // Only the exception that *proves* the connection never opened.
+            // Matching on the message text also matched anything else that
+            // happened to carry those words - a server-returned error body, a
+            // failure after the exchange had started - and the replay of a
+            // create-folder or share-create call then duplicated the resource.
+            // A timeout after the exchange started stays untried for the same
+            // reason: its outcome is ambiguous.
+            val retryable = failure is ConnectTimeoutException
             if (!retryable || attempt == maxConnectAttempts - 1) return result
             delay(retryBackoffMs[attempt].milliseconds)
             attempt++
