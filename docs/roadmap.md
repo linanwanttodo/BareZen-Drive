@@ -54,6 +54,13 @@
   - MOVE/COPY 只会覆盖**文件**；目标是已存在的**集合**一律 409，不代为硬删那棵子树（要删就显式 DELETE）
   - 删除不对称：文件进回收站可恢复，**集合是硬删除整棵子树**——`folders` 没有 `deleted_at` 而 `files.folder_id` 有外键，模型上无法表达「文件夹进回收站」
   - 未经真实 Windows/macOS 客户端验证：只到协议层测试与真实 HTTP 冒烟脚本（`scripts/dav_smoke.sh`）全绿
+- [x] 服务端 DB 与资源收敛（2026-10-17，以下数字都在一次性 PostgreSQL 16 容器上实测）
+  - `/api/search` 加上 `lower(name)` 的 trigram GIN 索引：启动时幂等 `CREATE EXTENSION IF NOT EXISTS pg_trgm` 再建索引（非超级用户也能装，pg_trgm 是 trusted 扩展），装不上就退回原样（只慢不错）。17 万行库上确认该索引能被 `lower(name) LIKE '%q%'` 用作 Index Cond，路由原本的查询形状（`ORDER BY updated_at DESC LIMIT 100`）在命中稀少的关键词上选了它（Bitmap Index Scan）；命中面很宽的关键词仍按选择性走 `(user_id, deleted_at, updated_at)` 那条 btree——要让它稳定走 trigram，得改成按相关度排序，那属于查询语义变更，不在本次修复里做
+  - 相册 `?root=<folderId>` 的子树改由 SQL 内递归 CTE 展开（锚点带 `user_id`，别人目录的 id 实测解析为空集），不再每翻一页读一遍整棵目录树，也不再拼无界 `IN (...)`
+  - 回收站清空与到期清理改为边取边删（每页 1000 行），`hardDelete` 与删子树的每个 `IN` 都分批：绑定参数不再随行数增长，PostgreSQL 的 65 535 上限撞不到
+  - 复制子树由逐行 INSERT 改为分批 `batchInsert`；pgjdbc 默认把攒好的批一条条发出去，故对 `jdbc:postgresql:` 的 URL 自动补 `reWriteBatchedInserts=true`。21 个目录 + 336 个文件的子树复制，实测只有 3 条 folders INSERT 与 3 条 files INSERT（分别 256/64/16 行的多值语句）
+  - blob 清理：per-key advisory 锁改在借来的连接上以会话锁形式持有，网络 unlink 期间不再开着事务（S3 客户端单请求超时 10 分钟，5 条连接能被一个慢端点全钉住）。实测 `pg_advisory_lock` / `pg_advisory_unlock` 前后没有 `BEGIN`/`COMMIT`，第二个会话在锁期间拿不到同一 key，宽限期到的键与缩略图被物理删除、队列行随之清空；每轮只取 200 个键，unlink 失败的保留队列行等下一轮
+  - 公开分享的列出一页为限（默认 200、上限 1000），排序也交给数据库（`lower(name), id`）；游标是 `<名字>:<id>`，行值比较 `(lower(name), id) > (lower(?), ?)` 在 PostgreSQL 上实测可用，由客户端连续翻，所以整份目录依旧看得全
 ## v0.3+（远期）
 
 - 多设备同步与冲突解决
