@@ -27,7 +27,8 @@ RUN chown -R 10001:10001 /app
 USER 10001:10001
 ENV JAVA_TOOL_OPTIONS="-Xms64m -Xmx256m"
 EXPOSE 8080
-# A fresh DB-backed /health response proves the process actually serves.
+# /readyz runs one query on the real pool, so a database that stops answering
+# turns this probe failing instead of leaving the container marked healthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
-  CMD ["wget", "-qO-", "http://127.0.0.1:8080/health"]
+  CMD ["wget", "-qO-", "http://127.0.0.1:8080/readyz"]
 ENTRYPOINT ["./bin/server"]

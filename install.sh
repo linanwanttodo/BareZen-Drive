@@ -689,11 +689,17 @@ fi
 
 log "Waiting for the service to become ready"
 READY=0
+# The web-only install is a static bundle behind Caddy, so its page is the whole
+# of readiness. Anything running the server has to answer a query first: /readyz
+# returns 503 while the database is unreachable, and a page that loads against a
+# dead database would otherwise be reported as a working install.
+if [ "$INSTALL_TYPE" = "web" ]; then
+  READY_PATH="/"
+else
+  READY_PATH="/readyz"
+fi
 for i in $(seq 1 60); do
-  # The `/` fallback is for the static bundle, which has no /health route. The
-  # server reports readiness on /health alone.
-  if curl -fsS ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "${READY_URL}/health" >/dev/null 2>&1 \
-    || curl -fsS ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "${READY_URL}/" >/dev/null 2>&1; then
+  if curl -fsS ${PROBE_ARGS[@]+"${PROBE_ARGS[@]}"} "${READY_URL}${READY_PATH}" >/dev/null 2>&1; then
     READY=1; break
   fi
   sleep 2
