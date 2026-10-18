@@ -298,6 +298,38 @@ fun FilesScreen(
         scope.launch { refresh() }
     }
 
+    /**
+     * Fetches page one and merges it into what is already on screen.
+     *
+     * This is the path a change somewhere else takes: the library revision is
+     * global, so one photo finishing an upload bumps it while the user may be
+     * looking at row 600 of a folder. `reload()` there would collapse the list
+     * back to the first 200 names mid-scroll - the same yank the album grid
+     * stopped doing by merging instead of clearing.
+     *
+     * The cursor is kept on purpose: it names a position in an ordering that has
+     * not changed, and re-reading the pages below the head is exactly what this
+     * path used to do to the user's eyes.
+     */
+    suspend fun mergeHead() {
+        val current = state ?: return refresh()
+        repo.contents(folderId, PAGE_SIZE).fold(
+            onSuccess = {
+                val folders = if (folderId == ROOT_FOLDER_ID) {
+                    it.folders.sortedByDescending { f -> f.name == AlbumFolder.ROOT_NAME }
+                } else it.folders
+                state = current.copy(
+                    folders = folders,
+                    files = mergeFirstPage(current.files, it.files, complete = current.nextCursor == null),
+                )
+                loadError = null
+            },
+            // A failed background refresh leaves the listing alone; the error is
+            // already on the transfer strip and the next bump retries.
+            onFailure = { },
+        )
+    }
+
     /** Fetches the next page and appends it; the list is never rebuilt. */
     fun loadMore() {
         val cursor = state?.nextCursor ?: return
@@ -569,7 +601,7 @@ fun FilesScreen(
     LaunchedEffect(revision) {
         if (revision == 0L) return@LaunchedEffect
         delay(400.milliseconds)
-        reload()
+        mergeHead()
     }
 
     // Upload progress comes from the transfer centre, not from the manager.
