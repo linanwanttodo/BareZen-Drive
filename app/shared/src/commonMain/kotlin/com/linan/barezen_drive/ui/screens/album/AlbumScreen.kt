@@ -69,6 +69,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -1239,11 +1240,29 @@ fun AlbumScreen(
                     var i = waterfallLeadRows
                     sections.map { s -> i.also { i += s.files.size + 1 } }
                 }
-                val firstItem = staggeredState.firstVisibleItemIndex
-                val sectionOfFirst = sectionOfItem.getOrNull(firstItem)
-                if (sectionOfFirst != null && sectionOfFirst >= 0 && headerItemOfSection[sectionOfFirst] != firstItem) {
+                // Which section's label floats over the grid right now, or -1 when
+                // the section's own in-flow header is the first thing on screen.
+                //
+                // Derived rather than read here: a plain `firstVisibleItemIndex`
+                // subscribes this whole composition scope to the scroll snapshot, so
+                // every cell crossed while scrolling recomposed the overlay and
+                // re-entered the grid call above it on top of the per-frame scroll
+                // work. Going through derivedStateOf narrows the invalidation to the
+                // label that actually changes.
+                val overlaySection by remember(sectionOfItem, headerItemOfSection) {
+                    derivedStateOf {
+                        val firstItem = staggeredState.firstVisibleItemIndex
+                        val section = sectionOfItem.getOrNull(firstItem) ?: -1
+                        when {
+                            section < 0 -> -1
+                            headerItemOfSection[section] == firstItem -> -1
+                            else -> section
+                        }
+                    }
+                }
+                if (overlaySection >= 0) {
                     Text(
-                        dayLabel(sections[sectionOfFirst].day),
+                        dayLabel(sections[overlaySection].day),
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier
                             .align(Alignment.TopStart)
