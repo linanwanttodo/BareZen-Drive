@@ -65,7 +65,10 @@ services:
       # instead of a silent half-minute stall.
       DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
       DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-30000}
-      DB_LEAK_DETECTION_MS: ${DB_LEAK_DETECTION_MS:-0}
+      # A borrowed connection held for two minutes is a bug, not load: the pool is
+      # five connections, so one leak stalls the whole app. The server ships with
+      # this stack trace on; leaving it here would silently turn it back off.
+      DB_LEAK_DETECTION_MS: ${DB_LEAK_DETECTION_MS:-120000}
       BOOTSTRAP_ADMIN_USER: ${BOOTSTRAP_ADMIN_USER:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
     volumes:
