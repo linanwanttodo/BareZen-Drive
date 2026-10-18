@@ -108,7 +108,7 @@ fun FileThumbnail(
                 .size(edge)
                 .background(
                     MaterialTheme.colorScheme.surfaceVariant,
-                    MaterialTheme.shapes.small,
+                    MaterialTheme.shapes.extraSmall,
                 ),
             contentAlignment = Alignment.Center,
         ) {

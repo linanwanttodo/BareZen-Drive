@@ -266,7 +266,7 @@ fun SettingsScreen(
                         readOnly = true,
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyMedium,
-                        shape = MaterialTheme.shapes.medium,
+                        shape = MaterialTheme.shapes.small,
                         trailingIcon = {
                             ExposedDropdownMenuDefaults.TrailingIcon(languageOpen)
                         },

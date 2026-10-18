@@ -1587,7 +1587,7 @@ private fun CollectionCoverTile(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(MaterialTheme.shapes.medium)
+                .clip(MaterialTheme.shapes.small)
                 // A flat brand tint, not surfaceVariant: the grey block read as
                 // "photo failed to load" rather than "this album has no cover".
                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)),
@@ -1639,7 +1639,7 @@ private fun BarAction(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(MaterialTheme.shapes.medium)
+            .clip(MaterialTheme.shapes.small)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {

@@ -363,7 +363,7 @@ private fun CreateTokenDialog(
                     supportingText = { Text(LocalStrings.current.webdavTokenLabelHint) },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyMedium,
-                    shape = MaterialTheme.shapes.medium,
+                    shape = MaterialTheme.shapes.small,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))

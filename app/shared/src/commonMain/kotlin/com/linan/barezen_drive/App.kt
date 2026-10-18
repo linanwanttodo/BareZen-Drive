@@ -682,7 +682,7 @@ private fun NotSignedInPane(onLogin: () -> Unit) {
                 contentDescription = null,
                 modifier = Modifier
                     .size(96.dp)
-                    .clip(MaterialTheme.shapes.large),
+                    .clip(MaterialTheme.shapes.small),
             )
             Spacer(Modifier.height(12.dp))
             Text(

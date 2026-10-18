@@ -59,7 +59,7 @@ fun EmptyState(
                     .size(72.dp)
                     .background(
                         MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                        MaterialTheme.shapes.extraLarge,
+                        MaterialTheme.shapes.large,
                     ),
                 contentAlignment = Alignment.Center,
             ) {
