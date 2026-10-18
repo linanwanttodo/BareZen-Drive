@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -60,7 +59,7 @@ fun EmptyState(
                     .size(72.dp)
                     .background(
                         MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                        RoundedCornerShape(20.dp),
+                        MaterialTheme.shapes.extraLarge,
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -91,7 +90,7 @@ fun EmptyState(
                 Spacer(Modifier.height(20.dp))
                 Button(
                     onClick = onAction,
-                    shape = RoundedCornerShape(8.dp),
+                    shape = MaterialTheme.shapes.small,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     modifier = Modifier.height(40.dp),
                 ) {
