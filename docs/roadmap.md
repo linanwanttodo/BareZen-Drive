@@ -92,6 +92,21 @@
   - 文档对回现状：`docs/development.md` 描述的 `ci.yml` / `docker-publish.yml` 早就不存在（只剩 `pipeline.yml`），CI 段按现状重写、部署自检的 curl 改指 `/readyz`；`docs/api.md` 补 `/readyz`；升级起不来时的回滚顺序写进 `usage.md` / `usage.en.md`
   - 手工验收（install.sh / compose / Dockerfile 没有自动化测试可依托）：把脚本里生成 override、补齐 `.env`、拉取 compose 的三段原样抽出来执行，再用 `docker compose config` 核对渲染结果，30 项断言全过——明文端口朝外与 loopback 收口的对照、`mem_limit` 渲染成 805306368、残缺 `.env` 先被 compose 拒绝再被补齐可用、既有密钥不会被重新生成顶掉、改过的 compose 留下 `.local` 而未改过的不留、`timeout-minutes` 条数与 job 数相等、`docker.needs` 含 `webdav`
 
+- [x] 运维面的小项挑选（2026-10-18，P2 里先做有后果的）
+  - 手动指定版本号不再允许从任意分支发布：`version` 里 `release=true` 的前提改成 ref 是 `master` 或
+    `refs/tags/*`。以前在功能分支上 dispatch 一个版本号就会 `is_release=true`，`release` 任务给那个
+    分支的 HEAD 打标签并建 GitHub Release，版本化镜像也一起推出去。判定逻辑抽出来后用四种组合实跑过：
+    master+输入 = 发布、master 无输入 = 不发、功能分支+输入 = 不发、功能分支无输入 = 不发
+  - 关停宽限从「1 秒优雅 + 5 秒强制」改成 5 + 8 秒，compose 侧 `stop_grace_period: 15s`：以前默认 10 秒
+    刚好卡在一次优雅关停中间，而正在写入的分块或正在流出的下载被 1 秒就掐掉，客户端得整块重传。
+    `docker compose config` 确认渲染出 15s
+  - README 的技术栈表把 JDBC 驱动写成 42.7.12，实际 `libs.versions.toml` 是 42.7.13：文档跟每次依赖
+    升级脱节的具体一处，改文档不改依赖
+  - 本轮明确不做的 P2：`/metrics` 与容器内文件日志（新增运维面机制，不是修复）、CI 的重复编译与
+    `desktop`/`ios` 探测任务成本（要动作业结构）、基础镜像 digest 固定与 dependabot（发布面策略）、
+    `postgres:16` 大版本走向 EOL 的升级路径（需要真实的 dump/restore 演练，不是改一行）、大文件拆分
+    R1/R2/R3（与本目标无关，另立条目）
+
 ## v0.3+（远期）
 
 - 多设备同步与冲突解决
