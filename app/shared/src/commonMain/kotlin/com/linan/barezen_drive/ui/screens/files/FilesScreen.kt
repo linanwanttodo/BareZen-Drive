@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyColumn
@@ -860,6 +861,9 @@ fun FilesScreen(
                     dismissMenu = dismissMenu,
                     selectionMode = sel.isNotEmpty(),
                     selectedIds = sel,
+                    loadMoreError = loadMoreError,
+                    loadingMore = loadingMore,
+                    onLoadMore = { loadMore() },
                 )
                 else -> {
                 // Bottom clearance lets the last rows scroll clear of the
@@ -894,28 +898,11 @@ fun FilesScreen(
                     // ask for it would just be a slower version of the same list.
                     if (ui.nextCursor != null || loadMoreError != null) {
                         item(key = "more") {
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 16.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                when {
-                                    loadMoreError != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            loadMoreError!!,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
-                                        Spacer(Modifier.height(4.dp))
-                                        TextButton(onClick = { loadMore() }) { Text(LocalStrings.current.actionRetry) }
-                                    }
-                                    loadingMore -> CircularProgressIndicator(Modifier.size(24.dp))
-                                    else -> TextButton(onClick = { loadMore() }) {
-                                        Text(LocalStrings.current.loadMore)
-                                    }
-                                }
-                            }
+                            LoadMoreFooter(
+                                error = loadMoreError,
+                                loading = loadingMore,
+                                onLoadMore = { loadMore() },
+                            )
                         }
                     }
                 }
@@ -1193,6 +1180,9 @@ private fun FilesGrid(
     dismissMenu: () -> Unit,
     selectionMode: Boolean,
     selectedIds: Set<String>,
+    loadMoreError: String?,
+    loadingMore: Boolean,
+    onLoadMore: () -> Unit,
 ) {
     // Folders and files share the same cells: a folder is a sibling of the
     // files beside it, so switching the view re-flows the whole listing.
@@ -1222,6 +1212,43 @@ private fun FilesGrid(
                 selectionMode = selectionMode,
                 selected = file.id in selectedIds,
             )
+        }
+        // The grid has to reach the rest of the folder too. Without this footer
+        // the same listing that pages in the list view stops at the first 200
+        // names in the grid - and the grid is the default for photo folders, so
+        // the rows past the page were not merely hidden, they were unreachable.
+        if (ui.nextCursor != null || loadMoreError != null) {
+            item(key = "more", span = { GridItemSpan(maxLineSpan) }) {
+                LoadMoreFooter(error = loadMoreError, loading = loadingMore, onLoadMore = onLoadMore)
+            }
+        }
+    }
+}
+
+/**
+ * The paging footer, shared by the list and the grid so one view cannot silently
+ * lose the path to the next page.
+ */
+@Composable
+private fun LoadMoreFooter(error: String?, loading: Boolean, onLoadMore: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 16.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            error != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    error,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.height(4.dp))
+                TextButton(onClick = onLoadMore) { Text(LocalStrings.current.actionRetry) }
+            }
+            loading -> CircularProgressIndicator(Modifier.size(24.dp))
+            else -> TextButton(onClick = onLoadMore) { Text(LocalStrings.current.loadMore) }
         }
     }
 }
