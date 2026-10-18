@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.repo.FilesRepository
 import com.linan.barezen_drive.ui.media.ThumbnailHub
+import com.linan.barezen_drive.platform.isWebPlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.linan.barezen_drive.i18n.LocalStrings
@@ -70,15 +71,36 @@ fun ImageViewer(files: List<FileDto>, initialIndex: Int, repo: FilesRepository, 
     }
 }
 
+/**
+ * Bytes the web viewer is willing to buffer for a full-size preview.
+ *
+ * `previewBytes` holds the encoded file in the JS heap and decoding adds a second,
+ * larger bitmap beside it, so one 40 MB phone photo is two allocations a browser tab
+ * is not sized for - and swiping through a roll repeats it for every photo. Native
+ * is not gated: its decoder allocates lazily and off-heap.
+ */
+internal const val FULL_PREVIEW_WEB_LIMIT = 24L * 1024 * 1024
+
+/** Whether this platform must refuse to buffer a full-size preview of [sizeBytes]. */
+internal fun refusesFullPreview(sizeBytes: Long, webPlatform: Boolean): Boolean =
+    webPlatform && sizeBytes > FULL_PREVIEW_WEB_LIMIT
+
 @Composable
 private fun ZoomableImage(file: FileDto, repo: FilesRepository) {
     var bitmap by remember(file.id) { mutableStateOf<ImageBitmap?>(null) }
     var error by remember(file.id) { mutableStateOf(false) }
+    var tooLarge by remember(file.id) { mutableStateOf(false) }
     LaunchedEffect(file.id) {
         // Thumbnail first: the list cover is usually already in the thumbnail
         // cache, so the page paints immediately while the full image streams
         // in. The full-resolution bitmap replaces it on arrival.
         bitmap = ThumbnailHub.load(file.id)
+        if (refusesFullPreview(file.size, isWebPlatform())) {
+            // Whatever did load stays: the cover is the honest answer here, and
+            // the download route remains the way to the original.
+            tooLarge = true
+            return@LaunchedEffect
+        }
         val result = withContext(Dispatchers.Default) {
             runCatching { repo.previewBytes(file.id).decodeToImageBitmap() }
         }
@@ -165,6 +187,12 @@ private fun ZoomableImage(file: FileDto, repo: FilesRepository) {
                 LocalStrings.current.imageLoadFailed,
                 color = MaterialTheme.colorScheme.error,
                 textAlign = TextAlign.Center,
+            )
+            tooLarge -> Text(
+                LocalStrings.current.imageTooLargePreview,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(24.dp),
             )
             else -> CircularProgressIndicator()
         }

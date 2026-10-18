@@ -111,6 +111,7 @@ object StringsEn : Strings {
     override val pickFromGallery: String = "Upload from gallery"
     override fun monthLabel(year: Int, month: Int): String = "$year-$month"
     override val imageLoadFailed: String = "Failed to load image"
+    override val imageTooLargePreview: String = "This original is too large to preview in the browser. Download it to view the full image."
     override val previewUnsupported: String = "This file type cannot be previewed online yet"
     override val previewDownloadHint: String = "Use the menu in the file list to download it"
     override val textPreviewTruncated: String = "Showing the first 256 KB only. Download the file to see the rest"

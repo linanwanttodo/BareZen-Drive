@@ -133,6 +133,8 @@ interface Strings {
     val pickFromGallery: String
     fun monthLabel(year: Int, month: Int): String
     val imageLoadFailed: String
+    /** Shown instead of buffering an oversized original on a platform that cannot hold it. */
+    val imageTooLargePreview: String
     val previewUnsupported: String
     val previewDownloadHint: String
     val textPreviewTruncated: String
