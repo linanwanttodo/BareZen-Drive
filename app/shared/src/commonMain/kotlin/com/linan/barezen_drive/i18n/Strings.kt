@@ -142,7 +142,7 @@ interface Strings {
     val pageTurn: String
     fun pageNumber(page: Int): String
     val nativePlayerHint: String
-    fun openedInNewTab(label: String): String
+    fun openInNewTab(label: String): String
     val fetchLinkFailed: String
     val playbackUrlUnavailable: String
     val downloadingPdf: String

@@ -120,7 +120,7 @@ object StringsEn : Strings {
     override val pageTurn: String = "Paging"
     override fun pageNumber(page: Int): String = "Page $page"
     override val nativePlayerHint: String = "The browser's native player supports seeking and playback speed"
-    override fun openedInNewTab(label: String): String = "$label opened in a new tab"
+    override fun openInNewTab(label: String): String = "Open $label in a new tab"
     override val fetchLinkFailed: String = "Could not fetch the link"
     override val playbackUrlUnavailable: String = "Could not get a playback URL"
     override val downloadingPdf: String = "Downloading PDF..."

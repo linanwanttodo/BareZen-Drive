@@ -120,7 +120,7 @@ object StringsZh : Strings {
     override val pageTurn: String = "翻页"
     override fun pageNumber(page: Int): String = "第 $page 页"
     override val nativePlayerHint: String = "浏览器原生播放器支持拖动进度与倍速"
-    override fun openedInNewTab(label: String): String = "$label 已在新标签页打开"
+    override fun openInNewTab(label: String): String = "在新标签页打开$label"
     override val fetchLinkFailed: String = "获取链接失败"
     override val playbackUrlUnavailable: String = "无法获取播放地址"
     override val downloadingPdf: String = "正在下载 PDF…"
