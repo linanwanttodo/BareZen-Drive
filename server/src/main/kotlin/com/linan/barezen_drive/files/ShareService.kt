@@ -14,6 +14,7 @@ import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
 import com.linan.barezen_drive.db.ShareLinksTable
+import org.jetbrains.exposed.sql.Column
 import org.jetbrains.exposed.sql.Expression
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.Query
@@ -27,7 +28,9 @@ import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.andWhere
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.lowerCase
 import org.jetbrains.exposed.sql.or
+import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
@@ -82,6 +85,17 @@ object ShareService {
     private val MIN_TTL_MS = Duration.ofHours(1).toMillis()
     private val MAX_TTL_MS = Duration.ofDays(365).toMillis()
     private const val VIEW_DEDUP_MS = 5 * 60_000L
+
+    /**
+     * Page size of a public folder listing, and its ceiling.
+     *
+     * The endpoint is unauthenticated, so the response size is a cost an anonymous
+     * caller gets to choose unless the server refuses. The default is a page nobody
+     * scrolls past by accident; the cap bounds what one request may ask for, and a
+     * bigger directory is served by the cursor instead of in one heap spike.
+     */
+    private const val SHARE_PAGE_DEFAULT = 200
+    private const val SHARE_PAGE_MAX = 1000
 
 
     // ---- Owner operations ----
@@ -223,9 +237,26 @@ object ShareService {
             Opened(share, info)
         }
 
-    /** One folder's listing inside a folder share; the requested folder must
-     *  belong to the share subtree (server-enforced boundary). */
-    fun openContents(token: String, folderParam: String?, viewSource: String?): Opened<SharedContentsResponse> =
+    /**
+     * One folder's listing inside a folder share; the requested folder must
+     * belong to the share subtree (server-enforced boundary).
+     *
+     * Paged, and the ordering is the database's job. This is a **public** endpoint:
+     * it used to read every folder and every file of the requested directory, sort
+     * both in Kotlin and serialise the whole set in one response, so the cost of one
+     * unauthenticated request grew with whatever the owner had shared - a heap
+     * spike on a 1 GB box was the whole attack, and no client could ask for less.
+     * A page is bounded by [limit] and the two cursors say where the next one starts,
+     * in the same `(lower(name), id)` order the listing itself uses.
+     */
+    fun openContents(
+        token: String,
+        folderParam: String?,
+        viewSource: String?,
+        limit: Int = SHARE_PAGE_DEFAULT,
+        folderCursor: String? = null,
+        fileCursor: String? = null,
+    ): Opened<SharedContentsResponse> =
         transaction(DatabaseFactory.db) {
             val share = resolveInTransaction(token)
             val rootId = share.folderId ?: throw ApiException.notFound("链接无效或已过期")
@@ -242,20 +273,102 @@ object ShareService {
                     fid
                 }
             }
-            val folders = FoldersTable.selectAll().where { FoldersTable.parent eq parent }
-                .map { SharedFolderDto(it[FoldersTable.id].toString(), it[FoldersTable.name]) }
-                .sortedBy { it.name.lowercase() }
+            val size = limit.coerceIn(1, SHARE_PAGE_MAX)
+            // A malformed cursor restarts the page from the top: the worst it can
+            // cost a caller is one page it already has.
+            val folderAfter = parseNameCursor(folderCursor)
+            val fileAfter = parseNameCursor(fileCursor)
+
+            val folders = FoldersTable.select(FoldersTable.id, FoldersTable.name).where {
+                (FoldersTable.parent eq parent) and folderAfter.nameAfter(FoldersTable.name, FoldersTable.id)
+            }
+                .orderBy(FoldersTable.name.lowerCase() to SortOrder.ASC, FoldersTable.id to SortOrder.ASC)
+                .limit(size + 1)
+                .map { it[FoldersTable.id] to it[FoldersTable.name] }
             // Soft-deleted (trashed) rows stay in `files`, so the public share
             // path must filter them explicitly: a photo the owner moved to the
             // trash may not keep serving through a folder link.
-            val files = FilesTable.selectAll().where {
-                (FilesTable.folder eq parent) and (FilesTable.deletedAt eq 0L)
+            val files = FilesTable.select(
+                FilesTable.id, FilesTable.name, FilesTable.size, FilesTable.mimeType, FilesTable.hasThumbnail,
+            ).where {
+                (FilesTable.folder eq parent) and (FilesTable.deletedAt eq 0L) and
+                    fileAfter.nameAfter(FilesTable.name, FilesTable.id)
             }
-                .map { it.toSharedFileDto() }
-                .sortedBy { it.name.lowercase() }
+                .orderBy(FilesTable.name.lowerCase() to SortOrder.ASC, FilesTable.id to SortOrder.ASC)
+                .limit(size + 1)
+                .map { it.toSharedFileDto() to it[FilesTable.id] }
             if (viewSource != null) bumpView(share, viewSource)
-            Opened(share, SharedContentsResponse(folders, files))
+            // The extra row that decided `hasMore` is not served twice, and the
+            // cursor is that last served row: a page boundary lands between rows, so
+            // the next one starts where this one stopped.
+            val folderPage = folders.take(size)
+            val filePage = files.take(size)
+            Opened(
+                share,
+                SharedContentsResponse(
+                    folders = folderPage.map { SharedFolderDto(it.first.toString(), it.second) },
+                    files = filePage.map { it.first },
+                    folderCursor = folderPage.lastOrNull()
+                        ?.let { nameCursor(it.second, it.first) }
+                        ?.takeIf { folders.size > size },
+                    fileCursor = filePage.lastOrNull()
+                        ?.let { nameCursor(it.first.name, it.second) }
+                        ?.takeIf { files.size > size },
+                ),
+            )
         }
+
+    /**
+     * The keyset condition for a name-ordered page: everything strictly after
+     * `(lower(name), id)`, or no condition at all when there is no cursor.
+     */
+    private fun Pair<String, UUID>?.nameAfter(name: Column<String>, id: Column<UUID>): Op<Boolean> =
+        this?.let { NameCursorAfter(name, id, it.first, it.second) } ?: Op.TRUE
+
+    /**
+     * `<name>:<id>`, the name sent back as the database received it.
+     *
+     * The cursor deliberately carries the *raw* name rather than a lowercased one:
+     * the comparison applies `lower()` to the parameter too (see [NameCursorAfter]),
+     * so both sides are folded by the same rules. A Kotlin `lowercase()` here could
+     * disagree with the server's collation for a name like `İstanbul`, and a
+     * boundary that disagrees drops or repeats a row - which in a shared folder is a
+     * file the visitor never sees.
+     */
+    private fun nameCursor(name: String, id: UUID): String = "$name:$id"
+
+    /** The id is the tail, so a name containing a colon still parses. */
+    private fun parseNameCursor(raw: String?): Pair<String, UUID>? = raw?.let {
+        val idx = it.lastIndexOf(':')
+        if (idx <= 0) return@let null
+        runCatching { it.substring(0, idx) to UUID.fromString(it.substring(idx + 1)) }.getOrNull()
+    }
+
+    /**
+     * `(lower(name), id) > (lower(?), ?)`.
+     *
+     * The row form rather than the disjunctive equivalent because only the row
+     * comparison becomes an index condition, and both operands are bound as
+     * parameters: the name comes from a client.
+     */
+    private class NameCursorAfter(
+        private val name: Column<String>,
+        private val id: Column<UUID>,
+        private val lastName: String,
+        private val lastId: UUID,
+    ) : Op<Boolean>() {
+        override fun toQueryBuilder(qb: QueryBuilder) {
+            qb.append("(lower(")
+            name.toQueryBuilder(qb)
+            qb.append("), ")
+            id.toQueryBuilder(qb)
+            qb.append(") > (lower(")
+            qb.registerArgument(name.columnType, lastName)
+            qb.append("), ")
+            qb.registerArgument(id.columnType, lastId)
+            qb.append(")")
+        }
+    }
 
     /**
      * File access inside a share: file shares match by id, folder shares require

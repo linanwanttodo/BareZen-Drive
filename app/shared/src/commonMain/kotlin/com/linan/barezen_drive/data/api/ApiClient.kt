@@ -569,9 +569,16 @@ class ApiClient(
         http.get("$baseUrl/api/public/shares/$token").body()
     }
 
-    suspend fun sharedContents(token: String, folderId: String? = null): Result<SharedContentsResponse> = runApi {
+    suspend fun sharedContents(
+        token: String,
+        folderId: String? = null,
+        folderCursor: String? = null,
+        fileCursor: String? = null,
+    ): Result<SharedContentsResponse> = runApi {
         http.get("$baseUrl/api/public/shares/$token/contents") {
             folderId?.let { parameter("folder", it) }
+            folderCursor?.let { parameter("folderCursor", it) }
+            fileCursor?.let { parameter("fileCursor", it) }
         }.body()
     }
 
