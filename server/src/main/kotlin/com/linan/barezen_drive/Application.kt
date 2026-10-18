@@ -102,7 +102,10 @@ fun main() {
     // start(), so setting them here is what counts.
     server.engineConfig.workerGroupSize = eventLoopThreads
     server.engineConfig.callGroupSize = eventLoopThreads
-    Runtime.getRuntime().addShutdownHook(Thread { cleanupJob.cancel(); server.stop(1000, 5000) })
+    // Grace widened past the old 1 s: a file server's in-flight upload chunk or
+    // download is measured in seconds, and a request cut mid-write costs the
+    // client a full re-push. Compose gives 15 s, which covers 5 + 8.
+    Runtime.getRuntime().addShutdownHook(Thread { cleanupJob.cancel(); server.stop(5000, 8000) })
     server.start(wait = true)
 }
 

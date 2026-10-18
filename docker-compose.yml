@@ -83,6 +83,9 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    # The JVM shutdown hook asks for 5 s grace + 8 s force-stop; Docker's default
+    # 10 s would SIGKILL the process inside that window.
+    stop_grace_period: 15s
     logging: *app-logging
 
 volumes:
