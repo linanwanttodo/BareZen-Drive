@@ -106,7 +106,7 @@ Versions are taken from `gradle/libs.versions.toml` and the Gradle wrapper.
 | Server | Logback | 1.6.3 |
 | Database | Exposed ORM | 0.61.0 |
 | Database | HikariCP | 7.1.0 |
-| Database | PostgreSQL JDBC driver | 42.7.12 |
+| Database | PostgreSQL JDBC driver | 42.7.13 |
 | Database | PostgreSQL (Docker image) | 16 (postgres:16-alpine) |
 | Database | H2 (tests) | 2.5.250 |
 | Serialization | kotlinx.serialization | 1.11.0 |
