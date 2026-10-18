@@ -42,8 +42,9 @@ import com.linan.barezen_drive.ui.glass.LiquidBottomTabs
 import com.linan.barezen_drive.i18n.LocalStrings
 
 /**
- * App-wide tab destinations, in fixed order: home (album + recent), file
- * browser, settings.
+ * App-wide tab destinations, in the fixed order the bar draws them: home (server
+ * status, album strip, recent files), the album grid, the folder browser, search.
+ * Settings is not a tab - it opens from the avatar in a tab's top bar.
  */
 enum class MainTab {
     HOME,
