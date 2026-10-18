@@ -1,6 +1,6 @@
 # 总体架构
 
-BareZen-Drive 是自托管个人云盘：全 Kotlin 技术栈，KMP + Compose Multiplatform 客户端（Android + Web），Ktor 服务器，PostgreSQL，Docker Compose 部署。目标环境 1 核 1 GB 服务器。当前版本 v0.2.0。
+BareZen-Drive 是自托管个人云盘：全 Kotlin 技术栈，KMP + Compose Multiplatform 客户端（Android + Web），Ktor 服务器，PostgreSQL，Docker Compose 部署。目标环境 1 核 1 GB 服务器。当前版本 v0.2.1。
 
 ## 模块布局
 
@@ -189,7 +189,7 @@ work_mem=4MB` + healthcheck。镜像的 `HEALTHCHECK` 读 `/readyz`（借一条�
 
 ## 已知限制
 
-以下边界是当前实现（v0.0.1）的刻意取舍，非缺陷，留待 roadmap 收敛：
+以下边界是当前实现（v0.2.1）的刻意取舍，非缺陷，留待 roadmap 收敛：
 
 - 回收站只覆盖单个文件的软删除（`files.deleted_at` 置位、字节保留）；整棵文件夹树的删除仍是
   直接删除子树并物理回收 `refcount=0` 的 blob，不进回收站。软删的行超过 30 天由清理循环按上传会话

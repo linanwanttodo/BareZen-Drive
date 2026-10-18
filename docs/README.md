@@ -1,6 +1,6 @@
 # BareZen-Drive 文档索引
 
-本目录收录 BareZen-Drive 的架构、API、开发与路线图文档。当前版本 v0.0.1。
+本目录收录 BareZen-Drive 的架构、API、开发与路线图文档。当前版本 v0.2.1。
 
 [English](README.en.md) | [简体中文](README.md)
 
