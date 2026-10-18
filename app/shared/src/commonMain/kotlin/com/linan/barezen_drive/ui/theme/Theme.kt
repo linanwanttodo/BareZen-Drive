@@ -65,7 +65,12 @@ fun AppTheme(
     // seed - so text/surface contrast holds no matter which color is chosen.
     val scheme = remember(seed, dark) { schemeFromSeed(seed, dark) }
     CompositionLocalProvider(LocalIsDark provides dark) {
-        MaterialTheme(colorScheme = scheme, shapes = AppShapes, content = content)
+        MaterialTheme(
+            colorScheme = scheme,
+            shapes = AppShapes,
+            typography = AppTypography,
+            content = content,
+        )
     }
 }
 
