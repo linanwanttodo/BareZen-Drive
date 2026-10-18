@@ -22,7 +22,12 @@ WORKDIR /app
 COPY server-dist/ ./
 RUN chown -R 10001:10001 /app
 USER 10001:10001
-ENV JAVA_TOOL_OPTIONS="-Xms64m -Xmx256m"
+# Heap sized against the container's own memory limit (see mem_limit in
+# docker-compose.yml) rather than a fixed -Xmx: the same image then uses its
+# headroom on a big box and still fits the 1 GB one. Direct buffers are capped
+# separately, because their default ceiling is the heap size.
+# JAVA_OPTS from the launcher overrides these.
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=50.0 -XX:MaxDirectMemorySize=128m"
 EXPOSE 8080
 # /readyz runs one query on the real pool, so a database that stops answering
 # turns this probe failing instead of leaving the container marked healthy.
