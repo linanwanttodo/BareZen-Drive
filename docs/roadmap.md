@@ -61,6 +61,16 @@
   - 复制子树由逐行 INSERT 改为分批 `batchInsert`；pgjdbc 默认把攒好的批一条条发出去，故对 `jdbc:postgresql:` 的 URL 自动补 `reWriteBatchedInserts=true`。21 个目录 + 336 个文件的子树复制，实测只有 3 条 folders INSERT 与 3 条 files INSERT（分别 256/64/16 行的多值语句）
   - blob 清理：per-key advisory 锁改在借来的连接上以会话锁形式持有，网络 unlink 期间不再开着事务（S3 客户端单请求超时 10 分钟，5 条连接能被一个慢端点全钉住）。实测 `pg_advisory_lock` / `pg_advisory_unlock` 前后没有 `BEGIN`/`COMMIT`，第二个会话在锁期间拿不到同一 key，宽限期到的键与缩略图被物理删除、队列行随之清空；每轮只取 200 个键，unlink 失败的保留队列行等下一轮
   - 公开分享的列出一页为限（默认 200、上限 1000），排序也交给数据库（`lower(name), id`）；游标是 `<名字>:<id>`，行值比较 `(lower(name), id) > (lower(?), ?)` 在 PostgreSQL 上实测可用，由客户端连续翻，所以整份目录依旧看得全
+- [x] 客户端列表、预览与重组的八处修复（2026-10-18）
+  - 方格视图补上加载更多页脚，与列表视图共用同一个 `LoadMoreFooter`：超过 200 个文件的目录在方格模式下不再永远只有一页（方格还是图片目录的默认视图）
+  - 别处上传结束引发的刷新改为锚定合并（`mergeFirstPage`）：新页供头部，已加载且排在页尾之后的行留在原地，翻到第 3 页时不再被拽回 200 行的窗口。口径抽成 `internal fun`，4 条宿主单测覆盖「页内行更新、页外行保留、页内消失的行真的消失、一页装得下则整份替换」
+  - 网页端图片预览设 24MB 缓冲上限：`previewBytes` 把整份原图读进 JS 堆再解码，一张 40MB 手机照片足够让标签页崩溃，翻页每张重来一次；超限改为保留列表封面并提示下载查看。原生端解码惰性且堆外，不设这个限
+  - 重试判定只看 `ConnectTimeoutException`，删掉「报文里含 Failed to connect 就算没连上」的文本嗅探：嗅探会把服务端返回体或传输中途的失败误判成没连上，于是建目录、建分享这类 POST 可能被重发一次
+  - 瀑布流的日期浮层改用 `derivedStateOf` 读 `firstVisibleItemIndex`，滚动不再连带重跑整个网格的组合
+  - 回收站行改用 `itemsIndexed`，去掉每行一次 `indexOfFirst` 全表扫描
+  - wasm 预览不再一组合就 `window.open`：改为「在新标签页打开」按钮，由用户手势触发（滑过一排视频/PDF 曾经每次尝试开一个新标签页）
+  - `App.kt` 交给四个标签页的回调全部提到 `remember`（`openPreview` / `openFolder` / `jumpToPath` / `selectTab` 等，与既有的 `push` / `pop` 同一口径）：就地写死的 lambda 每次重组都是新实例，参数一变整屏就得重跑
+
 ## v0.3+（远期）
 
 - 多设备同步与冲突解决
@@ -86,11 +96,16 @@
   能真正到达客户端）。仍缺一个「重新生成封面」入口
 - 缩略图与头像的并发写入是后写覆盖先写（同 sha256 的每个封面都合法，可接受）；要严格有序需要
   代次计数器，即一次 schema 变更
-- `/api/search` 的 `lower(name) LIKE '%q%'` 仍扫该用户全部存活行（5 万行实测 8.5ms），需要 pg_trgm
-  或前缀索引；相册 `?root=<folderId>` 仍 seq 扫（1.54ms / 1006 buffers），需要把 `folder_id` 并进
-  相册排序索引——都未做
-- `emptyTrash` / `purgeExpiredTrash` 把全部行 id 读进一个 List 再拼 `IN (...)`，回收站有几万行时
-  本身仍是一次无界读 + 无界参数列表（删子树已改批量，删回收站还没）
+- 相册 `?root=<folderId>` 的排序仍 seq 扫（1.54ms / 1006 buffers），需要把 `folder_id` 并进相册那条
+  排序索引——子树展开本身已改由 SQL 递归 CTE 承担，剩下的只是索引
+- `/api/search` 的 trigram 索引用不用得上是优化器按选择性决定的：命中面很宽的关键词仍走
+  `(user_id, deleted_at, updated_at)` 那条 btree。要让它稳定走 trigram，得改成按相关度排序，
+  那是查询语义变更，不算是本轮该顺手做的事
+- wasm 上的连接级重试仍不会触发：JS/wasm 引擎把连接失败包成别的异常类型，具体形状没确认，
+  没确认就写判定等于猜。去掉文本嗅探之后保证的是「不会误重发 POST」，代价是 wasm 少一层重试
+- 「切标签、切主题时整屏重跑」这条路堵住了（`App.kt` 交给标签页的回调全部记忆化），但「跳过重组」
+  要在真机或浏览器里数重组次数才算验证过：仓库内没有 Compose UI 测试框架，本轮不为此新增框架，
+  证据只到编译与既有单测通过
 - Material 图标待迁移 AutoMirrored（当前 3 个弃用警告）；icons-extended 仅在链接期裁剪，发布前需复核 wasm 产物体积
 - 退出登录无确认对话框（面包屑的 push 增长与截断本轮已修）
 - Android 同步链路缺自动化覆盖：`SyncDb` 走 ContentProvider 游标、`SyncUploadQueue` 依赖协程取消语义，
