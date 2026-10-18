@@ -1,6 +1,5 @@
 package com.linan.barezen_drive
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
@@ -60,6 +59,7 @@ import com.linan.barezen_drive.ui.AvatarButton
 import com.linan.barezen_drive.ui.theme.AppTheme
 import com.linan.barezen_drive.ui.theme.DefaultSeed
 import com.linan.barezen_drive.ui.theme.LocalCardAlpha
+import com.linan.barezen_drive.ui.theme.LocalIsDark
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
 import com.linan.barezen_drive.ui.theme.ThemeMode
 import com.linan.barezen_drive.ui.wallpaper.WallpaperImage
@@ -159,11 +159,6 @@ fun App() {
         wallpaperBitmap = wallpaper?.bitmap()
     }
 
-    val dark = when (themeMode) {
-        ThemeMode.SYSTEM -> isSystemInDarkTheme()
-        ThemeMode.LIGHT -> false
-        ThemeMode.DARK -> true
-    }
     // Accent seed: the user's pick (settings swatches), else the default blue.
     var accentColor by remember { mutableStateOf(if (prefs.accentColor != 0) Color(prefs.accentColor) else DefaultSeed) }
     var glassBlur by remember { mutableStateOf(prefs.glassBlurEnabled) }
@@ -372,9 +367,12 @@ fun App() {
             prefs.wallpaperEnabled = img != null
         }
         // Web-only quick theme toggle for the top-right corner: flips between
-        // explicit light/dark (resolving from the effective scheme when in
-        // SYSTEM mode). Other platforms keep the settings-screen selector.
+        // explicit light/dark. Other platforms keep the settings-screen selector.
         val webPlatform = isWebPlatform()
+        // Read from the theme, not from the platform: this app can be dark while
+        // the OS says light (explicit DARK, or a browser preference Compose cannot
+        // see on wasm), and the icon has to describe what a tap actually does.
+        val dark = LocalIsDark.current
         // The inner @Composable wrapper is what makes the remembered value
         // callable as one: remember's own lambda is not a composable scope, so
         // the button has to be built inside an explicit composable lambda.

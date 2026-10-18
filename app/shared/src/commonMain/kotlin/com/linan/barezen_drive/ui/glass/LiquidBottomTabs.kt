@@ -6,7 +6,6 @@ package com.linan.barezen_drive.ui.glass
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -45,6 +44,7 @@ import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.linan.barezen_drive.ui.glass.utils.DampedDragAnimation
 import com.linan.barezen_drive.ui.glass.utils.InteractiveHighlight
+import com.linan.barezen_drive.ui.theme.LocalIsDark
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
@@ -67,7 +67,9 @@ fun LiquidBottomTabs(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit
 ) {
-    val isLightTheme = !isSystemInDarkTheme()
+    // The theme's own answer, not the platform's: on wasm isSystemInDarkTheme()
+    // is always false, so the bar used to paint light ink over the dark palette.
+    val isLightTheme = !LocalIsDark.current
     val accentColor =
         if (isLightTheme) Color(0xFF0088FF)
         else Color(0xFF0091FF)

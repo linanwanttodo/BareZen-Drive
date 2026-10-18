@@ -5,9 +5,9 @@ import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 
 /** Default accent: GitHub blue. Users can override it in settings. */
 val DefaultSeed = Color(0xFF0969DA)
@@ -32,6 +32,27 @@ val LocalPanelAlpha = androidx.compose.runtime.staticCompositionLocalOf { 0.6f }
  */
 val LocalCardAlpha = androidx.compose.runtime.staticCompositionLocalOf { 0.6f }
 
+/**
+ * Whether the dark tones are active, as [AppTheme] resolved them. Anything that
+ * has to pick a light or dark variant reads this instead of asking the platform:
+ * `isSystemInDarkTheme()` is blind to an explicit in-app choice, and on wasm it
+ * always reports false, so a browser set to dark used to get light ink on the
+ * dark palette wherever a component asked the system directly.
+ */
+val LocalIsDark = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/**
+ * The single rule behind [LocalIsDark]: an explicit choice wins, otherwise the
+ * system, and on wasm the browser preference Compose cannot see. Kept apart from
+ * the composable so the precedence is testable.
+ */
+internal fun resolveDark(themeMode: ThemeMode, systemDark: Boolean, webPrefersDark: Boolean?): Boolean =
+    when (themeMode) {
+        ThemeMode.SYSTEM -> systemDark || webPrefersDark == true
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+
 @Composable
 fun AppTheme(
     themeMode: ThemeMode = ThemeMode.SYSTEM,
@@ -39,15 +60,13 @@ fun AppTheme(
     seed: Color = DefaultSeed,
     content: @Composable () -> Unit,
 ) {
-    val dark = when (themeMode) {
-        ThemeMode.SYSTEM -> isSystemInDarkTheme() || (prefersDarkSchemeWeb() == true)
-        ThemeMode.LIGHT -> false
-        ThemeMode.DARK -> true
-    }
+    val dark = resolveDark(themeMode, isSystemInDarkTheme(), prefersDarkSchemeWeb())
     // Tonal palettes fix every role's lightness, only hue/chroma follow the
     // seed - so text/surface contrast holds no matter which color is chosen.
     val scheme = remember(seed, dark) { schemeFromSeed(seed, dark) }
-    MaterialTheme(colorScheme = scheme, content = content)
+    CompositionLocalProvider(LocalIsDark provides dark) {
+        MaterialTheme(colorScheme = scheme, content = content)
+    }
 }
 
 /**
@@ -59,8 +78,7 @@ fun AppTheme(
 @Composable
 fun filledButtonColors(): ButtonColors {
     val scheme = MaterialTheme.colorScheme
-    val dark = scheme.background.luminance() < 0.5f
-    return if (dark) {
+    return if (LocalIsDark.current) {
         val hue = scheme.primary.oklchHue()
         val chroma = scheme.primary.oklchChroma()
         val container = oklchTone(hue, chroma, 42.0)
