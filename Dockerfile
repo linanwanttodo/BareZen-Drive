@@ -12,6 +12,10 @@ RUN gradle :app:webApp:wasmJsBrowserDistribution --no-daemon
 FROM gradle:9.7.1-jdk21 AS server
 WORKDIR /src
 COPY . .
+# COPY merges, so the fresh bundle would land on top of whatever a local wasm
+# build left in this directory (old-hash .wasm files included). Drop the whole
+# directory first: the image then contains exactly what stage 1 produced.
+RUN rm -rf /src/server/src/main/resources/web
 COPY --from=web /src/app/webApp/build/dist/wasmJs/productionExecutable /src/server/src/main/resources/web
 RUN gradle :server:installDist --no-daemon
 
