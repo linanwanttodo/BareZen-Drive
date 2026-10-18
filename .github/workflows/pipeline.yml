@@ -68,7 +68,14 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           if [ -n "$INPUT_VERSION" ]; then
-            v="$INPUT_VERSION"; release=true
+            v="$INPUT_VERSION"
+            # A manual version makes a release only from the refs releases come
+            # from: dispatching this input on a feature branch must not tag that
+            # branch's HEAD and publish the versioned image with it.
+            case "$GITHUB_REF" in
+              refs/heads/master|refs/tags/*) release=true ;;
+              *) release=false ;;
+            esac
           elif git describe --tags --exact-match HEAD 2>/dev/null | grep -q '^v'; then
             v="$(git describe --tags --exact-match HEAD | sed 's/^v//')"; release=true
           else
