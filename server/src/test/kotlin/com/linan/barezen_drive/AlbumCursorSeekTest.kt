@@ -266,7 +266,6 @@ class AlbumCursorSeekTest {
                     favoriteOnly = false,
                     archivedOnly = false,
                     rootId = null,
-                    subtree = emptyList(),
                     cursorTs = cursorTs,
                     cursorId = cursorId,
                 ).prepareSQL(this)
