@@ -37,7 +37,7 @@ server/src/main/kotlin/com/linan/barezen_drive/
 
 ### v0.2 新增：客户端缩略图 / 签名 URL / 相册 / 分享链接
 
-- 缩略图全客户端生成（<=512px JPEG <=512KB）：Android（BitmapFactory inSampleSize + ExifInterface + MediaMetadataRetriever 抽帧）、Web（img/canvas 离屏，视频 seek 0.1s 截帧）。上传 complete 后经 `PUT /api/files/{id}/thumbnail` 提交；封面按源 sha256 内容寻址存于 `thumbs/<sha256>.jpg`，`files.has_thumbnail` 列置位，秒传自动继承。
+- 缩略图全客户端生成（<=512px JPEG <=512KB）：Android（BitmapFactory inSampleSize + ExifInterface + MediaMetadataRetriever 限尺寸抽帧，API 27 起把解码上限交给 `getScaledFrameAtTime`，更早的版本没有可用的限尺寸接口）、Web（img/canvas 离屏，视频 seek 0.1s 截帧）。上传 complete 后经 `PUT /api/files/{id}/thumbnail` 提交；封面按源 sha256 内容寻址存于 `thumbs/<sha256>.jpg`，`files.has_thumbnail` 列置位，秒传自动继承。
 - 下载/缩略图支持无状态签名 URL：`GET /api/files/{id}/link` 签发 `exp+sig`（HMAC-SHA256(JWT_SECRET)），content/thumbnail 端点挂 optional auth，Bearer 或有效签名二选一。
 - 相册：`GET /api/album` 按 `(updated_at,id)` keyset 分页返回全部图片；月份分组在客户端按本地时区完成，瀑布流（LazyVerticalStaggeredGrid）。
 - 预览路由 PreviewScreen 按 mime 分发：图片（HorizontalPager + transformable 缩放）、视频/音频（Android Media3 流式播 signed URL；Web 新标签页）、文本（Range 取前 256KB 等宽展示）、PDF（Android pdfium；Web 新标签页）。
@@ -55,7 +55,8 @@ server/src/main/kotlin/com/linan/barezen_drive/
   `favorite` / `archived` 参数切子集。客户端入口：相册多选栏、文件三点菜单、图片预览页底栏，
   归档列表与回收站各一页（设置 → 媒体库）。
 - 相册自动备份（Android）：`sync/` 包 —— `SyncDb`（框架 SQLite 队列，主键 content Uri，重扫幂等
-  upsert，编辑过的照片回到 pending）、`SyncScan`（MediaStore 全量读）、`SyncUploadQueue`（两路并发、
+  upsert，没变动的行不再重写，编辑过的照片回到 pending）、`SyncScan`（MediaStore 读，按水位可只读增量）、
+  `SyncUploadQueue`（两路并发、待传行按页取用、
   断网连续两次早停、hash 缓存复用）、`SyncWorker`/`ReconcileWorker`（前台 `dataSync` 通知 / 每日比对
   并清理设备上已消失的行）、`MediaObserverBridge`（ContentObserver 去抖 5 秒触发）。按相册勾选存
   `sync_buckets`，旧版 prefs 集合一次性迁移为 DONE 行。
@@ -135,7 +136,7 @@ server/src/main/kotlin/com/linan/barezen_drive/
 
 ## 客户端架构（app/shared，Android + Web 共享）
 
-- 数据层：`ApiClient`（ktor-client，Bearer 自动刷新：401 -> POST /api/auth/refresh -> 更新 TokenStore -> 重放一次；失败清空 token）+ `AuthRepository`/`FilesRepository`（标准 `Result<T>`，失败为 `ApiFailure`）+ `UploadManager`（进度 StateFlow）+ `UpdateChecker`（比较服务端 `/api/version` 与本机版本）。
+- 数据层：`ApiClient`（ktor-client，Bearer 自动刷新：401 -> POST /api/auth/refresh -> 更新 TokenStore -> 重放一次；失败清空 token）+ `AuthRepository`/`FilesRepository`（标准 `Result<T>`，失败为 `ApiFailure`）+ `UploadManager`（进度 StateFlow）+ `UpdateChecker`（比较服务端 `/api/version` 与本机版本）。`ApiClient` 在进程内只有一份（`AppClient.api` / `AppClient.files`），界面与后台 worker 共用：引擎没有 `close()`，多开一个就是多一套 dispatcher 与空闲长连接，而响应缓存落在 `cacheDir/http` 的同一个 journal 目录上，两个 `Cache` 实例指同一目录时 OkHttp 只会让其中一个真正生效。
 - expect/actual 平台层：`TokenStorage`（Android EncryptedSharedPreferences / Web localStorage）、`Sha256er`（MessageDigest / 纯 Kotlin 增量 SHA-256）、`FilePicker`/`FileSaver`（SAF / 浏览器 input+Blob 下载）、`AppUpdate`（`InstallChannel` / `openInBrowser` / `reloadApp`，Android 与 wasm 已实现，jvm 预留）。
 - UI：自实现导航栈（sealed Screen + BackHandler），三个 tab（首页=相册板块+最近 / 文件 / 设置），push 页面（相册时间轴、多类型预览、开源致谢）。主题为平面色板，单主色，无渐变、无 hover 效果。设置页含跨端「检查更新」入口。
 
@@ -209,13 +210,17 @@ server/src/main/kotlin/com/linan/barezen_drive/
   6 小时周期与每日全量比对兜底；队列落在框架 SQLite（`SyncDb`，刻意不引入 Room/KSP 以免改构建面），
   上传走前台 `dataSync` 通知保活、按网络类型切换并发路数（`SyncPolicy.lanesFor`：不计费 2 路 / 计费
   1 路，读数未知时按计费处理，反向默认会悄悄多耗移动数据）、断网连续两次即早停，单文件最多重试 5 次，已算过的
-  `sha256` 缓存复用避免重读整文件。变更触发的这一路是**增量扫描**：按 `DATE_MODIFIED` 水位回溯
-  5 分钟重叠窗口，只有每日对账做全量并据此剪枝——增量结果分不清「已被删除」与「没有变化」，拿它剪枝
+  `sha256` 缓存复用避免重读整文件。变更触发与六小时周期这两路都是**增量扫描**：按 `DATE_MODIFIED` 水位
+  回溯 5 分钟重叠窗口，全量读与剪枝只在每日对账那一趟——增量结果分不清「已被删除」与「没有变化」，拿它剪枝
   会清空整个队列。失败重试用线性 10 分钟退避，WorkManager 默认的指数 30 秒起步会把断网后的头几分钟
-  全花在撞死链上。队列在 pass 开始时一次性快照（`SyncDb.due()`），而首次备份可能跑数小时，所以每个
+  全花在撞死链上。待传行按页取用（`SyncDb.duePage`，keyset 游标走 `is_photo DESC, date_modified ASC, uri ASC`，
+  每页 256 行），不再在 pass 开始时把整个待传集合读成一个 list：首次备份几万张时那是几十兆行数据，要压满
+  整个 pass 的几小时。游标不能用 OFFSET——处理过的行会退出待传集合，窗口跟着前移就会静默跳过补位进来的
+  那行；顺序里补上主键 `uri` 也是为这个，只按前两个键时同键两行落在哪一页是随机的。而首次备份可能跑数小时，所以每个
   item 上传前还会按 `SyncItem.bucket` 复核一次排除状态（一次主键查询，相对 20 MiB 上传可忽略）：
   pass 进行中排除的相册不会被本次采纳，队列行保持 PENDING，勾回后仍能被复用；被跳过的 item 也计入
-  进度分子，否则进度条会停在半路。策略分两处落地：周期任务把「网络 + 仅充电 + 电量非低」整体交给
+  进度分子，否则进度条会停在半路。传输中心的文件行改成取到哪个文件才建一条，总数问 `COUNT`，
+  开跑时不再一次推五万行。策略分两处落地：周期任务把「网络 + 仅充电 + 电量非低」整体交给
   WorkManager 约束，而变更触发那一路必须用加急任务（`setExpedited`）才谈得上秒级，偏偏**加急任务只允许
   网络与存储约束**（挂充电或低电约束会直接抛 `IllegalArgumentException`），所以它只挂网络约束，充电与
   电量策略改由 `SyncWorker` 开工前自查、不满足就空跑返回，用户设的规则始终是权威。`SyncPolicy` 与
