@@ -292,13 +292,16 @@ FileVersionDto：
 {"type": "folder", "name": "Photos", "fileId": null, "size": null, "mimeType": null, "updatedAt": null}
 ```
 
-### GET /api/public/shares/{token}/contents?folder=<uuid 可选>（公开，仅文件夹分享）
+### GET /api/public/shares/{token}/contents?folder=<uuid 可选>&limit=<可选>&folderCursor=<可选>&fileCursor=<可选>（公开，仅文件夹分享）
 
-列出分享根（或子树内某文件夹）的一级内容，按 name 小写排序。`folder` 缺省/`root` = 分享根。请求子树外的文件夹 -> 404。响应：
+列出分享根（或子树内某文件夹）的一级内容，按 name 小写排序（数据库排序）。`folder` 缺省/`root` = 分享根。请求子树外的文件夹 -> 404。
+
+这是匿名可调的公开端点，所以一页为限：`limit` 缺省 200、上限 1000（超出按上限取，不报错）。`folderCursor`/`fileCursor` 是两份列表各自的位置，形如 `<名字>:<id>`，由上一页响应的同名字段给出；为 `null` 表示该列表已到底。客户端要整份目录就顺着游标连翻。
 
 ```json
 {"folders": [{"id": "...", "name": "Day1"}],
- "files": [{"id": "...", "name": "a.jpg", "size": 1024, "mimeType": "image/jpeg", "hasThumbnail": true}]}
+ "files": [{"id": "...", "name": "a.jpg", "size": 1024, "mimeType": "image/jpeg", "hasThumbnail": true}],
+ "folderCursor": "Day1:3f2c...", "fileCursor": null}
 ```
 
 文件分享调用此端点 -> 404。

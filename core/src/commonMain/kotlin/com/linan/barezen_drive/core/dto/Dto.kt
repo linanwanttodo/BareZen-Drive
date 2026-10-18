@@ -135,9 +135,17 @@ data class ContentsResponse(
 
 @Serializable data class SharedFolderDto(val id: String, val name: String)
 
+/**
+ * A page of a shared folder's listing. The cursors are the keyset position of the
+ * last row served (`<name>:<id>`, in the order the listing uses) and null means that
+ * list is exhausted; a client that wants the whole folder keeps asking until both
+ * are null, so the server never has to materialise a directory in one response.
+ */
 @Serializable data class SharedContentsResponse(
     val folders: List<SharedFolderDto>,
     val files: List<SharedFileDto>,
+    val folderCursor: String? = null,
+    val fileCursor: String? = null,
 )
 @Serializable data class ServerStatsDto(
     val cpuPercent: Double = -1.0,

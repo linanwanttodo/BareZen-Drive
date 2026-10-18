@@ -95,8 +95,11 @@ fun Route.sharePublicRoutes(storage: StorageProvider) {
         get("/contents") {
             val token = guard(call, body = false)
             val folder = call.request.queryParameters["folder"]
+            val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 200
+            val folderCursor = call.request.queryParameters["folderCursor"]
+            val fileCursor = call.request.queryParameters["fileCursor"]
             val opened = withContext(Dispatchers.IO) {
-                ShareService.openContents(token, folder, call.clientIp())
+                ShareService.openContents(token, folder, call.clientIp(), limit, folderCursor, fileCursor)
             }
             // The share has to be a folder share. Checked on the resolved
             // target rather than on a separate metadata read, so a file share
