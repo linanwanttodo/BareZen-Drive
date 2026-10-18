@@ -146,6 +146,8 @@ t() {
       other_data_3)  echo "仍要继续？[y/N]: " ;;
       dumping)       echo "升级前备份数据库到 " ;;
       dump_failed)   echo "  数据库备份未完成（服务可能没在运行）。升级本身会继续，但请先手工确认备份可用。" ;;
+      env_seed)      echo "  .env 缺少本次安装必需的项，已新生成：" ;;
+      compose_bak)   echo "  本地的 docker-compose.yml 与线上版本不一致，已保留为 " ;;
       cancelled)     echo "已取消：没有启动或改动任何服务。" ;;
       cert)          echo "启用 HTTPS（Caddy 自动申请并续签 Let's Encrypt 证书）？[Y/n]: " ;;
       cert_skip)     echo "  未填域名，证书无法签发给纯 IP，将使用 HTTP。" ;;
@@ -194,6 +196,8 @@ t() {
       other_data_3)  echo "Continue anyway? [y/N]: " ;;
       dumping)       echo "Backing up the database to " ;;
       dump_failed)   echo "  The database backup did not complete (the service may not be running). The upgrade continues, but check that a usable backup exists." ;;
+      env_seed)      echo "  .env was missing a key this install type needs - generated:" ;;
+      compose_bak)   echo "  The local docker-compose.yml differed from the published one, kept as " ;;
       cancelled)     echo "Cancelled: no service was started or changed." ;;
       cert)          echo "Enable HTTPS (Caddy issues and renews Let's Encrypt certificates automatically)? [Y/n]: " ;;
       cert_skip)     echo "  No domain given: a certificate cannot be issued for a bare IP, using HTTP." ;;
@@ -496,6 +500,24 @@ EOF
   fi
 fi
 
+# An instance switched from the web install type arrives here with a .env that
+# never got a secret: compose then fails on ${POSTGRES_PASSWORD:?} after the
+# directories were made, leaving a half-installed deployment. Every key this
+# install type requires is seeded if the file does not already hold it.
+if [ "$INSTALL_TYPE" != "web" ]; then
+  for k in POSTGRES_DB POSTGRES_USER; do
+    [ -n "$(env_get "$k" .env)" ] || env_set "$k" barezen .env
+  done
+  if [ -z "$(env_get POSTGRES_PASSWORD .env)" ]; then
+    env_set POSTGRES_PASSWORD "$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 24)" .env
+    warn "$(t env_seed) POSTGRES_PASSWORD"
+  fi
+  if [ -z "$(env_get JWT_SECRET .env)" ]; then
+    env_set JWT_SECRET "$(head -c 48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')" .env
+    warn "$(t env_seed) JWT_SECRET"
+  fi
+fi
+
 # Wizard answers are the current truth about where the service is reachable.
 # Skipping them left the old port in .env while the summary printed the new one,
 # so the readiness probe checked an address nothing was listening on and a
@@ -632,7 +654,17 @@ else
     fi
   fi
 
-  curl -fsSL -o docker-compose.yml "${REPO_RAW}/docker-compose.yml"
+  # The published compose file is what an upgrade needs (new keys, new defaults),
+  # while a locally edited one can hold a mount or a limit this instance depends
+  # on. Fetch beside it, and keep any differing local version under a name the
+  # operator can diff instead of one that is silently overwritten.
+  curl -fsSL -o docker-compose.yml.new "${REPO_RAW}/docker-compose.yml" \
+    || err "could not download docker-compose.yml from ${REPO_RAW}"
+  if [ -f docker-compose.yml ] && ! cmp -s docker-compose.yml docker-compose.yml.new; then
+    mv docker-compose.yml docker-compose.yml.local
+    warn "$(t compose_bak) docker-compose.yml.local"
+  fi
+  mv docker-compose.yml.new docker-compose.yml
   sed -i.bak "s#ghcr.io/linanwanttodo/barezen-drive:latest#ghcr.io/linanwanttodo/barezen-drive:${IMAGE_TAG}#" docker-compose.yml && rm -f docker-compose.yml.bak
 
   # uid 10001 inside the container writes every blob here. 777 would let any
