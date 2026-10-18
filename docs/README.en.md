@@ -1,7 +1,7 @@
 # BareZen-Drive documentation index
 
 This directory holds the architecture, API, development and roadmap documents
-for BareZen-Drive. Current version: v0.0.1.
+for BareZen-Drive. Current version: v0.2.1.
 
 [English](README.en.md) | [简体中文](README.md)
 
