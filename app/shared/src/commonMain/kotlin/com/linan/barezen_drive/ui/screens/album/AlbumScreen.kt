@@ -82,6 +82,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.backhandler.BackHandler
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
@@ -90,7 +91,9 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.linan.barezen_drive.ui.theme.HairlineWidth
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
+import com.linan.barezen_drive.ui.theme.hairlineColor
 import com.linan.barezen_drive.core.dto.FileDto
 import com.linan.barezen_drive.data.library.LibraryRevision
 import com.linan.barezen_drive.data.repo.FilesRepository
@@ -130,6 +133,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -1261,6 +1265,7 @@ fun AlbumScreen(
                     }
                 }
                 if (overlaySection >= 0) {
+                    val edgeColor = hairlineColor()
                     Text(
                         dayLabel(sections[overlaySection].day),
                         style = MaterialTheme.typography.titleSmall,
@@ -1270,6 +1275,13 @@ fun AlbumScreen(
                             // Track the panel alpha, or the floating day label
                             // is a white bar over the wallpaper.
                             .background(MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current))
+                            // The bar floats over scrolling photos, so it needs an
+                            // edge: without one the top row of tiles reads as still
+                            // being under the label.
+                            .drawBehind {
+                                val y = size.height - HairlineWidth.toPx() / 2f
+                                drawLine(edgeColor, Offset(0f, y), Offset(size.width, y), HairlineWidth.toPx())
+                            }
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
@@ -1547,7 +1559,7 @@ private fun AlbumTile(
                     .padding(6.dp)
                     .size(24.dp)
                     .background(
-                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                        if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
                         CircleShape,
                     )
                     .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
@@ -1610,7 +1622,12 @@ private fun CollectionCoverTile(
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text(tile.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+        Text(
+            tile.name,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }
 

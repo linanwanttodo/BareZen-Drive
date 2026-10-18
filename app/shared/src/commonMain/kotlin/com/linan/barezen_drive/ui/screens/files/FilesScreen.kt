@@ -1334,7 +1334,7 @@ private fun TileOverflow(
             modifier = Modifier
                 .size(28.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.64f))
                 .clickable(onClick = onToggle),
             contentAlignment = Alignment.Center,
         ) {
