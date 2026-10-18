@@ -173,13 +173,25 @@ private fun formatOneDecimal(value: Double): String {
     return "${scaled / 10}.${scaled % 10}"
 }
 
-internal fun formatFileSize(bytes: Long): String = when {
-    bytes < 1024L -> "$bytes B"
-    bytes < 1024L * 1024L -> "${formatOneDecimal(bytes / 1024.0)} KB"
-    bytes < 1024L * 1024L * 1024L -> "${formatOneDecimal(bytes / 1048576.0)} MB"
-    else -> {
-        val scaled = ((bytes / 1073741824.0) * 100.0).toInt()
-        "${scaled / 100}.${(scaled % 100).toString().padStart(2, '0')} GB"
+/**
+ * Byte sizes as shown to the user.
+ *
+ * [compact] caps GB at one decimal and drops the space before the unit. The
+ * server status card splits 304dp into five columns and "16.67 GB" is wider than
+ * one of them, so it has to be allowed to say "16.7GB" there; everywhere else a
+ * row is wide enough for the spaced form.
+ */
+internal fun formatFileSize(bytes: Long, compact: Boolean = false): String {
+    val sep = if (compact) "" else " "
+    return when {
+        bytes < 1024L -> "$bytes${sep}B"
+        bytes < 1024L * 1024L -> "${formatOneDecimal(bytes / 1024.0)}${sep}KB"
+        bytes < 1024L * 1024L * 1024L -> "${formatOneDecimal(bytes / 1048576.0)}${sep}MB"
+        compact -> "${formatOneDecimal(bytes / 1073741824.0)}${sep}GB"
+        else -> {
+            val scaled = ((bytes / 1073741824.0) * 100.0).toInt()
+            "${scaled / 100}.${(scaled % 100).toString().padStart(2, '0')}${sep}GB"
+        }
     }
 }
 

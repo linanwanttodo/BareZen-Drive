@@ -52,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
@@ -482,7 +483,19 @@ private fun RecentRow(
     }
 }
 
-private fun formatBytesPerSec(v: Long): String = if (v < 0) "—" else formatFileSize(v) + "/s"
+/**
+ * Throughput for the status card. Whole units, no space: this string has to fit a
+ * fifth of a 304dp row, and "27.1 KB/s" does not. Nobody reads a difference between
+ * 27 and 27.1 in a live rate, and each tier divides to at least 1, so no row shows
+ * "0KB/s".
+ */
+private fun formatBytesPerSec(v: Long): String = when {
+    v < 0 -> "—"
+    v < 1024L -> "${v}B/s"
+    v < 1024L * 1024L -> "${v / 1024}KB/s"
+    v < 1024L * 1024L * 1024L -> "${v / 1048576}MB/s"
+    else -> "${v / 1073741824}GB/s"
+}
 
 /** Top server status panel: CPU / memory / disk / latency / up-down throughput. */
 @Composable
@@ -539,7 +552,10 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?, unavailable
             else -> {
                 Row(
                     Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    // Fixed gaps, not SpaceBetween: five weighted columns already
+                    // fill the row, so the only thing SpaceBetween can distribute is
+                    // nothing - and the values then touch across the column borders.
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     val cpuFrac = if (stats.cpuPercent < 0) 0f else (stats.cpuPercent / 100.0).toFloat()
                     val memFrac = if (stats.memTotalBytes <= 0) 0f else stats.memUsedBytes.toFloat() / stats.memTotalBytes
@@ -547,8 +563,8 @@ private fun ServerStatusCard(stats: ServerStatsDto?, latency: Long?, unavailable
                         else ((stats.diskTotalBytes - stats.diskFreeBytes).toFloat() / stats.diskTotalBytes)
 
                     MetricChip("CPU", if (stats.cpuPercent < 0) "—" else "${stats.cpuPercent.toInt()}%", cpuFrac, Modifier.weight(1f))
-                    MetricChip(LocalStrings.current.metricMemory, if (stats.memTotalBytes <= 0) "—" else formatFileSize(stats.memUsedBytes), memFrac, Modifier.weight(1f))
-                    MetricChip(LocalStrings.current.metricDiskFree, if (stats.diskFreeBytes < 0) "—" else formatFileSize(stats.diskFreeBytes), diskUsedFrac, Modifier.weight(1f))
+                    MetricChip(LocalStrings.current.metricMemory, if (stats.memTotalBytes <= 0) "—" else formatFileSize(stats.memUsedBytes, compact = true), memFrac, Modifier.weight(1f))
+                    MetricChip(LocalStrings.current.metricDiskFree, if (stats.diskFreeBytes < 0) "—" else formatFileSize(stats.diskFreeBytes, compact = true), diskUsedFrac, Modifier.weight(1f))
                     MetricChip(LocalStrings.current.actionDownload, formatBytesPerSec(stats.netRxBytesPerSec), null, Modifier.weight(1f))
                     MetricChip(LocalStrings.current.actionUpload, formatBytesPerSec(stats.netTxBytesPerSec), null, Modifier.weight(1f))
                 }
@@ -565,11 +581,21 @@ private fun MetricChip(
     usageFraction: Float? = null,
     modifier: Modifier = Modifier,
 ) {
-    val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+    val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
     val progress = MaterialTheme.colorScheme.primary
     Column(modifier) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         if (usageFraction != null) {
             Spacer(Modifier.height(4.dp))
             Box(Modifier.size(20.dp)) {
