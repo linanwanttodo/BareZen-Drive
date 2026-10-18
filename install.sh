@@ -3,7 +3,7 @@
 #
 # One wizard, seven steps:
 #   1. language (script i18n)
-#   2. install type (web static / server / both)
+#   2. install type (web static / server)
 #   3. admin account + password (seeded on the server's first boot)
 #   4. service port
 #   5. domain (blank = http://<host-ip>:<port>)
@@ -60,7 +60,7 @@ BareZen-Drive interactive installer.
 
 One wizard, seven steps:
   1. language (script i18n)
-  2. install type (web static / server / both)
+  2. install type (web static / server)
   3. admin account + password (seeded on the server's first boot)
   4. service port
   5. domain (blank = http://<host-ip>:<port>)
@@ -86,6 +86,24 @@ warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*"; }
 env_get() {
   [ -f "$2" ] || { printf '%s' ""; return 0; }
   sed -n "s#^$1=##p" "$2" | tail -1
+}
+
+# install_type_of <answer> <existing> - the wizard answer mapped to INSTALL_TYPE.
+#
+# Only `web` is a different deployment: it ships a static bundle that talks to
+# somebody else's server. The old `server` / `both` split produced byte-identical
+# output (every branch in this script tests `= web` or `!= web`, and neither the
+# server nor the client reads the value), so it is gone.
+#
+# A blank answer keeps whatever the instance already runs. That is what makes a
+# non-interactive re-run safe: the previous default was `both`, so piping this
+# script without a terminal silently moved a web-only install onto a server.
+install_type_of() {
+  case "$1" in
+    1) printf 'web' ;;
+    2) printf 'server' ;;
+    *) if [ "$2" = "web" ]; then printf 'web'; else printf 'server'; fi ;;
+  esac
 }
 
 # env_set <key> <value> <file> - rewrite a key in place, append it when missing.
@@ -126,9 +144,8 @@ t() {
       lang)          echo "选择脚本语言 / Select language:" ;;
       lang_set)      echo "已切换为中文。" ;;
       type)          echo "选择安装类型:" ;;
-      type_web)      echo "  1) 仅 Web 静态端（连接远程服务器）" ;;
-      type_server)   echo "  2) 仅服务器（含内置 Web，本机数据库）" ;;
-      type_both)     echo "  3) 服务器 + Web（推荐，等同 2）" ;;
+      type_web)      echo "  1) 仅 Web 静态端（连一台远程服务器，本机不存数据）" ;;
+      type_server)   echo "  2) 服务端（含 Web 端与本机数据库，推荐）" ;;
       admin)         echo "设置管理员账号（首次启动自动创建，即实例所有者）" ;;
       admin_user)    echo "管理员用户名 (3-32 位字母/数字/下划线): " ;;
       admin_pass)    echo "管理员密码 (至少 8 位): " ;;
@@ -176,9 +193,8 @@ t() {
       lang)          echo "Select language / 选择脚本语言:" ;;
       lang_set)      echo "Language set to English." ;;
       type)          echo "Choose the install type:" ;;
-      type_web)      echo "  1) Web static only (connects to a remote server)" ;;
-      type_server)   echo "  2) Server only (embedded web, local database)" ;;
-      type_both)     echo "  3) Server + Web (recommended, same as 2)" ;;
+      type_web)      echo "  1) Web static only (talks to a remote server, stores nothing here)" ;;
+      type_server)   echo "  2) Server (includes the web client and a local database, recommended)" ;;
       admin)         echo "Admin account (created automatically on first boot; it owns the instance)" ;;
       admin_user)    echo "Admin username (3-32 letters/digits/underscore): " ;;
       admin_pass)    echo "Admin password (at least 8 characters): " ;;
@@ -306,13 +322,9 @@ echo
 
 # ---- step 2: install type ----
 echo "$(t type)"
-t type_web; t type_server; t type_both
+t type_web; t type_server
 ask "> " type_choice || type_choice=""
-case "${type_choice:-3}" in
-  1) INSTALL_TYPE="web" ;;
-  2) INSTALL_TYPE="server" ;;
-  *) INSTALL_TYPE="both" ;;
-esac
+INSTALL_TYPE="$(install_type_of "${type_choice:-}" "$(env_get INSTALL_TYPE "$PRE_ENV")")"
 echo
 
 # ---- step 3: admin account (server / both only) ----
