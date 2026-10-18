@@ -32,6 +32,18 @@ private const val REFCOUNT_BATCH = 500
  */
 private const val FOLDER_BATCH = 2000
 
+/**
+ * Rows per statement on the hard-delete paths.
+ *
+ * A trash purge or a version cascade hands these paths a list as long as the
+ * user's trash, and one `IN (...)` per list means one statement whose parameter
+ * count grows with the data: PostgreSQL refuses anything past 65 535 bind
+ * parameters outright, and long before that the parse/plan cost of the statement
+ * grows with it. The purge loops are bounded by this too, so no path holds a
+ * list of every row it is about to delete.
+ */
+private const val HARD_DELETE_BATCH = 1000
+
 object FileService {
     private const val MILLIS_PER_DAY = 24L * 3600 * 1000
 
@@ -337,11 +349,11 @@ object FileService {
      * **no key is ever queued** - this returns an id and nothing else, and calls
      * no refcount sweep. Folder rows have no blob at all.
      *
-     * The walk is one SELECT plus one INSERT per row. Parent ids are rewritten
-     * through the old -> new `mapped` table, and rows are written in the
-     * breadth-first order [FileTree.descendants] returns, because the
-     * self-referencing parent FK forbids a child row pointing at a parent that
-     * does not exist yet.
+     * The walk reads the subtree's shape in batches and writes it back in batched
+     * inserts. Parent ids are rewritten through the old -> new `mapped` table, and
+     * rows are written in the breadth-first order [FileTree.descendants] returns,
+     * because the self-referencing parent FK forbids a child row pointing at a
+     * parent that does not exist yet.
      */
     fun copySubtree(userId: UUID, sourceFolderId: UUID, destParentId: UUID?, destName: String): UUID {
         if (!nameOk(destName)) throw ApiException.badRequest("名称非法")
@@ -350,14 +362,15 @@ object FileService {
                 ?: throw ApiException.notFound("文件夹不存在")
             if (source[FoldersTable.user] != userId) throw ApiException.forbidden("无权访问该文件夹")
 
-            // One read of the subtree's shape. FileTree already builds the
-            // parent -> children index from a single query over the account's
-            // folders; this only needs the names the inserts have to write back.
+            // One read of the subtree's shape, batched so the id list cannot outgrow
+            // one statement. FileTree already builds the parent -> children index from
+            // a single query over the account's folders; this only needs the names the
+            // inserts have to write back.
             val below = FileTree.descendants(userId, sourceFolderId)
             val shape = HashMap<UUID, Pair<UUID?, String>>(below.size + 1)
             shape[sourceFolderId] = source[FoldersTable.parent] to source[FoldersTable.name]
-            if (below.isNotEmpty()) {
-                val op = SqlExpressionBuilder.run { FoldersTable.id inList below }
+            for (batch in below.chunked(FOLDER_BATCH)) {
+                val op = SqlExpressionBuilder.run { FoldersTable.id inList batch }
                 FoldersTable.select(FoldersTable.id, FoldersTable.parent, FoldersTable.name)
                     .where { op }
                     .forEach { shape[it[FoldersTable.id]] = it[FoldersTable.parent] to it[FoldersTable.name] }
@@ -369,46 +382,82 @@ object FileService {
             val inOrder = ArrayList<UUID>(below.size + 1)
             inOrder += sourceFolderId
             inOrder += below
+            // Breadth-first order, one statement per batch. The self-referencing
+            // parent FK forbids a child row whose parent has not been written yet,
+            // so the order is part of the contract, not an optimisation; what the
+            // batching removes is one round trip per folder and per file, which on
+            // a 3 000-row tree meant 3 000 trips on one of five pooled connections
+            // and a copy that failed as a whole if any single one of them broke.
+            val folderRows = ArrayList<Pair<UUID, String>>(below.size + 1)
+            val parentOf = HashMap<UUID, UUID?>(below.size + 1)
             for (oldId in inOrder) {
                 val old = shape[oldId] ?: continue
                 val newId = mapped.getOrPut(oldId) { UUID.randomUUID() }
-                FoldersTable.insert {
-                    it[FoldersTable.id] = newId
-                    it[FoldersTable.user] = userId
-                    it[FoldersTable.parent] = if (oldId == sourceFolderId) destParentId else mapped[old.first]
-                    it[FoldersTable.name] = if (oldId == sourceFolderId) destName else old.second
-                    it[FoldersTable.createdAt] = now
-                    it[FoldersTable.updatedAt] = now
-                }
+                parentOf[newId] = if (oldId == sourceFolderId) destParentId else mapped[old.first]
+                folderRows += newId to (if (oldId == sourceFolderId) destName else old.second)
+            }
+            FoldersTable.batchInsert(folderRows) { (newId, name) ->
+                this[FoldersTable.id] = newId
+                this[FoldersTable.user] = userId
+                this[FoldersTable.parent] = parentOf[newId]
+                this[FoldersTable.name] = name
+                this[FoldersTable.createdAt] = now
+                this[FoldersTable.updatedAt] = now
             }
 
-            val subtree = ArrayList<UUID>(inOrder)
-            val fileOp = SqlExpressionBuilder.run { FilesTable.folder inList subtree }
-            FilesTable.selectAll()
-                .where { fileOp and (FilesTable.user eq userId) and (FilesTable.deletedAt eq 0L) }
-                .forEach { row ->
-                    // A row whose folder is not in `mapped` must not be written
-                    // with a null parent, which would turn it into a root-level
-                    // orphan pointing at nothing.
-                    val target = row[FilesTable.folder]?.let { mapped[it] } ?: return@forEach
-                    FilesTable.insert {
-                        it[FilesTable.id] = UUID.randomUUID()
-                        it[FilesTable.user] = userId
-                        it[FilesTable.folder] = target
-                        it[FilesTable.name] = row[FilesTable.name]
-                        it[FilesTable.size] = row[FilesTable.size]
-                        it[FilesTable.mimeType] = row[FilesTable.mimeType]
-                        it[FilesTable.sha256] = row[FilesTable.sha256]
-                        it[FilesTable.storageKey] = row[FilesTable.storageKey]
-                        it[FilesTable.hasThumbnail] = row[FilesTable.hasThumbnail]
-                        it[FilesTable.takenAt] = row[FilesTable.takenAt]
-                        it[FilesTable.isFavorite] = row[FilesTable.isFavorite]
-                        it[FilesTable.archivedAt] = row[FilesTable.archivedAt]
-                        it[FilesTable.deletedAt] = 0L
-                        it[FilesTable.createdAt] = now
-                        it[FilesTable.updatedAt] = now
+            // The columns the copy writes back, flattened out of the row while the
+            // cursor is still open: a batch insert is built from a list that has to
+            // survive the query it came from.
+            data class Row(
+                val folder: UUID, val name: String, val size: Long, val mimeType: String?,
+                val sha256: String, val storageKey: String, val hasThumbnail: Boolean,
+                val takenAt: Long?, val isFavorite: Boolean, val archivedAt: Long,
+            )
+
+            val subtreeIds = ArrayList<UUID>(inOrder)
+            val sourceFiles = ArrayList<Row>(subtreeIds.size + 1)
+            for (batch in subtreeIds.chunked(FOLDER_BATCH)) {
+                val subtreeOp = SqlExpressionBuilder.run { FilesTable.folder inList batch }
+                // A row whose folder is not in `mapped` must not be written with a
+                // null parent, which would turn it into a root-level orphan pointing
+                // at nothing. Exposed's batch insert cannot skip one element from
+                // inside its body - the row joins the batch either way - so those rows
+                // are dropped while the list is still being built.
+                FilesTable.select(
+                    FilesTable.folder, FilesTable.name, FilesTable.size, FilesTable.mimeType,
+                    FilesTable.sha256, FilesTable.storageKey, FilesTable.hasThumbnail,
+                    FilesTable.takenAt, FilesTable.isFavorite, FilesTable.archivedAt,
+                ).where { subtreeOp and (FilesTable.user eq userId) and (FilesTable.deletedAt eq 0L) }
+                    .forEach { row ->
+                        val target = row[FilesTable.folder]?.let { mapped[it] } ?: return@forEach
+                        sourceFiles += Row(
+                            folder = target, name = row[FilesTable.name], size = row[FilesTable.size],
+                            mimeType = row[FilesTable.mimeType], sha256 = row[FilesTable.sha256],
+                            storageKey = row[FilesTable.storageKey], hasThumbnail = row[FilesTable.hasThumbnail],
+                            takenAt = row[FilesTable.takenAt], isFavorite = row[FilesTable.isFavorite],
+                            archivedAt = row[FilesTable.archivedAt],
+                        )
                     }
+            }
+            if (sourceFiles.isNotEmpty()) {
+                FilesTable.batchInsert(sourceFiles) { row ->
+                    this[FilesTable.id] = UUID.randomUUID()
+                    this[FilesTable.user] = userId
+                    this[FilesTable.folder] = row.folder
+                    this[FilesTable.name] = row.name
+                    this[FilesTable.size] = row.size
+                    this[FilesTable.mimeType] = row.mimeType
+                    this[FilesTable.sha256] = row.sha256
+                    this[FilesTable.storageKey] = row.storageKey
+                    this[FilesTable.hasThumbnail] = row.hasThumbnail
+                    this[FilesTable.takenAt] = row.takenAt
+                    this[FilesTable.isFavorite] = row.isFavorite
+                    this[FilesTable.archivedAt] = row.archivedAt
+                    this[FilesTable.deletedAt] = 0L
+                    this[FilesTable.createdAt] = now
+                    this[FilesTable.updatedAt] = now
                 }
+            }
             mapped.getValue(sourceFolderId)
         }
     }
@@ -431,30 +480,38 @@ object FileService {
         val levels = subtreeLevels(userId, id)
         val all = levels.flatten()
         // ALL sessions (any status) targeting the subtree reference folders.id by FK;
-        // their rows must be removed here or folder row deletion fails. One query
-        // for the ids, then two batched deletes - chunks first, sessions second.
-        val doomedSessionIds = UploadSessionsTable.selectAll()
-            .where { UploadSessionsTable.folder inList all }
-            .map { it[UploadSessionsTable.id] }
-        if (doomedSessionIds.isNotEmpty()) {
-            val chunksOp = SqlExpressionBuilder.run { UploadChunksTable.session inList doomedSessionIds }
+        // their rows must be removed here or folder row deletion fails. Batched the
+        // same way the folder deletes below are: the subtree is only bounded by what
+        // a user can accumulate, and an `IN (...)` that wide is a statement the
+        // server refuses rather than one it runs slowly.
+        val doomedSessionIds = ArrayList<UUID>()
+        for (batch in all.chunked(FOLDER_BATCH)) {
+            val op = SqlExpressionBuilder.run { UploadSessionsTable.folder inList batch }
+            UploadSessionsTable.select(UploadSessionsTable.id).where { op }
+                .forEach { doomedSessionIds += it[UploadSessionsTable.id] }
+        }
+        for (batch in doomedSessionIds.chunked(FOLDER_BATCH)) {
+            val chunksOp = SqlExpressionBuilder.run { UploadChunksTable.session inList batch }
             UploadChunksTable.deleteWhere { chunksOp }
-            val sessionsOp = SqlExpressionBuilder.run { UploadSessionsTable.id inList doomedSessionIds }
+            val sessionsOp = SqlExpressionBuilder.run { UploadSessionsTable.id inList batch }
             UploadSessionsTable.deleteWhere { sessionsOp }
         }
-        // One query yields both the live blob keys and the file ids; the version
+        // One pass yields both the live blob keys and the file ids; the version
         // snapshots of those files must leave before the file rows (FK) and count
         // towards the same refcount sweep as the live keys.
-        val doomedFiles = FilesTable.selectAll()
-            .where { FilesTable.folder inList all }
-            .map { it[FilesTable.id] to it[FilesTable.storageKey] }
+        val doomedFiles = ArrayList<Pair<UUID, String>>()
+        for (batch in all.chunked(FOLDER_BATCH)) {
+            val op = SqlExpressionBuilder.run { FilesTable.folder inList batch }
+            FilesTable.select(FilesTable.id, FilesTable.storageKey).where { op }
+                .forEach { doomedFiles += it[FilesTable.id] to it[FilesTable.storageKey] }
+        }
         val keys = doomedFiles.mapTo(mutableListOf()) { it.second }
-        val doomedFileIds = doomedFiles.map { it.first }
-        if (doomedFileIds.isNotEmpty()) {
-            val versionOp = SqlExpressionBuilder.run { FileVersionsTable.file inList doomedFileIds }
-            FileVersionsTable.selectAll().where { versionOp }.forEach { keys.add(it[FileVersionsTable.storageKey]) }
+        for (batch in doomedFiles.map { it.first }.chunked(FOLDER_BATCH)) {
+            val versionOp = SqlExpressionBuilder.run { FileVersionsTable.file inList batch }
+            FileVersionsTable.select(FileVersionsTable.storageKey).where { versionOp }
+                .forEach { keys.add(it[FileVersionsTable.storageKey]) }
             FileVersionsTable.deleteWhere { versionOp }
-            val filesOp = SqlExpressionBuilder.run { FilesTable.id inList doomedFileIds }
+            val filesOp = SqlExpressionBuilder.run { FilesTable.id inList batch }
             FilesTable.deleteWhere { filesOp }
         }
         // Deepest level first: the self-referencing FK (parent_id) forbids
@@ -650,27 +707,54 @@ object FileService {
         hardDelete(listOf(id to row[FilesTable.storageKey]))
     }
 
-    /** Empties the whole trash; returns blob keys that lost their last reference. */
-    fun emptyTrash(userId: UUID): List<String> = transaction(DatabaseFactory.db) {
-        hardDelete(
-            FilesTable.selectAll()
+    /**
+     * Empties the whole trash; returns blob keys that lost their last reference.
+     *
+     * Drained [batch] rows at a time inside one transaction: the rows a round
+     * hard-deletes are gone before the next round reads, so the loop terminates
+     * without ever holding the account's whole trash in memory or handing one
+     * statement an `IN (...)` as wide as it is.
+     */
+    fun emptyTrash(userId: UUID, batch: Int = HARD_DELETE_BATCH): List<String> = transaction(DatabaseFactory.db) {
+        val keys = ArrayList<String>()
+        while (true) {
+            val rows = FilesTable.select(FilesTable.id, FilesTable.storageKey)
                 .where { (FilesTable.user eq userId) and (FilesTable.deletedAt greater 0L) }
+                .limit(batch)
                 .map { it[FilesTable.id] to it[FilesTable.storageKey] }
-        )
+            if (rows.isEmpty()) break
+            keys += hardDelete(rows, batch)
+            if (rows.size < batch) break
+        }
+        keys
     }
 
     /**
      * Purges trash rows older than [retentionDays] and returns the blob keys
      * whose last reference went away, for the caller to delete physically.
+     *
+     * The same drain loop as [emptyTrash], on every account's expired rows:
+     * this is the path the 6-hourly cleanup job runs, so an unbounded read here
+     * is a spike that arrives on its own, with nobody asking for it.
      */
-    fun purgeExpiredTrash(retentionDays: Long = TRASH_RETENTION_DAYS, now: Long = System.currentTimeMillis()): List<String> {
+    fun purgeExpiredTrash(
+        retentionDays: Long = TRASH_RETENTION_DAYS,
+        now: Long = System.currentTimeMillis(),
+        batch: Int = HARD_DELETE_BATCH,
+    ): List<String> {
         val cutoff = now - retentionDays * MILLIS_PER_DAY
         return transaction(DatabaseFactory.db) {
-            hardDelete(
-                FilesTable.selectAll()
+            val keys = ArrayList<String>()
+            while (true) {
+                val rows = FilesTable.select(FilesTable.id, FilesTable.storageKey)
                     .where { (FilesTable.deletedAt greater 0L) and (FilesTable.deletedAt lessEq cutoff) }
+                    .limit(batch)
                     .map { it[FilesTable.id] to it[FilesTable.storageKey] }
-            )
+                if (rows.isEmpty()) break
+                keys += hardDelete(rows, batch)
+                if (rows.size < batch) break
+            }
+            keys
         }
     }
 
@@ -741,19 +825,25 @@ object FileService {
         return keys.filter { it !in stillReferenced }
     }
 
-    /** One batched DELETE for [rows], then the refcount sweep that decides which
-     *  blobs are now unreferenced. An empty list costs no query at all. */
-    private fun hardDelete(rows: List<Pair<UUID, String>>): List<String> {
+    /** [batch] hard-deletes per statement, then the refcount sweep that decides
+     *  which blobs are now unreferenced. An empty list costs no query at all. */
+    internal fun hardDelete(rows: List<Pair<UUID, String>>, batch: Int = HARD_DELETE_BATCH): List<String> {
         if (rows.isEmpty()) return emptyList()
-        // Built outside the deleteWhere lambda: that scope is the table, which
-        // does not expose the full operator set (see the note in UploadService).
-        val fileIds = rows.map { it.first }
-        val versionOp = SqlExpressionBuilder.run { FileVersionsTable.file inList fileIds }
-        val versionKeys = FileVersionsTable.selectAll().where { versionOp }.map { it[FileVersionsTable.storageKey] }
-        FileVersionsTable.deleteWhere { versionOp }
-        val op = SqlExpressionBuilder.run { FilesTable.id inList fileIds }
-        FilesTable.deleteWhere { op }
-        return orphanBlobKeys(rows.map { it.second } + versionKeys)
+        val keys = ArrayList<String>(rows.size)
+        for (chunk in rows.chunked(batch)) {
+            // Built outside the deleteWhere lambda: that scope is the table, which
+            // does not expose the full operator set (see the note in UploadService).
+            val fileIds = chunk.map { it.first }
+            val versionOp = SqlExpressionBuilder.run { FileVersionsTable.file inList fileIds }
+            val versionKeys = FileVersionsTable.select(FileVersionsTable.storageKey).where { versionOp }
+                .map { it[FileVersionsTable.storageKey] }
+            FileVersionsTable.deleteWhere { versionOp }
+            val op = SqlExpressionBuilder.run { FilesTable.id inList fileIds }
+            FilesTable.deleteWhere { op }
+            keys += chunk.map { it.second }
+            keys += versionKeys
+        }
+        return orphanBlobKeys(keys)
     }
 }
 
