@@ -213,15 +213,35 @@ object SyncDb {
     private const val DUE_STATE =
         "(${TABLE}.state=? OR (${TABLE}.state=? AND ${TABLE}.attempts < ?))"
 
-    /** Rows ready to upload this pass: PENDING, or FAILED still under the retry
-     *  ceiling, in albums the user did not exclude. Photos come first, then by
-     *  oldest modification time. */
-    fun due(maxAttempts: Int = SyncPolicy.MAX_ATTEMPTS): List<SyncItem> =
-        queryList(
-            "SELECT * FROM $TABLE WHERE $NOT_EXCLUDED AND $DUE_STATE " +
-                "ORDER BY ${SyncPolicy.dueOrder()}",
-            arrayOf(SyncState.PENDING.key, SyncState.FAILED.key, maxAttempts.toString()),
+    /**
+     * One page of rows ready to upload: PENDING, or FAILED still under the retry
+     * ceiling, in albums the user did not exclude, in [SyncPolicy.dueOrder] and
+     * strictly after [after].
+     *
+     * Paged because a pass used to read the whole due set at once: a first backup
+     * of 50k photos meant tens of megabytes of rows held for the hours a pass runs,
+     * before a single byte had been uploaded.
+     */
+    fun duePage(
+        after: SyncPolicy.DueCursor?,
+        limit: Int,
+        maxAttempts: Int = SyncPolicy.MAX_ATTEMPTS,
+    ): List<SyncItem> {
+        val args = ArrayList<String>(8)
+        args.add(SyncState.PENDING.key)
+        args.add(SyncState.FAILED.key)
+        args.add(maxAttempts.toString())
+        val where = StringBuilder("$NOT_EXCLUDED AND $DUE_STATE")
+        if (after != null) {
+            where.append(" AND ").append(SyncPolicy.dueKeysetAfter())
+            args.addAll(SyncPolicy.dueKeysetArgs(after))
+        }
+        args.add(limit.toString())
+        return queryList(
+            "SELECT * FROM $TABLE WHERE $where ORDER BY ${SyncPolicy.dueOrder()} LIMIT ?",
+            args.toTypedArray(),
         )
+    }
 
     /** Rows the next pass would actually try, for the pending counter on the
      *  status card. Excluded albums are not counted: reporting "42 to back up"

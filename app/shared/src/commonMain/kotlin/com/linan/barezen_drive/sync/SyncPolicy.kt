@@ -150,6 +150,31 @@ object SyncPolicy {
     }
 
     /** Due rows before retries: photos first, then oldest modification time, so
-     *  a freshly taken photo lands near the front of the next pass. */
-    fun dueOrder(): String = "is_photo DESC, date_modified ASC"
+     *  a freshly taken photo lands near the front of the next pass. `uri` breaks
+     *  ties - it is the primary key, so the order is total and paging it cannot
+     *  repeat or skip a row. */
+    fun dueOrder(): String = "is_photo DESC, date_modified ASC, uri ASC"
+
+    /** Where a page of due rows ended: the last row it returned. */
+    data class DueCursor(val isPhoto: Boolean, val dateModified: Long, val uri: String)
+
+    /**
+     * Selection fragment matching every due row strictly after a [DueCursor] in
+     * [dueOrder].
+     *
+     * SQLite cannot compare a tuple whose members sort in opposite directions, so
+     * the three columns are walked one at a time: everything below the cursor's
+     * photo flag (photos sort first, so "below" means fewer), then the same flag
+     * with a later modification time, then the uri tie-break. Five placeholders,
+     * in the order [dueKeysetArgs] fills them.
+     */
+    fun dueKeysetAfter(): String =
+        "(is_photo < ?) OR (is_photo = ? AND (date_modified > ? OR (date_modified = ? AND uri > ?)))"
+
+    /** The cursor as the five arguments [dueKeysetAfter] asks for. */
+    fun dueKeysetArgs(cursor: DueCursor): List<String> {
+        val flag = if (cursor.isPhoto) "1" else "0"
+        val modified = cursor.dateModified.toString()
+        return listOf(flag, flag, modified, modified, cursor.uri)
+    }
 }
