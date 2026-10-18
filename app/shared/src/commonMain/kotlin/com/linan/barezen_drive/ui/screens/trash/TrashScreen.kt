@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -217,8 +217,12 @@ fun TrashScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(12.dp),
             ) {
-                items(files, key = { it.id }) { file ->
-                    val index = files.indexOfFirst { f -> f.id == file.id }.coerceAtLeast(0)
+                // Indexed, because the card needs the row's position to open the
+                // pager at the right page: `indexOfFirst` inside the item lambda
+                // re-scanned the whole list for every row on every rebind, so one
+                // restore over a five-thousand-row trash cost tens of millions of
+                // comparisons to repaint a screen that already knew the index.
+                itemsIndexed(files, key = { _, f -> f.id }) { index, file ->
                     TrashCard(
                         file = file,
                         thumbs = thumbs,
