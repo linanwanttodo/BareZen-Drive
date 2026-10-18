@@ -6,6 +6,11 @@ build/
 **/build/
 data/
 docs/
+# Local wasm build output must not ride into the image: the web stage is the only
+# source for this directory (16 MB of stale .wasm files a `--build` would merge in
+# otherwise). The committed entry page stays in the context.
+server/src/main/resources/web/*
+!server/src/main/resources/web/index.html
 *.md
 !README.md
 *.apk
