@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -297,10 +296,10 @@ fun LoginScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp),
-                        // 8dp per the global radius scale, not M3's 20dp
-                        // pill default: this is the page's primary action and
-                        // should not read as a chip.
-                        shape = RoundedCornerShape(8.dp),
+                        // The scale's control radius, not M3's 20dp pill
+                        // default: this is the page's primary action and must
+                        // not read as a chip.
+                        shape = MaterialTheme.shapes.small,
                     ) {
                         Text(
                             when {

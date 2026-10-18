@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -180,7 +179,7 @@ fun WebdavTokensScreen(
                 ) {
                     Button(
                         onClick = { creating = true },
-                        shape = RoundedCornerShape(8.dp),
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.heightIn(min = 48.dp),
                     ) {
                         Text(LocalStrings.current.webdavNewMount, style = MaterialTheme.typography.labelLarge)
@@ -330,7 +329,7 @@ private fun WebdavTokenRow(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.tertiary,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(MaterialTheme.shapes.small)
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
@@ -394,7 +393,7 @@ private fun CreateTokenDialog(
             Button(
                 enabled = !busy && label.isNotBlank(),
                 onClick = { onCreate(label.trim(), readOnly) },
-                shape = RoundedCornerShape(8.dp),
+                shape = MaterialTheme.shapes.small,
             ) {
                 Text(
                     if (busy) I18n.strings.creating else LocalStrings.current.webdavCreateMount,
@@ -453,7 +452,7 @@ private fun OneTimePlaintextDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onAcknowledge, shape = RoundedCornerShape(8.dp)) {
+            Button(onClick = onAcknowledge, shape = MaterialTheme.shapes.small) {
                 Text(LocalStrings.current.webdavTokenSavedAck, style = MaterialTheme.typography.labelLarge)
             }
         },

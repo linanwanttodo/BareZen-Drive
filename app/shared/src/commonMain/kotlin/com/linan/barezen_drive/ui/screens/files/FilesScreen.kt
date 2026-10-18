@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
@@ -691,7 +690,7 @@ fun FilesScreen(
                             MaterialTheme.colorScheme.primary
                         },
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(MaterialTheme.shapes.extraSmall)
                             .clickable { onJumpTo(-1) }
                             .padding(horizontal = 6.dp, vertical = 4.dp),
                     )
@@ -728,7 +727,7 @@ fun FilesScreen(
                                 // they no longer fit, and never pads a short
                                 // path out to full width.
                                 .weight(1f, fill = false)
-                                .clip(RoundedCornerShape(6.dp))
+                                .clip(MaterialTheme.shapes.extraSmall)
                                 .clickable { onJumpTo(i) }
                                 .padding(horizontal = 6.dp, vertical = 4.dp),
                         )
