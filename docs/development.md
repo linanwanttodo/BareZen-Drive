@@ -44,22 +44,28 @@ BASE=http://<服务器>:8080 USER_NAME=e2etest PASS=e2epassword123 python3 scrip
 
 ### 持续集成
 
-`.github/workflows/ci.yml` 在推送到 `master` 与向 `master` 发 PR 时运行：`test` 门（服务端 /
-core / 共享模块测试 + wasm 编译门）通过后并行执行 `android`（debug+release APK）、`web`（wasm
-发行产物）、`desktop` 与 `ios` 两个预留任务。`desktop` 在 `:app:desktopApp` 启用后构建 JVM 发行
-版，`ios` 在 `app/shared/build.gradle.kts` 启用 Apple target 后在 macOS runner 上构建 Kotlin
-framework 与模拟器应用；两者在启用前检测不到对应任务时干净跳过。镜像发布见
-`.github/workflows/docker-publish.yml`。
+`.github/workflows/pipeline.yml` 是唯一的流水线文件（PR 与推送到 `master` 都跑它）：`version`
+先定版本，`test` 门（服务端 / core / 共享模块测试 + wasm 编译门）之后是 `webdav`（真实 HTTP 上的
+WebDAV 验收，它是门不是报告），再并行 `web`（wasm 发行产物）、`android`（签名 release APK）、
+`desktop` 与 `ios` 两个预留任务；`server` 打服务端发行包，`docker` 用预编译产物构建 amd64+arm64
+镜像并推 `:latest`/`:edge`（它 `needs` 里含 `webdav`，未过这道门就不推标签），`manifest` 汇总产物
+并写 `update.json`，`release` 只在打了 `v*` 标签或手动指定版本时创建 GitHub Release。镜像名固定为
+小写 `ghcr.io/<owner>/barezen-drive`。每个 job 都有 `timeout-minutes` 上限。
 
 ### 一键部署（生产）
 
 ```bash
 cp .env.example .env    # 填写 JWT_SECRET（>=32 字节）与 POSTGRES_PASSWORD
 docker compose up -d --build
-curl -s localhost:8080/health
+curl -s localhost:8080/readyz     # {"status":"ready","db":"ok"}；库连不上时是 503
 ```
 
-构建说明：Dockerfile 三段构建，第一段编译 Web 客户端 wasm 产物并拷入 server 镜像。容器内 gradle 需要联网下载依赖（首次约 15 分钟）；gradle:9.7.1-jdk21 镜像已补装 libatomic1（Node.js 依赖）。
+构建说明：Dockerfile 三段构建，第一段编译 Web 客户端 wasm 产物并拷入 server 镜像；第二段先 `rm -rf`
+服务端资源里的 web 目录再灌入本次产物，所以本地残留的旧哈希文件不会跟着进镜像。容器内 gradle 需要联网
+下载依赖（首次约 15 分钟）；gradle:9.7.1-jdk21 镜像已补装 libatomic1（Node.js 依赖）。
+
+镜像里的 JVM 不再写死 `-Xmx`：堆按容器内存上限的 50% 计算（compose 给 server 容器 `mem_limit: 768m`），
+直接缓冲区另设 128m 上限。要改成别的比例或更大堆，给容器传 `JAVA_OPTS`，它会覆盖 `JAVA_TOOL_OPTIONS`。
 
 ### 对象存储后端（S3 兼容）
 

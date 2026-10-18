@@ -28,7 +28,9 @@ The script:
 
 After installation:
 
-- Open `http://<server address>:8080` in a browser for the Web client.
+- Open `http://<server address>:8080` in a browser for the Web client. An install that chose
+  "domain + HTTPS" opens at `https://<domain>` instead: that setup binds `SERVER_PORT` to
+  `127.0.0.1` only, so the cleartext port stays shut and WebDAV never runs without TLS.
 - **First thing to do: register your account, then close "Open registration"
   in Settings -> Server.** A private drive should not let everyone sign up;
   once closed, the register tab disappears from the login screen and the API
@@ -49,7 +51,7 @@ docker compose down                           # stop (data is kept)
 | `JWT_SECRET` | yes | JWT signing secret, at least 32 bytes. `openssl rand -base64 48`; the script can generate it |
 | `POSTGRES_PASSWORD` | yes | PostgreSQL password; the script can generate it |
 | `POSTGRES_DB` / `POSTGRES_USER` | no | Defaults `barezen` / `barezen` |
-| `SERVER_PORT` | no | Public port, default 8080 |
+| `SERVER_PORT` | no | Public port, default 8080; an HTTPS install binds it to 127.0.0.1 and Caddy serves 443 |
 | `STORAGE_DIR` | no | In-container file directory; fixed to `/data/storage` in compose, bind-mounted to `./data/storage` |
 | `MAX_FILE_SIZE` | no | Per-file limit, default 10 GiB |
 | `UPDATE_MANIFEST_URL` | no | Update manifest URL; defaults to `update.json` on the repository's latest release |
@@ -82,6 +84,19 @@ docker compose exec -T db pg_dump -U barezen barezen | gzip > barezen-$(date -u 
 
 The role and database name come from `POSTGRES_USER` / `POSTGRES_DB` in `.env`, both `barezen` by
 default. Before an upgrade `install.sh` runs this same dump for you into `<install-dir>/backups/`.
+
+If the `server` does not come up after an upgrade (schema DDL throws, and `restart: unless-stopped`
+keeps restarting it), work in this order: read the failing statement with
+`docker compose logs --tail 100 server`, then move the image tag back to the version you ran before.
+Schema evolution only adds columns, never rewrites them, so an older build reads the newer database
+and the rollback touches no data:
+
+```bash
+bash install.sh --dir <install-dir> --version <older-version>   # answers left blank keep what .env holds
+```
+
+To go back to the data state itself, restore the dump from `<install-dir>/backups/` with the steps
+below.
 
 Archive the storage directory with `tar`; the server does not need to stop (an upload in progress sits
 in `tmp/` and can be discarded on restore, finished files are content-addressed):
