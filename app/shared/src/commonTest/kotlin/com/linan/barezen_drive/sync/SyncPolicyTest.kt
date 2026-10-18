@@ -266,4 +266,40 @@ class SyncPolicyTest {
         // file metadata is identical, so only the state can report the write.
         assertTrue(SyncPolicy.rescanRewritesRow(storedRow, storedRow, stateMoves = true))
     }
+
+    // ---- due paging ----
+
+    @Test
+    fun dueOrderIsTotalSoAPageBoundaryCannotDrift() {
+        // uri is the primary key. Without it in the order, two rows sharing a
+        // photo flag and modification time would sit on either side of a page
+        // boundary at random, and the cursor could walk straight past one of them.
+        assertEquals(listOf("is_photo DESC", "date_modified ASC", "uri ASC"), columnsOf(SyncPolicy.dueOrder()))
+    }
+
+    @Test
+    fun keysetConsumesTheColumnsItPagesInSameOrder() {
+        val cursor = SyncPolicy.DueCursor(isPhoto = true, dateModified = 1_700_000_000L, uri = "content://m/1")
+        val args = SyncPolicy.dueKeysetArgs(cursor)
+        assertEquals(
+            Regex("\\?").findAll(SyncPolicy.dueKeysetAfter()).count(),
+            args.size,
+            "one argument per placeholder, or the SQL binds the wrong column",
+        )
+        // The photo flag bounds twice ("fewer than", then "equal to"), the
+        // modification time twice, then the uri - the same three columns the
+        // ORDER BY walks, in the same order.
+        assertEquals(listOf("1", "1", "1700000000", "1700000000", "content://m/1"), args)
+        assertEquals(SyncPolicy.dueKeysetArgs(cursor), args, "and the walk is reproducible for one cursor")
+    }
+
+    @Test
+    fun aVideoCursorLeavesEveryPhotoBehindIt() {
+        // Photos sort first (is_photo DESC), so the page after a photo cursor may
+        // only contain videos; the flag travels as the 0/1 the column stores.
+        val args = SyncPolicy.dueKeysetArgs(SyncPolicy.DueCursor(isPhoto = false, dateModified = 7L, uri = "v"))
+        assertEquals(listOf("0", "0", "7", "7", "v"), args)
+    }
+
+    private fun columnsOf(order: String): List<String> = order.split(",").map { it.trim() }
 }

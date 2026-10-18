@@ -17,6 +17,8 @@ import com.linan.barezen_drive.platform.legacyDeviceName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.cancellation.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -37,10 +39,11 @@ data class SyncPass(val done: Int, val failed: Int, val stoppedEarly: Boolean)
  *
  * Photos are tried before videos (the queue orders them); the caller decides how
  * many files upload at once ([lanes] - two on Wi-Fi, one on mobile data) and the
- * work is handed out through a shared cursor. Metered-data control lives in the
- * WorkManager constraints (the periodic job is UNMETERED when the user picked
- * Wi-Fi-only), so a pass that is already running can go full speed. Each lane owns
- * its own [UploadManager] because that class keeps single-slot progress state.
+ * work is handed out by a paged feed every lane reads from. Metered-data control
+ * lives in the WorkManager constraints (the periodic job is UNMETERED when the
+ * user picked Wi-Fi-only), so a pass that is already running can go full speed.
+ * Each lane owns its own [UploadManager] because that class keeps single-slot
+ * progress state.
  *
  * [SyncPolicy.NETWORK_FAILURE_LIMIT] consecutive *network* errors stop the pass
  * early; the items never reached stay PENDING, so a lost connection during a big
@@ -59,26 +62,24 @@ object SyncUploadQueue {
         val deviceFolder = AlbumFolder.resolve(repo, deviceName(), legacyDeviceName())
             ?: return@coroutineScope SyncPass(0, 0, stoppedEarly = true)
 
-        // One list, one moving cursor. The earlier Channel-based version pushed
-        // the queue in and then drained it straight back out just to learn the
-        // total, holding two copies of every row; the total is the list size, and
-        // SyncDb.due() has already applied the excluded-album filter.
-        val pending = SyncDb.due()
-        val total = pending.size
+        // The rows come from [DueFeed] a page at a time, so the total the card and
+        // the notification show is a COUNT rather than the size of a materialised
+        // list. Excluded albums are already filtered out of both queries.
+        val total = SyncDb.dueCount()
         if (total == 0) return@coroutineScope SyncPass(0, 0, stoppedEarly = false)
-        val cursor = AtomicInteger(0)
+        val feed = DueFeed(DUE_PAGE_SIZE)
 
         val doneCount = AtomicInteger(0)
         val failCount = AtomicInteger(0)
         val skippedCount = AtomicInteger(0)
         val consecutiveNet = AtomicInteger(0)
         val stop = AtomicBoolean(false)
+        // Resolved so far. Skipped rows count: they are answered, and leaving them
+        // out would park the bar short of the end.
+        val processed = { doneCount.get() + failCount.get() + skippedCount.get() }
 
         val batchTitle = I18n.strings.syncBatchTitle
         val batchId = TransferCenter.start(batchTitle, TransferKind.SYNC, total.toLong())
-        val childIds = pending.associate {
-            it.uri to TransferCenter.queueFile(batchId, it.name, it.size, mediaHint = isMediaName(it.name))
-        }
 
         repeat(lanes.coerceAtLeast(1)) {
             launch(Dispatchers.IO) {
@@ -93,35 +94,32 @@ object SyncUploadQueue {
                 // about, and changing it buys nothing but churn.
                 val uploader = UploadManager(repo)
                 while (!stop.get()) {
-                    // claim-then-check: getAndIncrement can hand out an index past
-                    // the end, so the bound is tested after claiming.
-                    val index = cursor.getAndIncrement()
-                    if (index >= total) break
-                    val item = pending[index]
+                    val item = feed.next() ?: break
                     if (TransferCenter.isCancelled(batchId)) {
                         stop.set(true)
                         break
                     }
-                    // The queue was snapshotted when the pass started, but a pass
-                    // can run for hours. An album excluded since then - the
-                    // first-run review is exactly when that happens, and the user
-                    // is unchecking a multi-gigabyte cache album while the very
-                    // first pass is already draining - must not be uploaded from
-                    // a stale snapshot, so every item is re-checked against the
-                    // live exclusion set. One primary-key lookup per item is
-                    // noise next to a 20 MiB upload. The row stays PENDING so
-                    // re-including the album can pick it up again (that is what
-                    // re-drives the queue); only the transfer-centre row is
-                    // resolved here.
+                    // The queue is walked live, but a pass can run for hours and
+                    // an album excluded since a row was read must not be uploaded
+                    // from a stale page. The first-run review is exactly when that
+                    // happens: the user is unchecking a multi-gigabyte cache album
+                    // while the very first pass is already draining. One
+                    // primary-key lookup per item is noise next to a 20 MiB
+                    // upload. The row stays PENDING so re-including the album can
+                    // pick it up again (that is what re-drives the queue).
                     if (SyncDb.isBucketExcluded(item.bucket)) {
                         skippedCount.incrementAndGet()
-                        childIds[item.uri]?.let { TransferCenter.done(it) }
-                        onProgress(doneCount.get() + failCount.get() + skippedCount.get(), total)
+                        onProgress(processed(), maxOf(total, processed()))
                         continue
                     }
+                    // A transfer row per file the pass actually reaches, created as
+                    // it is claimed: pushing one for every queued photo used to
+                    // cost 50k list copies before a single byte had been read.
+                    val childId = TransferCenter.queueFile(
+                        batchId, item.name, item.size, mediaHint = isMediaName(item.name),
+                    )
                     SyncDb.markUploading(item.uri)
-                    val childId = childIds[item.uri]
-                    childId?.let { TransferCenter.fileStart(it) }
+                    TransferCenter.fileStart(childId)
                     val target = item.bucket?.takeIf { it.isNotBlank() }
                         ?.let { AlbumFolder.resolveCategory(repo, deviceFolder, it) }
                         ?: deviceFolder
@@ -156,7 +154,7 @@ object SyncUploadQueue {
                                     SyncDb.markDone(item.uri, dto.id, cachedHash ?: dto.sha256)
                                     consecutiveNet.set(0)
                                     doneCount.incrementAndGet()
-                                    childId?.let { TransferCenter.done(it, dto.id) }
+                                    TransferCenter.done(childId, dto.id)
                                 },
                                 onFailure = { err ->
                                     recordFailure(item, err, cachedHash, childId, consecutiveNet, failCount, stop)
@@ -167,13 +165,11 @@ object SyncUploadQueue {
                             recordFailure(item, err, cachedHash, childId, consecutiveNet, failCount, stop)
                         },
                     )
-                    // Skipped rows count toward progress: they are resolved, and
-                    // leaving them out would park the bar short of the end.
-                    onProgress(doneCount.get() + failCount.get() + skippedCount.get(), total)
+                    onProgress(processed(), maxOf(total, processed()))
                 }
             }
         }
-        // Lanes exit when the cursor runs out or stop flips; coroutineScope joins.
+        // Lanes exit when the feed runs dry or stop flips; coroutineScope joins.
         val done = doneCount.get()
         val failed = failCount.get()
         if (stop.get()) {
@@ -202,6 +198,44 @@ object SyncUploadQueue {
             if (SyncPolicy.shouldStopPass(consecutiveNet.incrementAndGet())) stop.set(true)
         } else {
             consecutiveNet.set(0)
+        }
+    }
+}
+
+/** Rows read per queue query. Small enough to hold in memory while a pass runs
+ *  for hours, large enough that a 50k-photo queue costs 200 reads, not 200 rounds
+ *  of per-row work. */
+private const val DUE_PAGE_SIZE = 256
+
+/**
+ * Feeds one pass the due rows, a page at a time, from a walk every lane shares.
+ *
+ * The pass used to materialise the whole pending library before uploading the
+ * first file: tens of megabytes of rows held for the hours a first backup takes.
+ * Pages are walked with the queue's own keyset cursor, not OFFSET, because rows
+ * leave the due set as they are uploaded - with OFFSET that would shift the
+ * window and silently skip the row that took the freed slot.
+ */
+private class DueFeed(private val pageSize: Int) {
+    private val lock = Mutex()
+    private var page: List<SyncItem> = emptyList()
+    private var index = 0
+    private var after: SyncPolicy.DueCursor? = null
+    private var exhausted = false
+
+    /** The next row to try, or null once the queue is drained. */
+    suspend fun next(): SyncItem? = lock.withLock {
+        while (!exhausted && index >= page.size) {
+            page = SyncDb.duePage(after, pageSize)
+            index = 0
+            if (page.isEmpty()) exhausted = true
+        }
+        if (index >= page.size) {
+            null
+        } else {
+            val item = page[index++]
+            after = SyncPolicy.DueCursor(item.isPhoto, item.dateModified, item.uri)
+            item
         }
     }
 }
