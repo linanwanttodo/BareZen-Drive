@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.MediaMetadataRetriever
+import android.os.Build
 import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,9 +12,9 @@ import java.io.ByteArrayOutputStream
 
 /**
  * Android cover generation. Decodes images downscaled via inSampleSize (a
- * 50MP photo never materializes as a full bitmap) and extracts the first
- * video frame with MediaMetadataRetriever. EXIF orientation is applied to
- * JPEGs so covers match what the user sees. Any failure returns null.
+ * 50MP photo never materializes as a full bitmap) and extracts the first video
+ * frame at a bounded size where the platform allows it. EXIF orientation is
+ * applied to JPEGs so covers match what the user sees. Any failure returns null.
  */
 actual suspend fun generateCover(file: PickedFile): ByteArray? = withContext(Dispatchers.IO) {
     if (file !is AndroidPickedFile) return@withContext null
@@ -84,12 +85,42 @@ private fun videoCover(file: AndroidPickedFile): ByteArray? {
     val retriever = MediaMetadataRetriever()
     try {
         retriever.setDataSource(file.ctx, file.uri)
-        val frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return null
-        return scaledJpeg(frame, MAX_EDGE)
+        val frame = decodeFirstFrame(retriever) ?: return null
+        try {
+            return scaledJpeg(frame, MAX_EDGE)
+        } finally {
+            frame.recycle()
+        }
     } finally {
         retriever.release()
     }
 }
+
+/**
+ * The first frame, bounded to roughly what a cover needs.
+ *
+ * Asked without a size, `getFrameAtTime` returns the full-resolution decode: a 4K
+ * clip is a ~33 MB ARGB bitmap materialized inside the upload pipeline, beside the
+ * chunk buffer the second lane is filling and the thumbnail cache that can already
+ * hold tens of megabytes. On a small heap that is an OOM, and the pass's
+ * `runCatching` would record it as a failed upload for a file that is perfectly
+ * fine.
+ *
+ * `getScaledFrameAtTime` (API 27) keeps the aspect ratio and never returns more
+ * than the requested box, so the decode itself stays small. Before API 27 there is
+ * no size-limited frame API, and those devices still take the full frame and only
+ * shrink it afterwards.
+ */
+private fun decodeFirstFrame(retriever: MediaMetadataRetriever): Bitmap? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        retriever.getScaledFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, FRAME_EDGE, FRAME_EDGE)
+    } else {
+        retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+    }
+
+/** Widest frame worth decoding: the cover is [MAX_EDGE], and the extra room keeps a
+ *  one-step downscale from turning a 4K frame into mush. */
+private const val FRAME_EDGE = 1024
 
 private const val MAX_EDGE = 512
 
