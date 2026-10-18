@@ -46,7 +46,53 @@ object DatabaseFactory {
         dropLegacyNameIndex(ds)
         createRootNameIndexes(ds)
         createAlbumSortIndex(ds)
+        createNameTrigramIndex(ds)
         return db
+    }
+
+    /**
+     * The DDL behind [createNameTrigramIndex], kept separate so the exact shape
+     * of the indexed expression is assertable without a PostgreSQL to point at.
+     */
+    internal fun nameTrigramDdl(): List<String> = listOf(
+        "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+        "CREATE INDEX IF NOT EXISTS files_name_trgm_idx ON files USING gin (lower(name) gin_trgm_ops)",
+    )
+
+    /**
+     * Trigram index for `/api/search`.
+     *
+     * That route matches `lower(name) LIKE '%q%'`, and a leading wildcard is the
+     * one predicate a btree cannot serve: every keystroke read the account's whole
+     * `files` set and ran `lower()` over each row, on a machine with one core
+     * where the scan also pushes out the pages everything else wants. A GIN index
+     * on the same expression gives the planner a probe to use instead - for the
+     * patterns that are selective enough for it to pay, which is the point: a
+     * keyword that matches a large share of the library is cheaper to read than to
+     * probe. Whether it is used is the planner's call, not a promise this DDL makes.
+     *
+     * PostgreSQL only, and only when `pg_trgm` can be installed: the extension
+     * ships with the image but is not enabled by default, and enabling it needs a
+     * role allowed to. A failure here means a slower search rather than a broken
+     * server, so the first statement that is refused ends the attempt - retrying
+     * the index against a missing operator class would only log the same problem
+     * twice.
+     */
+    private fun createNameTrigramIndex(ds: HikariDataSource) {
+        val statements = nameTrigramDdl()
+        runCatching {
+            ds.connection.use { conn ->
+                if (!conn.metaData.databaseProductName.orEmpty().contains("PostgreSQL", ignoreCase = true)) return
+                conn.autoCommit = true
+                statements.forEach { statement ->
+                    runCatching { conn.createStatement().use { it.execute(statement) } }
+                        .onFailure {
+                            log.warn("name search stays a full scan; could run `{}`", statement, it)
+                            return
+                        }
+                }
+            }
+        }.onFailure { log.warn("could not create the name trigram index", it) }
     }
 
     /**
