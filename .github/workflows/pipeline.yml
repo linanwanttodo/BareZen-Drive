@@ -350,7 +350,9 @@ jobs:
     name: Container image (amd64, arm64)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [ version, server ]
+    # webdav gates the image too, not only the release: install.sh pulls :latest,
+    # so an unvetted build must never land on the tag most installs download.
+    needs: [ version, server, webdav ]
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
