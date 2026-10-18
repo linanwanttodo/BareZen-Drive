@@ -1351,7 +1351,7 @@ private fun FolderTile(
         modifier = Modifier
             .background(
                 MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
-                MaterialTheme.shapes.medium,
+                MaterialTheme.shapes.small,
             )
             .combinedClickable(
                 onClick = { onAction(FolderAction.OPEN, folder) },
@@ -1440,7 +1440,7 @@ private fun FileTile(
             // which already follow LocalPanelAlpha.
             .background(
                 MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
-                MaterialTheme.shapes.medium,
+                MaterialTheme.shapes.small,
             )
             .combinedClickable(
                 onClick = {

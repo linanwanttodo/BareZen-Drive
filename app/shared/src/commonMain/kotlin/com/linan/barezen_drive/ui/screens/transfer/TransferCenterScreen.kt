@@ -366,7 +366,7 @@ private fun TransferTile(item: TransferItem, size: Int) {
     Box(
         Modifier
             .size(size.dp)
-            .clip(MaterialTheme.shapes.small)
+            .clip(MaterialTheme.shapes.extraSmall)
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {
