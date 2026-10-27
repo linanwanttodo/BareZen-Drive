@@ -105,7 +105,38 @@ private fun Route.davMethods() {
     // before it rather than after, so an unmatched method still gets the DAV
     // 404 rather than the SPA fallback.
     davWriteMethods()
+    davUnsupportedMethods()
     handle { call.respond(HttpStatusCode.NotFound) }
+}
+
+/**
+ * DAV methods a real client sends that this server will never implement.
+ *
+ * RFC 4918 reserves 501 for exactly this, and the gap between 501 and the
+ * catch-all's 404 is not cosmetic: 404 reads as "there is nothing at this path",
+ * which a client reports as a broken share or retries somewhere else, while 501
+ * reads as "this server does not do that", which is what lets Explorer fall back
+ * to an unlocked write instead of failing the save outright.
+ *
+ * `docs/api.md` and the note on [DAV_ALLOW] both promise 501 for these two. They
+ * were answering 404 through the catch-all until this handler was registered.
+ *
+ * A named list, so PROPPATCH and REPORT - which are equally unimplemented and
+ * still 404 today - get added deliberately rather than by accident.
+ */
+private val DAV_UNSUPPORTED_METHODS = listOf("LOCK", "UNLOCK")
+
+/**
+ * Answered before any token check: whether a method exists at all does not depend
+ * on what the caller's mount is allowed to do, so a read-only mount hears 501 for
+ * LOCK rather than a 403 that implies locking is real somewhere.
+ */
+private fun Route.davUnsupportedMethods() {
+    for (name in DAV_UNSUPPORTED_METHODS) {
+        method(HttpMethod(name)) {
+            handle { call.respond(HttpStatusCode.NotImplemented) }
+        }
+    }
 }
 
 /**
