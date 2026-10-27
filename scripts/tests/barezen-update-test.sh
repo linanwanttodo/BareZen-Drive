@@ -200,4 +200,152 @@ grep -q "recreate failed while restoring 0.2.1" "$d/out.log" || fail "the rollba
 grep -q "FATAL (exit 2, manual recovery needed)" "$d/out.log" || fail "the guarded recreate still swallowed the FATAL line"
 echo "ok - a failing rollback recreate still reports exit 2"
 
+# --- the host precheck in install.sh, extracted and run the way
+# install-type-test.sh runs the wizard's decision line. flock, a GNU sed and a
+# `sort -V` that actually sorts by version are what the updater above is built
+# on: a timer installed on a host without them is guaranteed to fail every
+# morning, so the check has to be executed with the tools absent and with them
+# present, not grepped for.
+INSTALL_SH="$HERE/../../install.sh"
+eval "$(sed -n '/^unattended_update_supported()/,/^}/p' "$INSTALL_SH")"
+type unattended_update_supported >/dev/null 2>&1 || fail "the host precheck is not a function in install.sh"
+bz_check() { # bz_check <path> - the verdict and the list it built, on one line
+  ( PATH="$1"
+    if unattended_update_supported; then printf 'ok %s\n' "$UPDATE_UNSUPPORTED"
+    else printf 'off %s\n' "$UPDATE_UNSUPPORTED"; fi )
+}
+BZ_HOST="$(mktemp -d)"
+BZ_WIZ="$(mktemp -d)"
+trap 'rm -rf "$BZ_HOST" "$BZ_WIZ"' EXIT
+mkdir -p "$BZ_HOST/absent" "$BZ_HOST/present"
+cat > "$BZ_HOST/absent/sed" <<EOF
+#!/bin/sh
+if [ "\$1" = "--version" ]; then echo "sed: illegal option -- -" >&2; exit 1; fi
+exec $(command -v sed) "\$@"
+EOF
+cat > "$BZ_HOST/absent/sort" <<EOF
+#!/bin/sh
+# A sort that ignores -V: it accepts the flag and orders lexically anyway, which
+# is how 1.10 ends up below 1.9 on a userland without version sort.
+keep=""
+for a in "\$@"; do [ "\$a" = "-V" ] || keep="\$keep \$a"; done
+exec $(command -v sort) \$keep
+EOF
+chmod +x "$BZ_HOST/absent/sed" "$BZ_HOST/absent/sort"
+for tool in sed sort flock; do
+  p="$(command -v "$tool" 2>/dev/null || true)"
+  # `&& ln` would be a false-valued top-level command on a host without the tool
+  # (set -e ends the file there), so the if is load-bearing, not style.
+  if [ -n "$p" ]; then ln -s "$p" "$BZ_HOST/present/$tool"; fi
+done
+res="$(bz_check "$BZ_HOST/absent")"
+case "$res" in off*) ;; *) fail "a host with no flock, no GNU sed and no version sort was called supported: $res" ;; esac
+for want in flock gnu-sed sort-V; do
+  case " $res " in *" $want "*) ;; *) fail "the precheck did not name $want: $res" ;; esac
+done
+echo "ok - a host missing the updater's tools is refused by name"
+# The same check must not cry wolf where the three tools exist, or the answer
+# would always be no and the timer would never be installed anywhere. A host
+# without all three (a BSD dev box) is the case the check exists for, so it only
+# gets the positive run when it actually has them.
+if [ -x "$BZ_HOST/present/flock" ] && [ -x "$BZ_HOST/present/sed" ] && [ -x "$BZ_HOST/present/sort" ] \
+  && [ "$(printf '1.10\n1.9\n' | sort -V 2>/dev/null || true)" = "$(printf '1.9\n1.10')" ]; then
+  res="$(bz_check "$BZ_HOST/present")"
+  for banned in flock gnu-sed sort-V; do
+    case " $res " in *" $banned "*) fail "a host that has $banned was refused: $res" ;; esac
+  done
+  echo "ok - a host with the tools is not refused"
+fi
+
+# --- the wizard's answer -> AUTO_UPDATE, run as written rather than paraphrased.
+# install-type-test.sh learned this the hard way: grepping a decision line proves
+# the text exists, not that the branch does what it claims, so the block is
+# located by its marker, extracted, and executed against a real .env with `ask`
+# stubbed.
+n_6b="$(grep -cF '# ---- step 6b: unattended upgrades ----' "$INSTALL_SH" || true)"
+if [ "$n_6b" != 1 ]; then
+  fail "expected exactly one step 6b block in install.sh, found $n_6b - the wizard no longer asks in one place, so update this pattern together with install.sh"
+fi
+BLOCK_6B="$(sed -n '/# ---- step 6b: unattended upgrades ----/,/^echo$/p' "$INSTALL_SH")"
+case "$BLOCK_6B" in *AUTO_UPDATE=\"no\"*) ;; *) fail "the step 6b extraction found no AUTO_UPDATE assignment - the block no longer ends at a lone echo" ;; esac
+eval "$(sed -n '/^t() {/,/^}/p' "$INSTALL_SH")"
+eval "$(sed -n '/^env_get()/,/^}/p' "$INSTALL_SH")"
+type t env_get >/dev/null 2>&1 || fail "t / env_get not found in install.sh"
+bz_wizard() { # bz_wizard <answer> <env-value|absent> <install-type> <path> -> AUTO_UPDATE
+  local answer="$1" existing="$2" itype="$3" path="$4"
+  local auto_choice AUTO_UPDATE PRE_ENV INSTALL_TYPE L=en
+  PRE_ENV="$BZ_WIZ/.env"
+  rm -f "$PRE_ENV"
+  if [ "$existing" != absent ]; then printf 'AUTO_UPDATE=%s\n' "$existing" > "$PRE_ENV"; fi
+  INSTALL_TYPE="$itype"
+  warn() { printf 'warning: %s\n' "$*"; }
+  # An empty answer is `curl | bash` with no terminal: ask fails, and the wizard
+  # line is supposed to fall back to the value already on file.
+  ask() { printf -v "$2" '%s' "$answer"; [ -n "$answer" ] || return 1; }
+  ( PATH="$path"
+    eval "$BLOCK_6B" >/dev/null 2>&1
+    printf '%s' "$AUTO_UPDATE" )
+}
+[ "$(bz_wizard "" absent server "$PATH")" = yes ] || fail "a fresh server install with no terminal did not default to on"
+[ "$(bz_wizard "" no server "$PATH")" = no ] || fail "a re-run with no terminal turned an off instance into an auto-updating one"
+[ "$(bz_wizard "" yes server "$PATH")" = yes ] || fail "a re-run with no terminal silently disabled an auto-updating instance"
+[ "$(bz_wizard n absent server "$PATH")" = no ] || fail "a typed n was not honoured"
+[ "$(bz_wizard y no server "$PATH")" = yes ] || fail "a typed y did not override the value on file"
+[ "$(bz_wizard "" yes web "$PATH")" = no ] || fail "a static web install recorded on with no image to upgrade"
+[ "$(bz_wizard y absent server "$BZ_HOST/absent")" = no ] \
+  || fail "a host missing flock, a GNU sed and sort -V was still promised a daily timer"
+echo "ok - the wizard's auto-update answer behaves as written"
+
+# --- install.sh wiring: the units must exist, and the script must install both
+# of them only when the instance owns its database.
+if [ ! -f "$HERE/../../scripts/systemd/barezen-update.service" ]; then fail "service unit missing"; fi
+if [ ! -f "$HERE/../../scripts/systemd/barezen-update.timer" ]; then fail "timer unit missing"; fi
+grep -q "barezen-update.timer" "$HERE/../../install.sh" || fail "install.sh never touches the timer"
+grep -q "EnvironmentFile=-/etc/barezen-update.env" "$HERE/../../scripts/systemd/barezen-update.service" \
+  || fail "the service does not read the per-instance env file"
+grep -q "systemctl disable --now barezen-update.timer" "$HERE/../../install.sh" \
+  || fail "turning auto-update off does not stop the timer"
+echo "ok - timer wiring present"
+
+# Both halves of the wiring gate matter: an instance that does not own a database
+# must not be handed a updater that dumps somebody else's, and a first install -
+# where HAS_OWN_DB was read before the volume existed - must still get its timer.
+# The re-probe is matched by the shape of the new line, not by the volume name:
+# install.sh already inspects that volume earlier, so the bare command matches
+# even when the second look is gone.
+grep -qF 'if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then' "$INSTALL_SH" \
+  || fail "the timer is wired without checking that this instance owns its database"
+grep -qF '[ -z "$HAS_OWN_DB" ] && docker volume inspect "$OUR_PGDATA_VOL"' "$INSTALL_SH" \
+  || fail "a fresh install is never re-probed for the volume it just created"
+# Turning it off has to remove what turning it on installed, and the answer has to
+# survive into .env, or the next re-run defaults from nothing.
+grep -qF 'rm -f "$UNIT_DIR/barezen-update.service" "$UNIT_DIR/barezen-update.timer"' "$INSTALL_SH" \
+  || fail "auto-update off leaves the unit files behind"
+grep -qF 'env_set AUTO_UPDATE "$AUTO_UPDATE" .env' "$INSTALL_SH" \
+  || fail "the auto-update answer never reaches .env"
+echo "ok - the wiring gate still requires a database of its own"
+
+# The unit runs the file install.sh writes, at the path it writes it to, and
+# nothing papers over a non-zero exit: SuccessStatus= would let systemd call a
+# rolled-back (or unrecoverable) upgrade a clean unit.
+grep -q "ExecStart=/usr/local/bin/barezen-update.sh" "$HERE/../../scripts/systemd/barezen-update.service" \
+  || fail "the service does not run the path install.sh installs to"
+# The pairing is what matters, not just the string: install.sh may mention that
+# path in the disable branch too, so the assertion has to name the write.
+grep -qE 'install -m 0755 "[^"]*" /usr/local/bin/barezen-update\.sh' "$HERE/../../install.sh" \
+  || fail "install.sh does not install the script where the unit expects it"
+for u in "$HERE/../../scripts/systemd/barezen-update.service" "$HERE/../../scripts/systemd/barezen-update.timer"; do
+  if grep -q "SuccessStatus" "$u"; then fail "$(basename "$u") declares SuccessStatus and hides a failed run"; fi
+done
+# The instance's own loopback address is the only probe that works on a port
+# other than 8080 and behind Caddy; without it every daily run would read
+# "unreachable" and skip in silence.
+grep -q "BAREZEN_PROBE_URL=http://127.0.0.1:" "$HERE/../../install.sh" \
+  || fail "install.sh never tells the updater which port to probe"
+# The host dependency check is what keeps a doomed timer from being enabled, so
+# the gate has to be the function that ran above and not a stray comment.
+grep -q "unattended_update_supported" "$HERE/../../install.sh" \
+  || fail "install.sh does not check the host for flock, GNU sed and sort -V"
+echo "ok - updater, units and installer describe the same layout"
+
 echo "all barezen-update assertions passed"

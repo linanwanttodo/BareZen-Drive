@@ -1,0 +1,17 @@
+[Unit]
+Description=BareZen-Drive stable-channel self update
+Documentation=https://github.com/linanwanttodo/BareZen-Drive
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The instance directory and the compose command come from here, written by
+# install.sh, so this unit stays correct for any install location without being
+# templated at install time.
+EnvironmentFile=-/etc/barezen-update.env
+ExecStart=/usr/local/bin/barezen-update.sh
+# A pull plus two health windows on a 1-core box: generous enough that the unit
+# is not killed mid-upgrade, bounded enough that a hung pull cannot hold the lock
+# forever.
+TimeoutStartSec=1800
