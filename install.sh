@@ -66,6 +66,7 @@ One wizard, seven steps:
   4. service port
   5. domain (blank = http://<host-ip>:<port>)
   6. HTTPS with automatic certificate issuance and renewal (Caddy)
+  6b. auto-update (daily systemd timer, server installs only)
   7. prints the deployed address and Successful!
 
 Usage:
@@ -838,14 +839,29 @@ done
 if [ "$INSTALL_TYPE" != "web" ] && [ -z "$HAS_OWN_DB" ] && docker volume inspect "$OUR_PGDATA_VOL" >/dev/null 2>&1; then
   HAS_OWN_DB=yes
 fi
+# remove_unattended_updater - the whole teardown list: both units, the updater
+# script, the per-instance env file and the state directory the updater keeps its
+# lock in. Written once and called from both directions that turn the updater off
+# (the "no" answer below, and a switch to the web install type), so neither can
+# drift away from what the "yes" branch installs. The state directory is safe to
+# delete: the updater makes it again with mkdir -p on the first run after it is
+# re-enabled, so removing it costs nothing and leaving it behind does not.
+remove_unattended_updater() {
+  # Turning it off has to actually stop it, and the units go with it so a later
+  # `systemctl list-timers` does not show a timer that does nothing.
+  $SUDO systemctl disable --now barezen-update.timer 2>/dev/null || true
+  $SUDO rm -f "$UNIT_DIR/barezen-update.service" "$UNIT_DIR/barezen-update.timer" /usr/local/bin/barezen-update.sh /etc/barezen-update.env
+  $SUDO rm -rf "$INSTALL_DIR/.auto-update"
+  $SUDO systemctl daemon-reload 2>/dev/null || true
+}
 # Only an instance with its own database can be upgraded this way: a web-only
 # install has nothing to pull, and dumping a database it does not own would fail.
 # Uniting that with the host check above is what keeps a doomed timer from ever
 # being enabled. TIMER_ON is what the closing summary reads, so the tip cannot
 # claim a timer that this run never installed.
+UNIT_DIR=/etc/systemd/system
 TIMER_ON=""
 if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then
-  UNIT_DIR=/etc/systemd/system
   if [ "$AUTO_UPDATE" = "yes" ]; then
     log "$(t auto_on)"
     TIMER_ON=yes
@@ -883,12 +899,19 @@ if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then
       || warn "the timer did not start - run: sudo systemctl enable --now barezen-update.timer"
   else
     log "$(t auto_off)"
-    # Turning it off has to actually stop it, and the units go with it so a later
-    # `systemctl list-timers` does not show a timer that does nothing.
-    $SUDO systemctl disable --now barezen-update.timer 2>/dev/null || true
-    $SUDO rm -f "$UNIT_DIR/barezen-update.service" "$UNIT_DIR/barezen-update.timer" /usr/local/bin/barezen-update.sh /etc/barezen-update.env
-    $SUDO systemctl daemon-reload 2>/dev/null || true
+    remove_unattended_updater
   fi
+elif [ "$INSTALL_TYPE" = "web" ] && [ -f "$UNIT_DIR/barezen-update.timer" ]; then
+  # The other direction the gate above cannot express: an instance switched from
+  # server to web over the same --dir. The wizard has already recorded no for a
+  # static install, and the previous run's timer is still enabled on this host -
+  # pointed now at a compose project that no longer exists, so it fires every
+  # morning, reads an endpoint nobody serves and exits 0 in silence. Skipping the
+  # block left that zombie in place, so tear it down exactly like the "no" answer.
+  # The existence check is what keeps a plain web install from seeing an extra
+  # "auto-update disabled" line when nothing was ever wired here.
+  log "$(t auto_off)"
+  remove_unattended_updater
 fi
 
 echo
