@@ -826,4 +826,37 @@ class DavWriteStructureTest {
         assertEquals("mine.txt", liveFileRow("mine.txt")!![FilesTable.name], "and nothing of ours moved")
         assertNull(folderRow("stolen"))
     }
+
+    /**
+     * The two methods this server will never implement answer 501, not the
+     * catch-all's 404.
+     *
+     * `docs/api.md` promises 501 for LOCK/UNLOCK and the note on `DAV_ALLOW`
+     * repeats it, but neither method was ever registered, so both fell through to
+     * the 404 catch-all - exactly the failure this class's header warns about,
+     * where a 404 assertion goes green whether or not the route exists. An
+     * unregistered method is checked in the same pass, so a blanket 501 cannot
+     * masquerade as the specific one.
+     */
+    @Test
+    fun unimplementedWebdavMethodsAnswerNotImplementedAndUnknownOnesStillFourOhFour() = testApplication {
+        setup()
+        makeFile("doc.docx", "the only content")
+        for (verb in listOf("LOCK", "UNLOCK")) {
+            for ((label, credential) in listOf("writable" to token, "read-only" to readOnlyToken)) {
+                assertEquals(
+                    HttpStatusCode.NotImplemented,
+                    davReq(HttpMethod(verb), "/dav/doc.docx", credential).status,
+                    "$verb on a $label mount must be 501, not the catch-all 404",
+                )
+            }
+        }
+        assertEquals(
+            HttpStatusCode.NotFound,
+            davReq(HttpMethod("PROPPATCH"), "/dav/doc.docx").status,
+            "a method with no handler at all still falls through to 404",
+        )
+        // And the document is untouched: a refused lock may not have changed it.
+        assertEquals("the only content", davGet("/dav/doc.docx").bodyAsText())
+    }
 }
