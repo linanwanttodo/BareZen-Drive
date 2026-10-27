@@ -99,19 +99,29 @@ if ! $COMPOSE pull server; then
   retag docker-compose.yml "$latest" "$pinned"
   exit 1
 fi
-$COMPOSE up -d server
-
-ok=""
-for _ in $(seq 1 "$HEALTH_TRIES"); do
-  if healthy; then ok=1; break; fi
-  sleep "$HEALTH_DELAY"
-done
-if [ -n "$ok" ]; then
-  log "upgraded to $latest and /readyz is answering"
-  exit 0
+# A recreate that fails outright is the same incident as one that comes up unhealthy:
+# the pin already names $latest and nothing is serving /api/version. Unguarded, docker's
+# exit code plus set -e would end the run here with no rollback, no FATAL line and no
+# pointer to the dump - and every later timer would then skip quietly, because the
+# endpoint it asks is served by the container that failed to start. One missed upgrade
+# window would silently turn into a permanent outage.
+if ! $COMPOSE up -d server; then
+  log "up -d server failed after moving the pin to $latest"
+  rollback="recreate failed after upgrading to $latest"
+else
+  ok=""
+  for _ in $(seq 1 "$HEALTH_TRIES"); do
+    if healthy; then ok=1; break; fi
+    sleep "$HEALTH_DELAY"
+  done
+  if [ -n "$ok" ]; then
+    log "upgraded to $latest and /readyz is answering"
+    exit 0
+  fi
+  rollback="not healthy after upgrading to $latest"
 fi
 
-log "not healthy after upgrading to $latest; rolling back to $pinned"
+log "$rollback; rolling back to $pinned"
 retag docker-compose.yml "$latest" "$pinned"
 $COMPOSE pull server || true
 $COMPOSE up -d server
