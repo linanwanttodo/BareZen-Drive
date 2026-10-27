@@ -98,6 +98,13 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # install.sh is what `curl | bash` runs on every install and it has no test
+      # harness of its own, so this script is the only thing that can catch the
+      # wizard writing back the wrong INSTALL_TYPE. Pure shell: it runs ahead of
+      # the JDK and Android setup so a broken installer fails in seconds instead
+      # of after the Gradle suite.
+      - name: Installer type tests
+        run: bash scripts/tests/install-type-test.sh
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
