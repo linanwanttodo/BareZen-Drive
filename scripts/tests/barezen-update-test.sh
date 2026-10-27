@@ -28,6 +28,12 @@ case "$*" in
   *"exec -T db pg_dump"*)
     [ -n "$FAIL_DUMP" ] && { echo 'pg_dump: boom' >&2; exit 1; }
     printf -- '-- dump\n' ;;
+  *"up -d server"*)
+    # Same trick as FAIL_READY_VER: only the pin named in FAIL_UP_VER fails to
+    # recreate, so the upgrade breaks and the rollback succeeds inside one run.
+    if [ -n "$FAIL_UP_VER" ] && grep -qF "barezen-drive:$FAIL_UP_VER" "$COMPOSE_FILE"; then
+      exit 1
+    fi ;;
 esac
 exit 0
 EOF
@@ -101,6 +107,11 @@ echo "ok - unhealthy upgrade rolls back"
 # 5. No database dump, no upgrade: the point of no return was not reached.
 d="$(new_env 0.2.1)"
 run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"0.3.0"}' FAIL_DUMP=1 && fail "a failed dump must abort the upgrade"
+# Positive guard before the negative ones: every assertion below says "this did not
+# happen", and an updater that never started (exit 127 from a wrong path) satisfies
+# all of them while `run_case ... && fail` reads that 127 as "non-zero". The dump
+# call being in the log is the only proof that the abort was the updater's.
+has "$d" "exec -T db pg_dump" || fail "the dump was never attempted, so the updater did not run"
 hasnt "$d" "up -d" || fail "it upgraded without a backup"
 [ "$(pin_of "$d")" = "0.2.1" ] || fail "a failed dump still moved the pin"
 echo "ok - failed dump aborts before touching anything"
@@ -110,5 +121,16 @@ d="$(new_env 0.2.1)"
 run_case "$d" ""
 hasnt "$d" "up -d" || fail "it upgraded with nothing to read"
 echo "ok - unreachable endpoint is skipped"
+
+# 7. A recreate that fails is a rollback, not a silent stop: the pin already names
+#    the new image and nothing is serving /api/version, so the next timer would read
+#    "unreachable" and skip for ever.
+d="$(new_env 0.2.1)"
+run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"0.3.0"}' FAIL_UP_VER=0.3.0 && fail "a failed recreate must exit non-zero"
+[ "$(pin_of "$d")" = "0.2.1" ] || fail "no rollback after a failed recreate: pin is $(pin_of "$d")"
+[ "$(grep -c 'up -d server' "$d/calls.log")" = "2" ] || fail "the rollback never recreated the old image"
+grep -q "recreate failed after upgrading to 0.3.0; rolling back to 0.2.1" "$d/out.log" || fail "the log does not blame the recreate"
+grep -q "rolled back to 0.2.1 and healthy" "$d/out.log" || fail "the rollback was never confirmed healthy"
+echo "ok - failed recreate rolls back"
 
 echo "all barezen-update assertions passed"
