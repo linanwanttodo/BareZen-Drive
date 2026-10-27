@@ -348,4 +348,163 @@ grep -q "unattended_update_supported" "$HERE/../../install.sh" \
   || fail "install.sh does not check the host for flock, GNU sed and sort -V"
 echo "ok - updater, units and installer describe the same layout"
 
+# --help is the only copy of the step list an operator reads before installing
+# (`$0` is `bash` when the script arrives on stdin, so the header comment above it
+# is not reachable), and the two have already drifted once: the header gained the
+# auto-update step while usage() kept seven steps without it.
+if ! awk '/^usage\(\) \{/,/^}/' "$INSTALL_SH" | grep -qF '6b. auto-update'; then
+  fail "usage() does not list the auto-update step the wizard actually asks"
+fi
+echo "ok - the help text lists the step the wizard asks"
+
+# --- the teardown direction is run as a scenario, not grepped. The shape the gate
+# above cannot express is the switch from server to web over the same --dir: that
+# run used to skip the whole wiring block, so the timer the earlier install enabled
+# stayed on file and fired daily at a compose project that no longer exists - it
+# reads an endpoint nobody serves and exits 0 in silence. install.sh's block is
+# located by fixed anchors, extracted, and executed with systemctl stubbed and the
+# three absolute write targets redirected into a sandbox, the way
+# install-type-test.sh runs the wizard instead of paraphrasing it.
+n_unitdir="$(grep -cxF 'UNIT_DIR=/etc/systemd/system' "$INSTALL_SH" || true)"
+if [ "$n_unitdir" != 1 ]; then
+  fail "expected exactly one UNIT_DIR assignment in install.sh, found $n_unitdir - the wiring block no longer starts where this pattern expects, so update this test together with install.sh"
+fi
+n_teardown="$(grep -cxF 'remove_unattended_updater() {' "$INSTALL_SH" || true)"
+if [ "$n_teardown" != 1 ]; then
+  fail "expected exactly one remove_unattended_updater definition in install.sh, found $n_teardown - the teardown is no longer one named list both off-directions call"
+fi
+BZ_WIRE="$(mktemp -d)"
+# Re-armed rather than replaced: the trap above only knows the two directories it
+# made, and a fail() inside the scenario below must not leave a third one behind.
+trap 'rm -rf "$BZ_HOST" "$BZ_WIZ" "$BZ_WIRE"' EXIT
+bz_sb="$BZ_WIRE/case"
+bz_redirect() { # bz_redirect - install.sh text with its write targets sandboxed
+  sed "s#/etc/systemd/system#$bz_sb/unit#g; s#/usr/local/bin/barezen-update.sh#$bz_sb/bin/barezen-update.sh#g; s#/etc/barezen-update.env#$bz_sb/env#g"
+}
+bz_wiring="$(sed -n '\|^UNIT_DIR=/etc/systemd/system$|,/^fi$/p' "$INSTALL_SH" | bz_redirect)"
+bz_teardown="$(sed -n '/^remove_unattended_updater()/,/^}$/p' "$INSTALL_SH" | bz_redirect)"
+# An extraction that silently comes back short would make every assertion below
+# green on a block that never ran, so both pieces have to be complete.
+if [ -z "$bz_teardown" ]; then fail "remove_unattended_updater was not extracted from install.sh"; fi
+case "$bz_teardown" in *"/.auto-update"*) ;; *) fail "the teardown list leaves the updater's state directory behind" ;; esac
+web_gate='[ "$INSTALL_TYPE" = "web" ]'
+case "$bz_wiring" in
+  *"$web_gate"*) ;;
+  *) fail "the wiring extraction stopped before the web branch - the block no longer ends at a lone fi, so update this pattern together with install.sh" ;;
+esac
+mkdir -p "$BZ_WIRE/stub"
+cat > "$BZ_WIRE/stub/systemctl" <<'EOF'
+#!/usr/bin/env bash
+echo "systemctl $*" >> "$BZ_CALLS"
+exit 0
+EOF
+cat > "$BZ_WIRE/stub/curl" <<'EOF'
+#!/usr/bin/env bash
+# Stands in for the three downloads: whatever -o names gets a file, so the install
+# branch has something real to install and tee.
+out=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-o" ]; then out="$a"; fi
+  prev="$a"
+done
+if [ -n "$out" ]; then printf 'downloaded\n' > "$out"; fi
+exit 0
+EOF
+chmod +x "$BZ_WIRE/stub/systemctl" "$BZ_WIRE/stub/curl"
+bz_wire() { # bz_wire <install-type> <has-own-db> <answer> [empty] - what the block did
+  rm -rf "$bz_sb"
+  mkdir -p "$bz_sb/unit" "$bz_sb/bin" "$bz_sb/.auto-update"
+  # What an earlier run that answered yes left on this host under the same --dir.
+  # Without these the scenario proves nothing: there has to be a zombie to remove
+  # before "it was removed" means anything. `empty` is the opposite case - an
+  # instance that never had the updater wired - and leaves the sandbox bare.
+  if [ "${4:-left}" != "empty" ]; then
+    : > "$bz_sb/unit/barezen-update.service"
+    : > "$bz_sb/unit/barezen-update.timer"
+    : > "$bz_sb/bin/barezen-update.sh"
+    printf 'BAREZEN_DIR=/opt/barezen\n' > "$bz_sb/env"
+    : > "$bz_sb/.auto-update/lock"
+  fi
+  : > "$bz_sb/calls.log"
+  : > "$bz_sb/out.log"
+  # In a separate bash so the extracted block's own `trap ... EXIT` cannot touch
+  # this test's cleanup, and with set -u like install.sh runs under.
+  PATH="$BZ_WIRE/stub:$PATH" BZ_CALLS="$bz_sb/calls.log" BZ_OUT="$bz_sb/out.log" \
+  BZ_SB="$bz_sb" \
+  INSTALL_TYPE="$1" HAS_OWN_DB="$2" AUTO_UPDATE="$3" SUDO="" INSTALL_DIR="$bz_sb" \
+  COMPOSE="docker compose" PORT=8080 REPO_RAW="bz://stub" \
+  bash -c '
+    set -euo pipefail
+    log() { printf "log: %s\n" "$*" >> "$BZ_OUT"; }
+    warn() { printf "warn: %s\n" "$*" >> "$BZ_OUT"; }
+    err() { printf "err: %s\n" "$*" >> "$BZ_OUT"; exit 1; }
+    t() { printf "%s" "$1"; }
+    eval "$1"
+    eval "$2"
+    printf "TIMER_ON=%s\n" "${TIMER_ON:-}"
+    printf "CALLS=%s\n" "$(tr "\n" ";" < "$BZ_CALLS")"
+    printf "UNITS=%s\n" "$(ls -A "$UNIT_DIR" 2>/dev/null | tr "\n" ";")"
+    printf "SCRIPT=%s\n" "$([ -e "$BZ_SB/bin/barezen-update.sh" ] && echo kept || echo gone)"
+    printf "ENVFILE=%s\n" "$([ -e "$BZ_SB/env" ] && echo kept || echo gone)"
+    printf "STATE=%s\n" "$([ -e "$BZ_SB/.auto-update" ] && echo kept || echo gone)"
+    printf "OUT=%s\n" "$(tr "\n" ";" < "$BZ_OUT")"
+  ' _ "$bz_teardown" "$bz_wiring"
+}
+field() { # field <transcript> <key>
+  printf '%s\n' "$1" | sed -n "s/^$2=//p"
+}
+
+# A static web install over a directory that was wired as a server yesterday.
+res="$(bz_wire web "" no)" || fail "the wiring scenario for [web "" no] exited non-zero"
+case "$(field "$res" CALLS)" in
+  *"disable --now barezen-update.timer"*) ;;
+  *) fail "choosing web left the previous install's timer enabled: $(field "$res" CALLS)" ;;
+esac
+[ "$(field "$res" UNITS)" = "" ] || fail "choosing web left the unit files behind: $(field "$res" UNITS)"
+[ "$(field "$res" SCRIPT)" = "gone" ] || fail "choosing web left /usr/local/bin/barezen-update.sh behind"
+[ "$(field "$res" ENVFILE)" = "gone" ] || fail "choosing web left /etc/barezen-update.env behind"
+[ "$(field "$res" STATE)" = "gone" ] || fail "choosing web left the updater's state directory behind"
+[ "$(field "$res" TIMER_ON)" = "" ] || fail "a web install set TIMER_ON: the summary would offer timer commands for a host with none"
+case "$(field "$res" OUT)" in
+  *"log: auto_off"*) ;;
+  *) fail "the web teardown did not tell the operator what it did: $(field "$res" OUT)" ;;
+esac
+echo "ok - switching an instance to web tears the updater down instead of skipping"
+
+# The same list has to come off for the answer that was already covered: a server
+# instance that says no. Both off-directions call one function, so both are checked.
+res="$(bz_wire server yes no)" || fail "the wiring scenario for [server yes no] exited non-zero"
+case "$(field "$res" CALLS)" in
+  *"disable --now barezen-update.timer"*) ;;
+  *) fail "answering no left the timer enabled: $(field "$res" CALLS)" ;;
+esac
+[ "$(field "$res" UNITS)" = "" ] || fail "answering no left the unit files behind: $(field "$res" UNITS)"
+[ "$(field "$res" STATE)" = "gone" ] || fail "answering no left the updater's state directory behind"
+echo "ok - the no answer runs the same teardown list"
+
+# Two controls, so the green above cannot come from a block that does nothing at
+# all: the yes branch must still install, and a web install that never had a timer
+# must stay quiet instead of running the teardown for show.
+res="$(bz_wire server yes yes)" || fail "the wiring scenario for [server yes yes] exited non-zero"
+[ "$(field "$res" TIMER_ON)" = "yes" ] || fail "a server install answering yes did not wire the timer: $(field "$res" OUT)"
+[ "$(field "$res" UNITS)" = "barezen-update.service;barezen-update.timer;" ] \
+  || fail "the yes branch did not leave both units on file: $(field "$res" UNITS)"
+[ "$(field "$res" ENVFILE)" = "kept" ] || fail "the yes branch did not write the per-instance env file"
+[ "$(field "$res" STATE)" = "kept" ] || fail "the yes branch deleted the state directory it did not create"
+case "$(field "$res" CALLS)" in
+  *"enable --now barezen-update.timer"*) ;;
+  *) fail "the yes branch never enabled the timer: $(field "$res" CALLS)" ;;
+esac
+echo "ok - the yes branch still installs and enables both units"
+# Nothing on file for a static install to remove: no systemctl call, no message,
+# and no teardown running for show on a host that never had the updater wired.
+res="$(bz_wire web "" no empty)" || fail "the wiring scenario for [web "" no empty] exited non-zero"
+[ "$(field "$res" CALLS)" = "" ] || fail "a plain web install ran the teardown with nothing on file: $(field "$res" CALLS)"
+case "$(field "$res" OUT)" in
+  *"log:"*) fail "a plain web install was told its auto-update was turned off: $(field "$res" OUT)" ;;
+esac
+[ "$(field "$res" TIMER_ON)" = "" ] || fail "a plain web install set TIMER_ON"
+echo "ok - the web teardown only runs when the earlier install left something behind"
+
 echo "all barezen-update assertions passed"
