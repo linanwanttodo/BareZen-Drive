@@ -8,6 +8,7 @@
 #   4. service port
 #   5. domain (blank = http://<host-ip>:<port>)
 #   6. HTTPS with automatic certificate issuance and renewal (Caddy)
+#   6b. auto-update (daily systemd timer, server installs only)
 #   7. prints the deployed address and Successful!
 #
 # Usage:
@@ -120,6 +121,31 @@ env_set() {
   fi
 }
 
+# unattended_update_supported - can this host run scripts/barezen-update.sh at
+# all? On failure it leaves UPDATE_UNSUPPORTED naming what is missing. Four
+# things, each one a hard dependency of the updater rather than a preference:
+#   flock               two timer runs must not overlap, and it is the only
+#                       serialisation the script has
+#   GNU sed             the updater rewrites the compose pin with `sed -i`; BSD
+#                       sed reads that as a missing backup suffix and refuses,
+#                       which is the macOS/BSD case this check exists for
+#   sort -V             version ordering, so 0.10 is not read as older than 0.9
+#   /run/systemd/system there has to be an init system to hand the timer to, or
+#                       `systemctl enable` would abort an install whose
+#                       deployment already succeeded
+# Nothing here is patched around: the updater runs on the Linux host that serves
+# the containers, not on the machine that built them.
+unattended_update_supported() {
+  UPDATE_UNSUPPORTED=""
+  local sorted
+  command -v flock >/dev/null 2>&1 || UPDATE_UNSUPPORTED="$UPDATE_UNSUPPORTED flock"
+  case "$(sed --version 2>/dev/null || true)" in *GNU*) ;; *) UPDATE_UNSUPPORTED="$UPDATE_UNSUPPORTED gnu-sed" ;; esac
+  sorted="$(printf '1.10\n1.9\n' | sort -V 2>/dev/null || true)"
+  [ "$sorted" = $'1.9\n1.10' ] || UPDATE_UNSUPPORTED="$UPDATE_UNSUPPORTED sort-V"
+  [ -d /run/systemd/system ] || UPDATE_UNSUPPORTED="$UPDATE_UNSUPPORTED systemd"
+  [ -z "$UPDATE_UNSUPPORTED" ] || return 1
+}
+
 # Options come before anything that touches the host: `--help` must not cost
 # the operator a package install, and `--dir` has to be known before the first
 # file gets written anywhere.
@@ -168,6 +194,12 @@ t() {
       cancelled)     echo "已取消：没有启动或改动任何服务。" ;;
       cert)          echo "启用 HTTPS（Caddy 自动申请并续签 Let's Encrypt 证书）？[Y/n]: " ;;
       cert_skip)     echo "  未填域名，证书无法签发给纯 IP，将使用 HTTP。" ;;
+      auto_update)   echo "自动升级：宿主机每天检查一次稳定版，自己升级并在不健康时自动回滚。" ;;
+      auto_update_q) echo "开启自动升级？(Y/n): " ;;
+      auto_web_skip) echo "  仅 Web 静态端：本机没有镜像标签需要升级，跳过自动升级。" ;;
+      auto_deps)     echo "本机缺少自动升级需要的命令，已强制关闭自动升级，缺少：" ;;
+      auto_on)       echo "已开启自动升级：每天检查稳定版，升级后不健康会自动回滚" ;;
+      auto_off)      echo "已关闭自动升级：只在你手动运行 install.sh 时更新" ;;
       web_remote)    echo "Web 静态端不创建账号；打开页面后在登录框填写你的服务器地址。" ;;
       precheck_miss) echo "缺少必需命令: " ;;
       deps_install)  echo "检测到缺少依赖，正在自动安装:" ;;
@@ -184,6 +216,7 @@ t() {
       done_reg)      echo "提示: 管理员账号已由本脚本创建（仅在新实例上生效）。" ;;
       done_reg_closed) echo "提示: 注册默认关闭，只有管理员能登录；要邀请别人请在 设置→服务器 打开注册。" ;;
       done_backup)   echo "备份: cd %DIR% && %COMPOSE% exec -T db pg_dump -U %DBUSER% %DBNAME% | gzip > backup.sql.gz" ;;
+      auto_status)   echo "自动升级: systemctl status barezen-update.timer && journalctl -u barezen-update.service -n 50" ;;
       installing)    echo "正在下载 Web 静态包并启动…" ;;
       web_tag)       echo "Web 静态包版本:" ;;
       failed)        echo "服务未能在 120 秒内就绪，请查看上方日志。" ;;
@@ -217,6 +250,12 @@ t() {
       cancelled)     echo "Cancelled: no service was started or changed." ;;
       cert)          echo "Enable HTTPS (Caddy issues and renews Let's Encrypt certificates automatically)? [Y/n]: " ;;
       cert_skip)     echo "  No domain given: a certificate cannot be issued for a bare IP, using HTTP." ;;
+      auto_update)   echo "Auto-update: the host checks for a new stable release daily, upgrades itself, and rolls back if the service does not come back." ;;
+      auto_update_q) echo "Enable auto-update? (Y/n): " ;;
+      auto_web_skip) echo "  Static web only: this host pins no image to upgrade, skipping auto-update." ;;
+      auto_deps)     echo "This host is missing a command the unattended upgrade needs, so auto-update stays off. Missing:" ;;
+      auto_on)       echo "Auto-update enabled: a new stable release is applied daily, rolled back if the service does not come back" ;;
+      auto_off)      echo "Auto-update disabled: upgrades happen only when you run install.sh" ;;
       web_remote)    echo "The static web hosts no accounts; enter your server address on the login page." ;;
       precheck_miss) echo "Missing required command: " ;;
       deps_install)  echo "Missing dependencies detected, installing:" ;;
@@ -233,6 +272,7 @@ t() {
       done_reg)      echo "Note: the admin account was created by this script (new instances only)." ;;
       done_reg_closed) echo "Note: registration is closed by default, only the admin can sign in; open it in Settings -> Server to invite others." ;;
       done_backup)   echo "Backup: cd %DIR% && %COMPOSE% exec -T db pg_dump -U %DBUSER% %DBNAME% | gzip > backup.sql.gz" ;;
+      auto_status)   echo "Auto-update: systemctl status barezen-update.timer && journalctl -u barezen-update.service -n 50" ;;
       installing)    echo "Fetching the web bundle and starting…" ;;
       web_tag)       echo "Bundled web version:" ;;
       failed)        echo "the service did not become ready within 120s - see the logs above." ;;
@@ -427,6 +467,34 @@ else
   echo "$(t cert_skip)"
 fi
 
+# ---- step 6b: unattended upgrades ----
+# Default to the setting already on file, so a non-interactive re-run does not
+# quietly turn a hand-driven install into an auto-updating one (or the reverse).
+PRE_AUTO="$(env_get AUTO_UPDATE "$PRE_ENV")"
+if [ "$INSTALL_TYPE" = "web" ]; then
+  # A static bundle pins no image and the database it talks to is not here, so
+  # there is nothing for the updater to dump, pull or roll back. Recording yes
+  # would promise a timer the deploy section below refuses to install.
+  AUTO_UPDATE="no"
+  echo "$(t auto_web_skip)"
+elif ! unattended_update_supported; then
+  # scripts/barezen-update.sh is built on flock, a GNU-style `sed -i` and
+  # `sort -V`, and something has to run the timer. A host missing one of those
+  # would schedule a failure at 04:15 every day, so this answer is not the
+  # operator's to make: BSD userlands (a macOS dev box) land here and are not
+  # supported, and no attempt is made to work around them.
+  AUTO_UPDATE="no"
+  warn "$(t auto_deps) ${UPDATE_UNSUPPORTED# }"
+else
+  echo "$(t auto_update)"
+  ask "$(t auto_update_q) [$([ "${PRE_AUTO:-yes}" = no ] && echo n || echo Y)]: " auto_choice || auto_choice=""
+  case "${auto_choice:-${PRE_AUTO:-yes}}" in
+    n|N|no|NO|false) AUTO_UPDATE="no" ;;
+    *) AUTO_UPDATE="yes" ;;
+  esac
+fi
+echo
+
 # Reachable-from-the-outside address, and the loopback URL used for the health
 # probe. With HTTPS the front door is Caddy on port 80/443, not ${PORT}.
 HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
@@ -488,6 +556,7 @@ EOF
     cat > .env <<EOF
 # Generated by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)
 INSTALL_TYPE=${INSTALL_TYPE}
+AUTO_UPDATE=${AUTO_UPDATE}
 JWT_SECRET=${JWT}
 POSTGRES_DB=barezen
 POSTGRES_USER=barezen
@@ -546,6 +615,9 @@ else
 fi
 env_set APP_DOMAIN "$DOMAIN" .env
 env_set USE_HTTPS "$USE_HTTPS" .env
+# Recorded for both install types: on a web-only install it is the honest "no",
+# and the deploy section below only ever wires the timer for a server instance.
+env_set AUTO_UPDATE "$AUTO_UPDATE" .env
 chmod 600 .env
 
 # The database role and name the dumps and the summary line both need.
@@ -757,6 +829,68 @@ for i in $(seq 1 60); do
 done
 [ "$READY" = "1" ] || { $COMPOSE logs --tail 40 2>/dev/null || true; err "$(t failed)"; }
 
+# ---- unattended upgrade wiring ----
+# HAS_OWN_DB is decided before the stack is created (there it only warns about
+# another deployment's volume), so on a first install it is still empty here even
+# though the `up -d` above just made this instance own its pgdata volume. Ask the
+# volume again instead of leaving a brand-new server without a timer until the
+# wizard happens to be run a second time.
+if [ "$INSTALL_TYPE" != "web" ] && [ -z "$HAS_OWN_DB" ] && docker volume inspect "$OUR_PGDATA_VOL" >/dev/null 2>&1; then
+  HAS_OWN_DB=yes
+fi
+# Only an instance with its own database can be upgraded this way: a web-only
+# install has nothing to pull, and dumping a database it does not own would fail.
+# Uniting that with the host check above is what keeps a doomed timer from ever
+# being enabled. TIMER_ON is what the closing summary reads, so the tip cannot
+# claim a timer that this run never installed.
+TIMER_ON=""
+if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then
+  UNIT_DIR=/etc/systemd/system
+  if [ "$AUTO_UPDATE" = "yes" ]; then
+    log "$(t auto_on)"
+    TIMER_ON=yes
+    # A private directory rather than fixed /tmp names: /tmp is world-writable,
+    # and the files picked up here are about to be installed as root into
+    # /usr/local/bin, so a predictable path is a symlink waiting for the next
+    # local user. The trap covers every way out of the block, including a failed
+    # download and an install that could not write.
+    UPDATE_TMP="$(mktemp -d)"
+    trap 'rm -rf "$UPDATE_TMP"' EXIT
+    curl -fsSL -o "$UPDATE_TMP/barezen-update.sh" "${REPO_RAW}/scripts/barezen-update.sh" \
+      || err "could not download scripts/barezen-update.sh"
+    curl -fsSL -o "$UPDATE_TMP/barezen-update.service" "${REPO_RAW}/scripts/systemd/barezen-update.service" \
+      || err "could not download the systemd service unit"
+    curl -fsSL -o "$UPDATE_TMP/barezen-update.timer" "${REPO_RAW}/scripts/systemd/barezen-update.timer" \
+      || err "could not download the systemd timer unit"
+    $SUDO install -m 0755 "$UPDATE_TMP/barezen-update.sh" /usr/local/bin/barezen-update.sh
+    $SUDO install -m 0644 "$UPDATE_TMP/barezen-update.service" "$UNIT_DIR/barezen-update.service"
+    $SUDO install -m 0644 "$UPDATE_TMP/barezen-update.timer" "$UNIT_DIR/barezen-update.timer"
+    rm -rf "$UPDATE_TMP"
+    trap - EXIT
+    # The units are location-agnostic; this file is what makes them point here.
+    # BAREZEN_PROBE_URL has to be written too: the script's own default is 8080
+    # and an instance on another port would read "endpoint unreachable" and skip
+    # every single day. Loopback on plain HTTP reaches the container directly,
+    # past Caddy, so the answer cannot depend on a certificate.
+    printf 'BAREZEN_DIR=%s\nBAREZEN_COMPOSE=%s\nBAREZEN_PROBE_URL=http://127.0.0.1:%s\n' \
+      "$INSTALL_DIR" "$COMPOSE" "$PORT" | $SUDO tee /etc/barezen-update.env >/dev/null
+    # A deployment that is already up and healthy is not worth failing the whole
+    # wizard over: the units are on file either way, so what is missing is one
+    # command, and it is printed instead of being lost in a stack trace.
+    $SUDO systemctl daemon-reload \
+      || warn "systemd was not reloaded - run: sudo systemctl daemon-reload"
+    $SUDO systemctl enable --now barezen-update.timer \
+      || warn "the timer did not start - run: sudo systemctl enable --now barezen-update.timer"
+  else
+    log "$(t auto_off)"
+    # Turning it off has to actually stop it, and the units go with it so a later
+    # `systemctl list-timers` does not show a timer that does nothing.
+    $SUDO systemctl disable --now barezen-update.timer 2>/dev/null || true
+    $SUDO rm -f "$UNIT_DIR/barezen-update.service" "$UNIT_DIR/barezen-update.timer" /usr/local/bin/barezen-update.sh /etc/barezen-update.env
+    $SUDO systemctl daemon-reload 2>/dev/null || true
+  fi
+fi
+
 echo
 echo "=============================================="
 echo "  $(t done_title)"
@@ -781,5 +915,8 @@ tip() {
 tip done_upgrade
 tip done_logs
 if [ "$INSTALL_TYPE" != "web" ]; then tip done_backup; fi
+# Only when this run actually wired the timer: the two commands below answer
+# nothing on a host where the units were never installed.
+if [ "$TIMER_ON" = "yes" ]; then tip auto_status; fi
 echo
 exit 0
