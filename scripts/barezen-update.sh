@@ -16,6 +16,19 @@
 # scripts/tests/barezen-update-test.sh uses them to drive the rollback path with
 # stubbed docker and curl. An updater whose only failure branch has to be waited
 # for in production is not a tested updater.
+#
+# Exit codes, the four states a journal reader has to tell apart:
+#   0  nothing to do, or the upgrade landed and /readyz answers
+#   1  the upgrade failed and the rollback worked: the previous tag serves
+#      traffic again and the new release waits for a human to look at it
+#   2  the rollback itself failed: the service answers on neither tag, the last
+#      line names the dump to recover from
+#   3  stopped before anything was changed (dump or pull failed): the pin, the
+#      containers and the database are exactly as this run found them
+# The systemd unit carries no SuccessStatus= on purpose: a non-zero exit has to
+# leave the unit failed in `systemctl status`, that is the whole signal.
+# Every line that ends a run repeats its own code, so the journal can be read
+# without this file open next to it.
 set -euo pipefail
 
 DIR="${BAREZEN_DIR:-/opt/barezen}"
@@ -58,23 +71,23 @@ healthy() { curl -fsS "${PROBE}/readyz" >/dev/null 2>&1; }
 
 mkdir -p "$STATE"
 exec 9>"$STATE/lock"
-flock -n 9 || { log "skipped: another update is already running"; exit 0; }
+flock -n 9 || { log "skipped (exit 0): another update is already running"; exit 0; }
 
 cd "$DIR"
-[ -f docker-compose.yml ] || { log "fatal: no docker-compose.yml in $DIR"; exit 1; }
+[ -f docker-compose.yml ] || { log "aborted (exit 3): no docker-compose.yml in $DIR, nothing was changed"; exit 3; }
 
 json="$(curl -fsS "$PROBE/api/version" 2>/dev/null || true)"
-if [ -z "$json" ]; then log "skipped: $PROBE/api/version is unreachable"; exit 0; fi
+if [ -z "$json" ]; then log "skipped (exit 0): $PROBE/api/version is unreachable"; exit 0; fi
 
 running="$(printf '%s' "$json" | sed -n 's/.*"serverVersion":"\([^"]*\)".*/\1/p')"
 latest="$(printf '%s' "$json" | sed -n 's/.*"latestVersion":"\([^"]*\)".*/\1/p')"
 pinned="$(current_tag docker-compose.yml)"
 
-if [ -z "$running" ]; then log "skipped: the response carried no serverVersion"; exit 0; fi
-if [ -z "$latest" ]; then log "skipped: the server could not resolve any release"; exit 0; fi
-if ! stable "$latest"; then log "skipped: $latest is not a stable release"; exit 0; fi
-if ! newer "$latest" "$running"; then log "up to date: running $running, newest stable $latest"; exit 0; fi
-if [ -z "$pinned" ]; then log "fatal: cannot read the pinned tag out of docker-compose.yml"; exit 1; fi
+if [ -z "$running" ]; then log "skipped (exit 0): the response carried no serverVersion"; exit 0; fi
+if [ -z "$latest" ]; then log "skipped (exit 0): the server could not resolve any release"; exit 0; fi
+if ! stable "$latest"; then log "skipped (exit 0): $latest is not a stable release"; exit 0; fi
+if ! newer "$latest" "$running"; then log "up to date (exit 0): running $running, newest stable $latest"; exit 0; fi
+if [ -z "$pinned" ]; then log "aborted (exit 3): cannot read the pinned tag out of docker-compose.yml, nothing was changed"; exit 3; fi
 
 log "upgrading $running -> $latest (compose pin $pinned)"
 
@@ -88,16 +101,16 @@ mkdir -p "$DIR/backups"
 dump="$DIR/backups/auto-$latest-$(date -u +%Y%m%d-%H%M%S).sql.gz"
 if ! $COMPOSE exec -T db pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$dump"; then
   rm -f "$dump"
-  log "aborted: the database dump failed, so nothing was changed"
-  exit 1
+  log "aborted (exit 3): the database dump failed, so nothing was changed"
+  exit 3
 fi
 log "database dumped to $dump"
 
-retag docker-compose.yml "$pinned" "$latest" || { log "fatal: retag failed"; exit 1; }
+retag docker-compose.yml "$pinned" "$latest" || { log "aborted (exit 3): retag failed, the pin still says $pinned"; exit 3; }
 if ! $COMPOSE pull server; then
-  log "pull failed; restoring the previous pin"
+  log "aborted (exit 3): pull failed, restoring the pin to $pinned, no container was recreated"
   retag docker-compose.yml "$latest" "$pinned"
-  exit 1
+  exit 3
 fi
 # A recreate that fails outright is the same incident as one that comes up unhealthy:
 # the pin already names $latest and nothing is serving /api/version. Unguarded, docker's
@@ -115,7 +128,7 @@ else
     sleep "$HEALTH_DELAY"
   done
   if [ -n "$ok" ]; then
-    log "upgraded to $latest and /readyz is answering"
+    log "upgraded to $latest and /readyz is answering (exit 0)"
     exit 0
   fi
   rollback="not healthy after upgrading to $latest"
@@ -124,10 +137,16 @@ fi
 log "$rollback; rolling back to $pinned"
 retag docker-compose.yml "$latest" "$pinned"
 $COMPOSE pull server || true
-$COMPOSE up -d server
-for _ in $(seq 1 "$HEALTH_TRIES"); do
-  if healthy; then log "rolled back to $pinned and healthy; the new release needs a look"; exit 1; fi
-  sleep "$HEALTH_DELAY"
-done
-log "FATAL: the rollback to $pinned is not healthy either. Manual recovery: $dump holds the pre-upgrade database."
-exit 1
+# Guarded like the recreate above: unguarded, docker's exit code plus set -e ends
+# the run before the one line an operator needs when the rollback itself is what
+# broke - the one naming the dump. Reaching the FATAL below is the point.
+if ! $COMPOSE up -d server; then
+  log "recreate failed while restoring $pinned"
+else
+  for _ in $(seq 1 "$HEALTH_TRIES"); do
+    if healthy; then log "rolled back to $pinned and healthy (exit 1): the upgrade failed, the old release is serving, the new release needs a look"; exit 1; fi
+    sleep "$HEALTH_DELAY"
+  done
+fi
+log "FATAL (exit 2, manual recovery needed): the rollback to $pinned is not healthy either and the service answers on neither tag. Manual recovery: $dump holds the pre-upgrade database."
+exit 2
