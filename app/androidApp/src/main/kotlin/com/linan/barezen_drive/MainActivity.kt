@@ -40,7 +40,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             App()
         }
-        installFromNotification(intent)
+        // Consume a tapped "update ready" intent only on a fresh launch.
+        // removeExtra above cleans the live Intent object, which covers a
+        // second onNewIntent on the same instance and a configuration-change
+        // recreation - but NOT process death with task restore: the system
+        // re-parcels the original Intent from the persisted ActivityRecord,
+        // so onCreate runs again with EXTRA_STAGED_APK still in it and the
+        // installer would pop without anyone tapping. savedInstanceState !=
+        // null is exactly that restore, so leave the extra alone; a genuine
+        // later tap arrives through onNewIntent and is consumed there.
+        if (savedInstanceState == null) {
+            installFromNotification(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
