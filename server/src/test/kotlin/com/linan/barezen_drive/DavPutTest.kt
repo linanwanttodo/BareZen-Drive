@@ -8,6 +8,7 @@ import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.UploadSessionsTable
 import com.linan.barezen_drive.storage.LocalStorageProvider
 import com.linan.barezen_drive.storage.StorageProvider
+import com.linan.barezen_drive.storage.thumbKey
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -36,13 +37,16 @@ import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * PUT on a mount.
@@ -78,6 +82,9 @@ class DavPutTest {
         val gets = AtomicInteger()
         val exists = AtomicInteger()
 
+        /** What was probed, so a background probe can be told apart from a route's. */
+        val existsKeys = CopyOnWriteArrayList<String>()
+
         override fun blobKey(sha256: String): String = inner.blobKey(sha256)
         override suspend fun put(key: String, channel: ByteReadChannel) = inner.put(key, channel)
         override suspend fun get(key: String): ByteReadChannel {
@@ -88,6 +95,7 @@ class DavPutTest {
         override suspend fun delete(key: String) = inner.delete(key)
         override suspend fun exists(key: String): Boolean {
             exists.incrementAndGet()
+            existsKeys += key
             return inner.exists(key)
         }
 
@@ -97,6 +105,46 @@ class DavPutTest {
 
     private fun basic(user: String, pass: String) =
         "Basic " + "$user:$pass".toByteArray().encodeBase64()
+
+    private fun sha256Hex(text: String): String =
+        MessageDigest.getInstance("SHA-256").digest(text.encodeToByteArray())
+            .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
+    /**
+     * Waits for the cover probe an upload starts in the background.
+     *
+     * Every completed upload that carried no cover launches
+     * `ThumbnailService.ensureThumbnail`, whose first act is `exists(thumbKey)`
+     * on this same provider. Reading the counters while that job is still in
+     * flight makes a refused request look like it asked the provider something.
+     * A text body can never generate a cover, so one probe per upload is all the
+     * background work there is - wait for those rather than sleeping, which only
+     * narrows the window instead of closing it.
+     */
+    private fun storageCounts() = storage.exists.get() to storage.gets.get()
+
+    private fun awaitCoverProbe(vararg bodies: String) {
+        val wanted = bodies.map { thumbKey(sha256Hex(it)) }.toSet()
+        val deadline = System.currentTimeMillis() + 10_000
+        while (!storage.existsKeys.containsAll(wanted)) {
+            if (System.currentTimeMillis() >= deadline) {
+                fail("the background cover probe never arrived for ${wanted - storage.existsKeys.toSet()}")
+            }
+            Thread.sleep(5)
+        }
+        // The probe seen above is the job's first statement; generateAndStore
+        // re-checks the same key on the generation pool. Wait for the counters
+        // to stop moving so that tail cannot land between the snapshot and the
+        // assertion and be mistaken for the refused request.
+        var last = storageCounts()
+        var quiet = 0
+        val quietDeadline = System.currentTimeMillis() + 5_000
+        while (quiet < 5 && System.currentTimeMillis() < quietDeadline) {
+            Thread.sleep(20)
+            val now = storageCounts()
+            if (now == last) quiet++ else { quiet = 0; last = now }
+        }
+    }
 
     private suspend fun ApplicationTestBuilder.setup(maxFileSize: Long = 1L shl 30) {
         val cfg = AppConfig(
@@ -527,6 +575,7 @@ class DavPutTest {
         val stale = davGet("/dav/guarded.txt").headers[HttpHeaders.ETag]!!
         // Content moves on, so that validator no longer names this resource.
         assertEquals(HttpStatusCode.NoContent, put("/dav/guarded.txt", "two").status)
+        awaitCoverProbe("one", "two")
         val probed = storage.exists.get()
         val opened = storage.gets.get()
 
