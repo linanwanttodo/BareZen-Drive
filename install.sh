@@ -847,6 +847,15 @@ fi
 # delete: the updater makes it again with mkdir -p on the first run after it is
 # re-enabled, so removing it costs nothing and leaving it behind does not.
 remove_unattended_updater() {
+  # Ownership guard: everything below except the state directory is a
+  # host-global name, and the env file is the only record of which --dir the
+  # units were wired for. A second install under a different --dir (a web
+  # static end next to a running server is an expected layout) that answers no
+  # must not switch the first instance's timer off and delete its units, script
+  # and env. The updater's own env is what makes those units point at a
+  # directory, so that line is the evidence: without it, remove nothing at all,
+  # this directory's state file included.
+  grep -qFx "BAREZEN_DIR=$INSTALL_DIR" /etc/barezen-update.env 2>/dev/null || return 0
   # Turning it off has to actually stop it, and the units go with it so a later
   # `systemctl list-timers` does not show a timer that does nothing.
   $SUDO systemctl disable --now barezen-update.timer 2>/dev/null || true
@@ -901,7 +910,8 @@ if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then
     log "$(t auto_off)"
     remove_unattended_updater
   fi
-elif [ "$INSTALL_TYPE" = "web" ] && [ -f "$UNIT_DIR/barezen-update.timer" ]; then
+elif [ "$INSTALL_TYPE" = "web" ] && [ -f "$UNIT_DIR/barezen-update.timer" ] \
+  && grep -qFx "BAREZEN_DIR=$INSTALL_DIR" /etc/barezen-update.env 2>/dev/null; then
   # The other direction the gate above cannot express: an instance switched from
   # server to web over the same --dir. The wizard has already recorded no for a
   # static install, and the previous run's timer is still enabled on this host -
@@ -909,7 +919,11 @@ elif [ "$INSTALL_TYPE" = "web" ] && [ -f "$UNIT_DIR/barezen-update.timer" ]; the
   # morning, reads an endpoint nobody serves and exits 0 in silence. Skipping the
   # block left that zombie in place, so tear it down exactly like the "no" answer.
   # The existence check is what keeps a plain web install from seeing an extra
-  # "auto-update disabled" line when nothing was ever wired here.
+  # "auto-update disabled" line when nothing was ever wired here. The env-file
+  # check is what keeps a web install under a DIFFERENT --dir from switching off
+  # and deleting the units, the script and the env of the server instance that
+  # owns them: those four targets are host-global names, and only the BAREZEN_DIR
+  # line says whose they are.
   log "$(t auto_off)"
   remove_unattended_updater
 fi

@@ -392,6 +392,18 @@ case "$bz_wiring" in
   *"$web_gate"*) ;;
   *) fail "the wiring extraction stopped before the web branch - the block no longer ends at a lone fi, so update this pattern together with install.sh" ;;
 esac
+# The ownership evidence itself, in both off-directions: the teardown function
+# and the web branch must each read the BAREZEN_DIR line of the env file before
+# touching the host-global objects, so a guard stripped from either side fails
+# here loudly instead of quietly re-joining what the scenarios below check.
+case "$bz_teardown" in
+  *'BAREZEN_DIR=$INSTALL_DIR'*) ;;
+  *) fail "remove_unattended_updater is not ownership-guarded - it would tear down host-global objects a different --dir installed" ;;
+esac
+case "$bz_wiring" in
+  *'elif [ "$INSTALL_TYPE" = "web" ] && [ -f "$UNIT_DIR/barezen-update.timer" ]'*'BAREZEN_DIR=$INSTALL_DIR'*) ;;
+  *) fail "the web teardown branch lost the timer existence check or the ownership evidence" ;;
+esac
 mkdir -p "$BZ_WIRE/stub"
 cat > "$BZ_WIRE/stub/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -412,19 +424,26 @@ if [ -n "$out" ]; then printf 'downloaded\n' > "$out"; fi
 exit 0
 EOF
 chmod +x "$BZ_WIRE/stub/systemctl" "$BZ_WIRE/stub/curl"
-bz_wire() { # bz_wire <install-type> <has-own-db> <answer> [empty] - what the block did
+bz_wire() { # bz_wire <install-type> <has-own-db> <answer> [empty|other] - what the block did
   rm -rf "$bz_sb"
   mkdir -p "$bz_sb/unit" "$bz_sb/bin" "$bz_sb/.auto-update"
   # What an earlier run that answered yes left on this host under the same --dir.
   # Without these the scenario proves nothing: there has to be a zombie to remove
   # before "it was removed" means anything. `empty` is the opposite case - an
   # instance that never had the updater wired - and leaves the sandbox bare.
+  # `other` is the third case: the same host objects exist, but a first instance
+  # installed them under a different --dir, which is what the env file says.
   if [ "${4:-left}" != "empty" ]; then
     : > "$bz_sb/unit/barezen-update.service"
     : > "$bz_sb/unit/barezen-update.timer"
     : > "$bz_sb/bin/barezen-update.sh"
-    printf 'BAREZEN_DIR=/opt/barezen\n' > "$bz_sb/env"
+    printf 'BAREZEN_DIR=%s\n' "$bz_sb" > "$bz_sb/env"
     : > "$bz_sb/.auto-update/lock"
+  fi
+  if [ "${4:-left}" = other ]; then
+    mkdir -p "$BZ_WIRE/instance-a/.auto-update"
+    : > "$BZ_WIRE/instance-a/.auto-update/lock"
+    printf 'BAREZEN_DIR=%s\n' "$BZ_WIRE/instance-a" > "$bz_sb/env"
   fi
   : > "$bz_sb/calls.log"
   : > "$bz_sb/out.log"
@@ -506,5 +525,43 @@ case "$(field "$res" OUT)" in
 esac
 [ "$(field "$res" TIMER_ON)" = "" ] || fail "a plain web install set TIMER_ON"
 echo "ok - the web teardown only runs when the earlier install left something behind"
+
+# The second-instance direction: install.sh expects a web static end to coexist
+# with a running server ("that is a second instance, not an upgrade"), and both
+# off-directions used to look only at the host-global unit paths - so a B-dir
+# wizard switched A's timer off and deleted A's units, script and env, printed a
+# lone auto_off, and removed B's own (nonexistent) state directory while A's
+# stayed behind. With the ownership evidence, a run under a --dir that never
+# wired the updater removes nothing at all, in either off-direction.
+res="$(bz_wire web "" no other)" || fail "the wiring scenario for [web \"\" no other] exited non-zero"
+[ "$(field "$res" CALLS)" = "" ] || fail "a web install under a second --dir disabled the first instance's timer: $(field "$res" CALLS)"
+[ "$(field "$res" UNITS)" = "barezen-update.service;barezen-update.timer;" ] \
+  || fail "a web install under a second --dir removed the first instance's units: $(field "$res" UNITS)"
+[ "$(field "$res" SCRIPT)" = "kept" ] || fail "a web install under a second --dir removed the updater script the first instance installed"
+[ "$(field "$res" ENVFILE)" = "kept" ] || fail "a web install under a second --dir removed the env file that points at the first instance"
+[ "$(field "$res" STATE)" = "kept" ] || fail "a web install under a second --dir removed its own state directory although it owns no updater setup"
+if [ ! -e "$BZ_WIRE/instance-a/.auto-update/lock" ]; then fail "a web install under a second --dir removed the first instance's state directory"; fi
+case "$(field "$res" OUT)" in
+  *"log:"*) fail "a second-instance web install was told its auto-update was turned off: $(field "$res" OUT)" ;;
+esac
+echo "ok - a web install under a second --dir leaves the first instance alone"
+
+# Same hole on the other off-direction: a server instance under --dir B that
+# answers no runs the teardown unconditionally. The answer is still reported -
+# it is B's own setting - but nothing belonging to A, and nothing belonging to
+# B beyond the answer, is touched.
+res="$(bz_wire server yes no other)" || fail "the wiring scenario for [server yes no other] exited non-zero"
+[ "$(field "$res" CALLS)" = "" ] || fail "answering no under a second --dir disabled the first instance's timer: $(field "$res" CALLS)"
+[ "$(field "$res" UNITS)" = "barezen-update.service;barezen-update.timer;" ] \
+  || fail "answering no under a second --dir removed the first instance's units: $(field "$res" UNITS)"
+[ "$(field "$res" SCRIPT)" = "kept" ] || fail "answering no under a second --dir removed the updater script the first instance installed"
+[ "$(field "$res" ENVFILE)" = "kept" ] || fail "answering no under a second --dir removed the env file that points at the first instance"
+[ "$(field "$res" STATE)" = "kept" ] || fail "answering no under a second --dir removed its own state directory although it owns no updater setup"
+if [ ! -e "$BZ_WIRE/instance-a/.auto-update/lock" ]; then fail "answering no under a second --dir removed the first instance's state directory"; fi
+case "$(field "$res" OUT)" in
+  *"log: auto_off"*) ;;
+  *) fail "answering no under a second --dir did not report this instance's own answer: $(field "$res" OUT)" ;;
+esac
+echo "ok - answering no under a second --dir leaves the first instance alone"
 
 echo "all barezen-update assertions passed"
