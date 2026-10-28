@@ -7,6 +7,7 @@ import androidx.core.content.ContextCompat
 import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.platform.MediaSync
 import com.linan.barezen_drive.platform.TransferNotifier
+import com.linan.barezen_drive.update.UpdateAuto
 
 /**
  * Process-wide entry that must run even when the app is cold-started by a
@@ -24,6 +25,10 @@ class BareZenApp : Application() {
             val prefs = AppPreferences.get()
             MediaSync.apply(prefs.albumAutoSync, prefs.syncWifiOnly, prefs.albumSyncChargingOnly)
         }
+        // The daily stable-release pass. Registered here rather than in an
+        // Activity because WorkManager may cold-start this process with no
+        // Activity at all.
+        runCatching { UpdateAuto.apply() }
     }
 
     /**

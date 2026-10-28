@@ -42,6 +42,19 @@ Range 下载、签名链接、分享生命周期、统计与清理）：
 BASE=http://<服务器>:8080 USER_NAME=e2etest PASS=e2epassword123 python3 scripts/e2e.py
 ```
 
+### 宿主机脚本的测试
+
+`install.sh` 与 `scripts/barezen-update.sh` 没有测试框架可依，用桩跑：
+
+```bash
+bash scripts/tests/install-type-test.sh
+bash scripts/tests/barezen-update-test.sh
+```
+
+后者把 `docker` 与 `curl` 换成临时目录里的桩脚本（PATH 前置），断言的是调用序列与 compose 标签的
+终态，所以「升级后不健康要回滚」这条分支不需要真把一台服务器搞坏来验证。两个脚本都在 CI 的 `test`
+门里跑，改动 `install.sh` 或自动升级脚本前先本地跑一遍，比读一百行日志快。
+
 ### 持续集成
 
 `.github/workflows/pipeline.yml` 是唯一的流水线文件（PR 与推送到 `master` 都跑它）：`version`

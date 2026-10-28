@@ -95,6 +95,10 @@ actual object AppPreferences {
         override var albumBucketsReviewed: Boolean
             get() = readString("album_buckets_reviewed") == "true"
             set(v) = writeString("album_buckets_reviewed", v.toString())
+
+        override var stagedUpdateVersion: String
+            get() = readString("staged_update_version") ?: ""
+            set(v) = writeString("staged_update_version", v)
     }
 
     actual fun get(): AppPrefs = instance

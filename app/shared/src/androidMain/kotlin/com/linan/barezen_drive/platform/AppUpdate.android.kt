@@ -45,19 +45,45 @@ actual suspend fun downloadAndInstallUpdate(
     sha256: String?,
     size: Long?,
     onProgress: (Float) -> Unit,
-): Boolean = withContext(Dispatchers.IO) {
-    urls.firstOrNull { url ->
-        runCatching { downloadOne(url, sha256, size, onProgress) }.getOrDefault(false)
-    } != null
+): Boolean = installAndAccept(stageUpdateApk(urls, sha256, size, onProgress)) { path ->
+    // Two failure shapes inside installStagedUpdate are swallowed on purpose,
+    // and neither is a download failure: the installer intent can be rejected
+    // (startActivity throws, caught by the runCatching inside), and the staged
+    // file can have been cleaned up after staging (isFile gone, the function
+    // returns false). In both cases the bytes were verified and fetched from a
+    // mirror; the next mirror would download the same package, so the caller
+    // still reports success - see [installAndAccept] for the rule.
+    installStagedUpdate(path)
 }
 
-/** Downloads one mirror; false leaves [urls]' next candidate to take over. */
+actual suspend fun stageUpdateApk(
+    urls: List<String>,
+    sha256: String?,
+    size: Long?,
+    onProgress: (Float) -> Unit,
+): String? = withContext(Dispatchers.IO) {
+    stageWithMirrors(urls) { url -> downloadOne(url, sha256, size, onProgress) }
+}
+
+/**
+ * Runs on the caller's thread now (it used to sit inside the IO block): the
+ * File.isFile check is one cheap stat call, and startActivity actually
+ * belongs on the main thread, so the move is an improvement, not a hazard.
+ */
+actual fun installStagedUpdate(path: String): Boolean {
+    val file = File(path)
+    if (!file.isFile) return false
+    runCatching { installApk(AndroidContext.app, file) }
+    return true
+}
+
+/** Downloads one mirror to a verified file and returns its path; null hands [urls]' next candidate over. */
 private fun downloadOne(
     url: String,
     sha256: String?,
     size: Long?,
     onProgress: (Float) -> Unit,
-): Boolean {
+): String? {
     val context = AndroidContext.app
     val name = url.substringBefore('?').substringAfterLast('/')
     val destination = File(context.getExternalFilesDir(null), "updates/$name")
@@ -69,7 +95,7 @@ private fun downloadOne(
         instanceFollowRedirects = true
     }
     try {
-        if (connection.responseCode !in 200..299) return false
+        if (connection.responseCode !in 200..299) return null
         val total = connection.contentLengthLong
         destination.outputStream().use { out ->
             connection.inputStream.use { input ->
@@ -95,29 +121,51 @@ private fun downloadOne(
         // A truncated file must never reach the installer: drop it so the
         // next mirror starts clean instead of resuming garbage.
         destination.delete()
-        return false
+        return null
     } finally {
         connection.disconnect()
     }
 
-    // A file that does not match the manifest is worse than no file: the
-    // installer would reject it with a message the user cannot act on. Drop it
-    // so the next mirror starts clean, exactly like a broken connection.
-    if (!verifyDownloaded(destination, sha256, size)) {
-        destination.delete()
-        return false
-    }
+    // A file that does not match the manifest is worse than no file: drop it
+    // so the next mirror starts clean, exactly like a broken connection; only
+    // a verified file is reported complete and handed back as the staged path.
+    return pathIfVerified(destination, sha256, size, onProgress)
+}
 
-    // Download is complete; report the last percent before handing the file
-    // to the installer so the UI never ends on 99.
+/**
+ * Turns one mirror's freshly downloaded [file] into a staged path.
+ *
+ * Two externally visible rules live here and nowhere else: a file that does
+ * not verify is never returned (handing back an unverified path would give a
+ * bad package straight to the installer), and the closing [onProgress] tick
+ * of 1f is emitted only after verification passes - once, on the winner - so
+ * a failed mirror never ends the UI on "complete". The verified file stays in
+ * updates/ under its own name; same-name writes overwrite, so nothing
+ * accumulates.
+ */
+internal fun pathIfVerified(
+    file: File,
+    sha256: String?,
+    size: Long?,
+    onProgress: (Float) -> Unit,
+): String? {
+    if (!verifyOrDiscard(file, sha256, size)) return null
+
+    // Download is complete and verified; report the last percent so the UI
+    // never ends on 99, then hand the path back.
     onProgress(1f)
-    // A rejected installer intent (no handler, OEM quirk) must not read as
-    // "download failed": the bytes are verified, and the next mirror would
-    // fetch the very same package before hitting the same wall. The verified
-    // file stays in updates/ under its own name - same-name writes overwrite,
-    // so nothing accumulates.
-    runCatching { installApk(context, destination) }
-    return true
+    return file.absolutePath
+}
+
+/**
+ * Verifies [file] and, on any mismatch, deletes it so the next mirror starts
+ * from nothing instead of resuming garbage. The delete is the point: a bad
+ * file that survives this call can still reach a later install attempt.
+ */
+internal fun verifyOrDiscard(file: File, sha256: String?, size: Long?): Boolean {
+    if (verifyDownloaded(file, sha256, size)) return true
+    file.delete()
+    return false
 }
 
 /**
@@ -132,7 +180,7 @@ private fun downloadOne(
  * The digest comes from [Sha256er], the same primitive the upload path uses,
  * so an APK hashed here and a file hashed there are directly comparable.
  */
-private fun verifyDownloaded(file: File, sha256: String?, size: Long?): Boolean {
+internal fun verifyDownloaded(file: File, sha256: String?, size: Long?): Boolean {
     if (!file.isFile) return false
     if (size != null && size > 0L && file.length() != size) return false
     val expected = sha256?.trim().orEmpty()

@@ -29,3 +29,13 @@ actual suspend fun downloadAndInstallUpdate(
     size: Long?,
     onProgress: (Float) -> Unit,
 ): Boolean = false
+
+/** The web client ships with the server; a reload is the whole update. */
+actual suspend fun stageUpdateApk(
+    urls: List<String>,
+    sha256: String?,
+    size: Long?,
+    onProgress: (Float) -> Unit,
+): String? = null
+
+actual fun installStagedUpdate(path: String): Boolean = false

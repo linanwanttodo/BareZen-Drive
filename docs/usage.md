@@ -116,6 +116,58 @@ docker compose up -d             # 再起服务器
 切到 `STORAGE_BACKEND=s3` 后，`./data/storage` 只剩 `tmp/`，备份责任转移到桶自身（开版本控制），
 数据库那份照旧。
 
+### 自动升级（可选，默认开）
+
+`install.sh` 会在宿主机装一个每天 04:15（带 45 分钟随机抖动，避免一堆实例同时拉镜像）跑一次的
+systemd 定时器：
+
+```bash
+systemctl status barezen-update.timer            # 装没装、下次什么时候跑
+journalctl -u barezen-update.service -n 50       # 上次做了什么
+sudo systemctl disable --now barezen-update.timer   # 停掉
+```
+
+它只跟**稳定版**：问本机 `/api/version`。服务器默认读 `releases/latest/download/update.json`
+（`UPDATE_MANIFEST_URL` 可覆盖；只有读不到这份清单时才回落 GitHub 的 `releases/latest` API，
+结果缓存 10 分钟）。清单里的 `version` 本身不过滤 pre-release，真正挡住测试版的是下一句：
+版本号必须是纯 `x.y.z`，带 `-` 或 `+` 后缀的一律跳过。
+判定为可升级后按固定顺序走：先把库 dump 到 `<安装目录>/backups/auto-<版本>-<时间>.sql.gz` → 改 compose
+标签 → `docker compose pull server` → `up -d server` → 探 `/readyz`。HTTPS 安装的 compose 命令带
+`-f docker-compose.caddy.yml`（把明文端口收回 loopback），这条也一起记在 `/etc/barezen-update.env`
+里，升级重放同一条命令，不会把 8080 重新暴露到所有网卡。
+
+三种情况它自己收场：dump 失败就**什么都不改**直接退出；`pull` 失败把标签退回去；升级后 `/readyz`
+一直 503 就把标签改回原版本再拉一次、再探一次，日志里写明回滚结果（脚本退出码：0 无事可做或已升好，
+1 已回滚，2 回滚也失败需要人工，3 动手前就中止）。回滚只换镜像标签、不动数据——schema 只增列，
+旧镜像读得懂新库。**哪天某个版本要改列类型或加约束，必须先对该版本关掉自动升级**，那时回滚不再免费。
+
+回滚的前提是 compose 里钉着一个**具体版本**：`install.sh` 现在会把 `latest` 解析成当前发布版本再写进
+compose（`--version` 显式指定时照旧）。旧的 `latest` 钉法没有回滚目标——改回去还是那个可变标签，等于
+把刚失败的版本再拉一遍——所以遇到这种钉法脚本会记一行 `no rollback target` 并跳过当天的升级；重跑一次
+`install.sh` 重新钉好即可。自动 dump 只保留最近 7 份（`backups/auto-*.sql.gz`），免得一台总是升级失败的
+机器把数据盘塞满；`backups/barezen-*.sql.gz` 是 `install.sh` 手工升级时留的，不在此列。
+
+**它是升级器，不是看门狗。** 实例本来就停着（宕机、镜像坏了）时，它连 `/api/version` 都问不到，
+只会安静退出并记一条 `skipped (exit 0)`，第二天再来一次——不会把服务拉起来。要保活靠 compose 的
+`restart: unless-stopped` 与你自己部署的监控。
+
+宿主机上的那一对 systemd 单元与 `/etc/barezen-update.env` 是全局的：自动升级只按**一台**实例设计，
+同一台机器上用第二个 `--dir` 装第二套服务端会接管前一套的定时器（拆除方向有归属检查，安装方向没有）。
+需要多套实例时请把它们放在不同机器上。
+
+重跑 `install.sh` 时那一问答「n」即可彻底拆掉单元文件（连脚本与 env 文件一起）；`.env` 里的
+`AUTO_UPDATE` 是它的答案，非交互重跑会沿用旧值，不会悄悄改。拆除的前提是 `/etc/barezen-update.env`
+还在、且里面记的 `BAREZEN_DIR` 仍是本安装目录——那份文件就是归属证据，被手工删掉时脚本不会替别的
+实例拆单元（宁可留一个僵尸定时器，也不能关掉别人那台）。
+
+手机端（Android）另有一条：登录后每天检查一次，遇到新的稳定版就在当前网络下把 APK 下好，按清单里的
+sha256 与大小校验（清单没带哈希时这两项就只能省掉），然后发一条通知，点通知才进系统安装页。安装确认
+是 Android 自己的，跳不过去。通知发不出去
+时（Android 13+ 拒绝通知权限、或系统设置里关掉了本应用/本通道的通知）它**连下载都不做**：否则下好的
+包没人知道，而第二天又会因为「已经下过」跳过这个版本，升级提示就永久丢了。把通知打开，第二天照常。
+点了通知又把系统安装框取消的话，这个版本当天不会再弹一次（记录里已经当作「已下载」）；设置页的手动
+「检查更新」仍可重新下载，下一个版本也会照常提示。
+
 ### 不用 Docker 的情况
 
 从 Releases 下载 `BareZen-Drive-<版本>-server.tar.gz`（内嵌 Web 客户端，架构无关，需要 JDK 21），
@@ -185,6 +237,9 @@ docker compose up -d             # 再起服务器
    - 桌面/iOS（预留）：将按平台列出对应安装包。
 3. 清单里每个包都带 sha256 与大小；Release 页同时提供 `checksums.txt`。
 
+这条手动检查始终可用；服务器端与 Android 的自动升级见第一节的「自动升级」小节。手机通知被关掉时，
+自动那条什么都不做，手动检查就是唯一的入口。
+
 `update.json` 结构（桌面与 iOS 启用后直接追加条目，无需改结构）：
 
 ```json
@@ -217,6 +272,10 @@ git tag v0.0.2 && git push origin master v0.0.2
 Pipeline 会自动：跑测试 → 构建 Web/APK/服务端包 → 推送 amd64+arm64 镜像 → 生成
 `update.json` 与 `checksums.txt` → 发布 GitHub Release。单个 job 失败用 "Re-run failed jobs"
 只重跑失败部分，已构建的产物直接复用。
+
+发**测试版**时在 GitHub 上把那一条 Release 勾成 "pre-release"：`releases/latest` 与它下面的
+`update.json` 只指向正式版，自动升级便不会取到；版本号带 `-beta` 之类的后缀也会被前文的纯 `x.y.z`
+规则再挡一次。正式发版则不要勾选。
 
 ## 七、桌面端与 iOS 现状（如实说明）
 
