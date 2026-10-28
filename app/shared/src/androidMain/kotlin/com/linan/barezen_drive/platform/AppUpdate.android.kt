@@ -126,17 +126,35 @@ private fun downloadOne(
         connection.disconnect()
     }
 
-    // A file that does not match the manifest is worse than no file: the
-    // installer would reject it with a message the user cannot act on. Drop it
-    // so the next mirror starts clean, exactly like a broken connection.
-    if (!verifyOrDiscard(destination, sha256, size)) return null
+    // A file that does not match the manifest is worse than no file: drop it
+    // so the next mirror starts clean, exactly like a broken connection; only
+    // a verified file is reported complete and handed back as the staged path.
+    return pathIfVerified(destination, sha256, size, onProgress)
+}
+
+/**
+ * Turns one mirror's freshly downloaded [file] into a staged path.
+ *
+ * Two externally visible rules live here and nowhere else: a file that does
+ * not verify is never returned (handing back an unverified path would give a
+ * bad package straight to the installer), and the closing [onProgress] tick
+ * of 1f is emitted only after verification passes - once, on the winner - so
+ * a failed mirror never ends the UI on "complete". The verified file stays in
+ * updates/ under its own name; same-name writes overwrite, so nothing
+ * accumulates.
+ */
+internal fun pathIfVerified(
+    file: File,
+    sha256: String?,
+    size: Long?,
+    onProgress: (Float) -> Unit,
+): String? {
+    if (!verifyOrDiscard(file, sha256, size)) return null
 
     // Download is complete and verified; report the last percent so the UI
-    // never ends on 99, then hand the path back. The verified file stays in
-    // updates/ under its own name - same-name writes overwrite, so nothing
-    // accumulates.
+    // never ends on 99, then hand the path back.
     onProgress(1f)
-    return destination.absolutePath
+    return file.absolutePath
 }
 
 /**

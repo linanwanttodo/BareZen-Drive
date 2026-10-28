@@ -5,6 +5,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -12,8 +13,11 @@ import kotlin.test.assertTrue
  * temporary files: bytes that do not match the manifest must be deleted (a
  * bad file left on disk can reach a later install attempt), bytes that match
  * must survive for the installer, and manifest fields that are absent are
- * skipped rather than failed. Sha256er runs on the host JVM, as Sha256Test
- * already proves, so the digest branch needs no Android context.
+ * skipped rather than failed. The staged-path contract of [pathIfVerified]
+ * is pinned here too: an unverified file is never returned as a path, and
+ * the closing 1f goes out only after verification passes, exactly once.
+ * Sha256er runs on the host JVM, as Sha256Test already proves, so the digest
+ * branch needs no Android context.
  */
 class AppUpdateVerifyTest {
 
@@ -89,5 +93,24 @@ class AppUpdateVerifyTest {
         val blank = stagedFile()
         assertTrue(verifyOrDiscard(blank, "  ", null))
         assertTrue(blank.isFile)
+    }
+
+    @Test
+    fun aFailedVerifyReturnsNoPathAndNeverReportsDone() {
+        val progress = mutableListOf<Float>()
+        val file = stagedFile()
+        assertNull(pathIfVerified(file, "f".repeat(64), content.size.toLong()) { progress.add(it) })
+        assertFalse(progress.contains(1f))
+        assertEquals(false, file.exists())
+    }
+
+    @Test
+    fun aVerifiedFileIsTheStagedPathAnd1fGoesOutExactlyOnce() {
+        val progress = mutableListOf<Float>()
+        val file = stagedFile()
+        val path = pathIfVerified(file, sha256Of(content), content.size.toLong()) { progress.add(it) }
+        assertEquals(file.absolutePath, path)
+        assertEquals(listOf(1f), progress)
+        assertTrue(file.isFile)
     }
 }
