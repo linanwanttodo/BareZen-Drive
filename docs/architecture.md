@@ -183,6 +183,13 @@ work_mem=4MB` + healthcheck。镜像的 `HEALTHCHECK` 读 `/readyz`（借一条�
 `SERVER_PORT` 只绑 `127.0.0.1`，对外只剩 Caddy 的 443。内容存储默认落在 `STORAGE_DIR` 卷；`STORAGE_BACKEND=s3` 时改写入任意 S3 兼容桶（`S3_ENDPOINT/S3_BUCKET/S3_REGION/S3_ACCESS_KEY/S3_SECRET_KEY/S3_PATH_STYLE`），`STORAGE_DIR` 仍需可写（分块暂存目录）。`TRUST_PROXY=true` 仅在该 compose 前面还有会重写
 `X-Forwarded-For` 的反向代理时开启，否则认证限流按 socket 对端计数。部署步骤见 `development.md`。
 
+自动升级住在宿主机而不是容器里（容器换不了自己的镜像）：`install.sh` 把 `scripts/barezen-update.sh`
+装到 `/usr/local/bin`，配一对 systemd 单元（`barezen-update.timer` 每天 04:15 + 随机抖动，`.service`
+是 `Type=oneshot`），只跟 `releases/latest` 的稳定版（纯 `x.y.z`），dump 先行，`/readyz` 判活，失败
+自动退回原标签。它不看守服务是否活着——实例已宕时只会安静跳过，保活仍归 compose 的 restart 策略。
+`AUTO_UPDATE=no` 或卸载时 `install.sh` 会按 `/etc/barezen-update.env` 里的 `BAREZEN_DIR` 确认那一对
+单元属于本目录才拆，避免两个实例互相关掉对方的定时器。
+
 ## 持续集成与预留平台
 
 单一工作流 `.github/workflows/pipeline.yml`：`version` 解析版本号 -> `test` 门跑服务端、core 与共享模块（Android host）测试 + wasm 编译门 -> `web` 一次编译出 wasm 产物供后续复用 -> `android` 出 debug/release APK -> `server` 内嵌 web 产物出 `installDist` -> `docker` 多架构镜像 -> `manifest` 合并多架构清单 -> `release` 发布产物与镜像。`desktop` 与 `ios` 是已存在的预留任务（`continue-on-error`，Apple target 需要 macOS runner 与真实签名才可能成功）。共享模块目前只声明 android + wasmJs，`jvmMain`/`iosMain`/`jsMain` 源码与 `AppUpdate.jvm.kt` 作为预留 actual 存在，启用对应 target 即可接入。`pull_request` 事件只跑 `version` + `test`。

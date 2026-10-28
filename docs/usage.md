@@ -116,6 +116,39 @@ docker compose up -d             # 再起服务器
 切到 `STORAGE_BACKEND=s3` 后，`./data/storage` 只剩 `tmp/`，备份责任转移到桶自身（开版本控制），
 数据库那份照旧。
 
+### 自动升级（可选，默认开）
+
+`install.sh` 会在宿主机装一个每天 04:15（带 45 分钟随机抖动，避免一堆实例同时拉镜像）跑一次的
+systemd 定时器：
+
+```bash
+systemctl status barezen-update.timer            # 装没装、下次什么时候跑
+journalctl -u barezen-update.service -n 50       # 上次做了什么
+sudo systemctl disable --now barezen-update.timer   # 停掉
+```
+
+它只跟**稳定版**：问本机 `/api/version`，版本来自 GitHub 的 `releases/latest` 端点（该端点本身就不
+返回 pre-release，所以测试版进不来），再要求版本号是纯 `x.y.z`——带 `-` 或 `+` 后缀的一律跳过。
+判定为可升级后按固定顺序走：先把库 dump 到 `<安装目录>/backups/auto-<版本>-<时间>.sql.gz` → 改 compose
+标签 → `docker compose pull server` → `up -d server` → 探 `/readyz`。
+
+三种情况它自己收场：dump 失败就**什么都不改**直接退出；`pull` 失败把标签退回去；升级后 `/readyz`
+一直 503 就把标签改回原版本再拉一次、再探一次，日志里写明回滚结果（脚本退出码：0 无事可做或已升好，
+1 已回滚，2 回滚也失败需要人工，3 动手前就中止）。回滚只换镜像标签、不动数据——schema 只增列，
+旧镜像读得懂新库。**哪天某个版本要改列类型或加约束，必须先对该版本关掉自动升级**，那时回滚不再免费。
+
+**它是升级器，不是看门狗。** 实例本来就停着（宕机、镜像坏了）时，它连 `/api/version` 都问不到，
+只会安静退出并记一条 `skipped (exit 0)`，第二天再来一次——不会把服务拉起来。要保活靠 compose 的
+`restart: unless-stopped` 与你自己部署的监控。
+
+重跑 `install.sh` 时那一问答「n」即可彻底拆掉单元文件（连脚本与 env 文件一起）；`.env` 里的
+`AUTO_UPDATE` 是它的答案，非交互重跑会沿用旧值，不会悄悄改。
+
+手机端（Android）另有一条：登录后每天检查一次，遇到新的稳定版就在当前网络下把 APK 下好并校验
+sha256，然后发一条通知，点通知才进系统安装页。安装确认是 Android 自己的，跳不过去。通知发不出去
+时（Android 13+ 拒绝通知权限、或系统设置里关掉了本应用/本通道的通知）它**连下载都不做**：否则下好的
+包没人知道，而第二天又会因为「已经下过」跳过这个版本，升级提示就永久丢了。把通知打开，第二天照常。
+
 ### 不用 Docker 的情况
 
 从 Releases 下载 `BareZen-Drive-<版本>-server.tar.gz`（内嵌 Web 客户端，架构无关，需要 JDK 21），
@@ -184,6 +217,9 @@ docker compose up -d             # 再起服务器
    - **Android**：提示「下载更新」，直接下载清单里的 APK 直链。
    - 桌面/iOS（预留）：将按平台列出对应安装包。
 3. 清单里每个包都带 sha256 与大小；Release 页同时提供 `checksums.txt`。
+
+这条手动检查始终可用；服务器端与 Android 的自动升级见第一节的「自动升级」小节。手机通知被关掉时，
+自动那条什么都不做，手动检查就是唯一的入口。
 
 `update.json` 结构（桌面与 iOS 启用后直接追加条目，无需改结构）：
 
