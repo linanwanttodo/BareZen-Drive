@@ -130,8 +130,10 @@
   - 宿主机 `systemd` 定时器：`install.sh` 装 `barezen-update.timer`（每天 04:15 + 45 分钟随机抖动）
     与 `barezen-update.service`（`Type=oneshot`），脚本落 `/usr/local/bin`，配置落
     `/etc/barezen-update.env`。容器换不了自己的镜像，所以这个动作只能住在宿主机
-  - 只跟稳定版：版本来自本机 `/api/version`（上游是 `releases/latest`，该端点不含 pre-release），
-    再要求纯 `x.y.z`；带 `-`/`+` 的 beta 与 build 号一律跳过，判定抽成 `stable()` 并有脚本测试
+  - 只跟稳定版：版本来自本机 `/api/version`（默认读 `releases/latest/download/update.json`，
+    读不到才回落 GitHub 的 `releases/latest`，缓存 10 分钟），再要求纯 `x.y.z`——清单里的
+    `version` 本身不过滤 pre-release，带 `-`/`+` 的 beta 与 build 号靠这一步跳过；
+    判定抽成 `stable()` 并有脚本测试
   - 顺序固定：`pg_dump` 到 `<目录>/backups/auto-*` → 改 compose 标签 → `pull server` →
     `up -d server` → 探 `/readyz`。dump 失败什么都不改就退出；pull 失败退回标签；升级后 503 就
     退回旧标签重拉重探一次。退出码 0/1/2/3 区分「无事可做或已升好 / 已回滚 / 回滚也失败 / 动手前中止」

@@ -332,6 +332,12 @@ elif command -v docker-compose >/dev/null 2>&1; then
 else
   err "Docker Compose is required (docker compose plugin or docker-compose)."
 fi
+# Extra -f files an install has to pass to every compose invocation. Only the
+# HTTPS front uses one today, and it is not optional: without the override the
+# server publishes ${PORT} on every interface instead of loopback, and the
+# unattended updater - which reads the compose command out of
+# /etc/barezen-update.env - would recreate the container that way at 04:15.
+COMPOSE_FILES=""
 
 echo
 echo "=============================================="
@@ -802,7 +808,11 @@ volumes:
   caddy_config:
 EOF
     $COMPOSE pull --quiet server || true
-    $COMPOSE -f docker-compose.yml -f docker-compose.caddy.yml up -d
+    # Recorded as well as used: the unattended updater replays this exact
+    # command later, and "docker compose" alone would drop the loopback-only
+    # port override the section above exists for.
+    COMPOSE_FILES="-f docker-compose.yml -f docker-compose.caddy.yml"
+    $COMPOSE $COMPOSE_FILES up -d
     READY_URL="$PROBE_URL"
   else
     $COMPOSE pull --quiet || true
@@ -898,7 +908,7 @@ if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then
     # every single day. Loopback on plain HTTP reaches the container directly,
     # past Caddy, so the answer cannot depend on a certificate.
     printf 'BAREZEN_DIR=%s\nBAREZEN_COMPOSE=%s\nBAREZEN_PROBE_URL=http://127.0.0.1:%s\n' \
-      "$INSTALL_DIR" "$COMPOSE" "$PORT" | $SUDO tee /etc/barezen-update.env >/dev/null
+      "$INSTALL_DIR" "$COMPOSE${COMPOSE_FILES:+ $COMPOSE_FILES}" "$PORT" | $SUDO tee /etc/barezen-update.env >/dev/null
     # A deployment that is already up and healthy is not worth failing the whole
     # wizard over: the units are on file either way, so what is missing is one
     # command, and it is printed instead of being lost in a stack trace.
@@ -945,7 +955,10 @@ echo
 # tip <key> - one copy-pasteable command line with every placeholder filled in.
 tip() {
   local s; s="$(t "$1")"
-  s="${s//%DIR%/$INSTALL_DIR}"; s="${s//%COMPOSE%/$COMPOSE}"
+  # The compose command printed here is the one this install actually uses,
+  # override files included - a copy-pasted `up -d` without them would drop the
+  # loopback-only port binding on an HTTPS install.
+  s="${s//%DIR%/$INSTALL_DIR}"; s="${s//%COMPOSE%/$COMPOSE${COMPOSE_FILES:+ $COMPOSE_FILES}}"
   s="${s//%DBUSER%/$DB_USER}"; s="${s//%DBNAME%/$DB_NAME}"
   echo "  $s"
 }

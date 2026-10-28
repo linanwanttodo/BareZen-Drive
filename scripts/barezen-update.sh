@@ -109,7 +109,11 @@ log "database dumped to $dump"
 retag docker-compose.yml "$pinned" "$latest" || { log "aborted (exit 3): retag failed, the pin still says $pinned"; exit 3; }
 if ! $COMPOSE pull server; then
   log "aborted (exit 3): pull failed, restoring the pin to $pinned, no container was recreated"
-  retag docker-compose.yml "$latest" "$pinned"
+  # Guarded: unguarded, set -e would end the run with sed's exit code, and a
+  # non-zero that is not 3 reads as a different outcome to whoever checks the
+  # journal. The restore is best-effort here - the message already says the pin
+  # may name $latest, and nothing was recreated.
+  retag docker-compose.yml "$latest" "$pinned" || log "warning: could not restore the pin to $pinned"
   exit 3
 fi
 # A recreate that fails outright is the same incident as one that comes up unhealthy:
@@ -135,7 +139,14 @@ else
 fi
 
 log "$rollback; rolling back to $pinned"
-retag docker-compose.yml "$latest" "$pinned"
+# Guarded for the same reason as the pull-failure restore above, and one more:
+# if this retag fails the pin still names $latest, which is NOT "rolled back".
+# Left unguarded, set -e would exit 1 and the journal would report the one
+# outcome that did not happen.
+if ! retag docker-compose.yml "$latest" "$pinned"; then
+  log "FATAL (exit 2, manual recovery needed): could not move the pin back to $pinned - docker-compose.yml still names $latest. Manual recovery: set the image tag to $pinned and recreate, or restore from $dump."
+  exit 2
+fi
 $COMPOSE pull server || true
 # Guarded like the recreate above: unguarded, docker's exit code plus set -e ends
 # the run before the one line an operator needs when the rollback itself is what
