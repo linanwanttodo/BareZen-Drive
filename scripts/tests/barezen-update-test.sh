@@ -200,6 +200,20 @@ grep -q "recreate failed while restoring 0.2.1" "$d/out.log" || fail "the rollba
 grep -q "FATAL (exit 2, manual recovery needed)" "$d/out.log" || fail "the guarded recreate still swallowed the FATAL line"
 echo "ok - a failing rollback recreate still reports exit 2"
 
+# 13. The compose command is whatever the install recorded, and an HTTPS
+#    deployment records the override files too. The updater has to replay all
+#    of it: dropping `-f docker-compose.caddy.yml` would recreate the server
+#    from the base file alone, putting the plaintext port back on every
+#    interface - at 04:15, with nobody watching. The stub logs its argv, so the
+#    assertion is on the recorded words, not on the variable's name.
+d="$(new_env 0.2.1)"
+run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"0.3.0"}' \
+  BAREZEN_COMPOSE="docker compose -f docker-compose.yml -f docker-compose.caddy.yml"
+has "$d" "-f docker-compose.caddy.yml up -d server" \
+  || fail "the override files were dropped before up -d: $(tr '\n' ';' < "$d/calls.log")"
+[ "$(pin_of "$d")" = "0.3.0" ] || fail "the upgrade with a compose override did not land: $(pin_of "$d")"
+echo "ok - the updater replays the compose command with its override files"
+
 # --- the host precheck in install.sh, extracted and run the way
 # install-type-test.sh runs the wizard's decision line. flock, a GNU sed and a
 # `sort -V` that actually sorts by version are what the updater above is built
@@ -452,7 +466,7 @@ bz_wire() { # bz_wire <install-type> <has-own-db> <answer> [empty|other] - what 
   PATH="$BZ_WIRE/stub:$PATH" BZ_CALLS="$bz_sb/calls.log" BZ_OUT="$bz_sb/out.log" \
   BZ_SB="$bz_sb" \
   INSTALL_TYPE="$1" HAS_OWN_DB="$2" AUTO_UPDATE="$3" SUDO="" INSTALL_DIR="$bz_sb" \
-  COMPOSE="docker compose" PORT=8080 REPO_RAW="bz://stub" \
+  COMPOSE="docker compose" COMPOSE_FILES="${BZ_COMPOSE_FILES:-}" PORT=8080 REPO_RAW="bz://stub" \
   bash -c '
     set -euo pipefail
     log() { printf "log: %s\n" "$*" >> "$BZ_OUT"; }
@@ -516,6 +530,21 @@ case "$(field "$res" CALLS)" in
   *) fail "the yes branch never enabled the timer: $(field "$res" CALLS)" ;;
 esac
 echo "ok - the yes branch still installs and enables both units"
+
+# The env file has to record the compose command this install actually runs,
+# override files included: it is the only place the unattended updater learns it
+# from, and an HTTPS install that loses `-f docker-compose.caddy.yml` gets its
+# plaintext port published on every interface by the first automatic upgrade.
+res="$(BZ_COMPOSE_FILES="-f docker-compose.yml -f docker-compose.caddy.yml" bz_wire server yes yes)" \
+  || fail "the wiring scenario with a compose override exited non-zero"
+grep -qFx 'BAREZEN_COMPOSE=docker compose -f docker-compose.yml -f docker-compose.caddy.yml' "$bz_sb/env" \
+  || fail "the env file did not record the compose override: $(tr '\n' ';' < "$bz_sb/env" 2>/dev/null)"
+# Control: with no override the line stays the bare command, so the assertion
+# above cannot be satisfied by always appending something.
+res="$(bz_wire server yes yes)" || fail "the wiring scenario without an override exited non-zero"
+grep -qFx 'BAREZEN_COMPOSE=docker compose' "$bz_sb/env" \
+  || fail "a plain install recorded an override it does not use: $(tr '\n' ';' < "$bz_sb/env" 2>/dev/null)"
+echo "ok - the env file records the compose command with its override files"
 # Nothing on file for a static install to remove: no systemctl call, no message,
 # and no teardown running for show on a host that never had the updater wired.
 res="$(bz_wire web "" no empty)" || fail "the wiring scenario for [web "" no empty] exited non-zero"

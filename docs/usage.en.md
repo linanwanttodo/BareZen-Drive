@@ -142,12 +142,17 @@ journalctl -u barezen-update.service -n 50       # what the last run did
 sudo systemctl disable --now barezen-update.timer   # stop it
 ```
 
-It follows **stable releases only**: it asks the local `/api/version`, whose version comes from GitHub's
-`releases/latest` endpoint (that endpoint never returns a pre-release, so betas cannot arrive that way),
-and it additionally requires a plain `x.y.z` version - anything with a `-` or `+` suffix is skipped. When
+It follows **stable releases only**: it asks the local `/api/version`, which by default reads the
+`update.json` asset on `releases/latest` (`UPDATE_MANIFEST_URL` overrides it; GitHub's `releases/latest`
+API is only the fallback when that manifest cannot be read; the answer is cached for 10 minutes). The
+manifest's `version` is not itself filtered for pre-releases - what keeps betas out is the next rule: the
+version must be a plain `x.y.z`, and anything with a `-` or `+` suffix is skipped. When
 an upgrade applies, the order is fixed: dump the database to
 `<install-dir>/backups/auto-<version>-<time>.sql.gz` → retag the compose file → `docker compose pull
-server` → `up -d server` → probe `/readyz`.
+server` → `up -d server` → probe `/readyz`. An HTTPS install's compose command carries
+`-f docker-compose.caddy.yml` (which keeps the plaintext port on loopback); that whole command is
+recorded in `/etc/barezen-update.env` and replayed verbatim, so an upgrade does not put 8080 back on
+every interface.
 
 Three outcomes it handles by itself: a failed dump changes **nothing** and exits; a failed `pull` puts the
 tag back; a `/readyz` that keeps answering 503 retags to the previous version, pulls and probes once more,
@@ -163,10 +168,14 @@ service back. Keep-alive is compose's `restart: unless-stopped` plus monitoring 
 
 Re-running `install.sh` and answering "n" to that question removes the unit files (together with the
 script and its env file); `AUTO_UPDATE` in `.env` is the remembered answer, so a non-interactive re-run
-keeps whatever is there instead of changing it behind your back.
+keeps whatever is there instead of changing it behind your back. Removal is conditional on
+`/etc/barezen-update.env` still existing and still naming this install directory: that file is the
+ownership evidence, and with it hand-deleted the wizard leaves the units alone rather than tearing down
+another instance's timer.
 
-On Android there is a second path: once signed in, the app checks once a day, downloads and sha256-verifies
-the APK of a new stable release over whatever network is up, and posts a notification; only tapping that
+On Android there is a second path: once signed in, the app checks once a day, downloads the APK of a new
+stable release over whatever network is up and verifies it against the manifest's sha256 and size (both
+are skipped only when the manifest omits them), then posts a notification; only tapping that
 notification opens the system installer. Android owns the final confirmation and no app can skip it. When
 the notification cannot be delivered (notification permission refused on Android 13+, or notifications for
 the app/channel switched off in system settings) it does **not download at all**: a package nobody is told

@@ -127,10 +127,14 @@ journalctl -u barezen-update.service -n 50       # 上次做了什么
 sudo systemctl disable --now barezen-update.timer   # 停掉
 ```
 
-它只跟**稳定版**：问本机 `/api/version`，版本来自 GitHub 的 `releases/latest` 端点（该端点本身就不
-返回 pre-release，所以测试版进不来），再要求版本号是纯 `x.y.z`——带 `-` 或 `+` 后缀的一律跳过。
+它只跟**稳定版**：问本机 `/api/version`。服务器默认读 `releases/latest/download/update.json`
+（`UPDATE_MANIFEST_URL` 可覆盖；只有读不到这份清单时才回落 GitHub 的 `releases/latest` API，
+结果缓存 10 分钟）。清单里的 `version` 本身不过滤 pre-release，真正挡住测试版的是下一句：
+版本号必须是纯 `x.y.z`，带 `-` 或 `+` 后缀的一律跳过。
 判定为可升级后按固定顺序走：先把库 dump 到 `<安装目录>/backups/auto-<版本>-<时间>.sql.gz` → 改 compose
-标签 → `docker compose pull server` → `up -d server` → 探 `/readyz`。
+标签 → `docker compose pull server` → `up -d server` → 探 `/readyz`。HTTPS 安装的 compose 命令带
+`-f docker-compose.caddy.yml`（把明文端口收回 loopback），这条也一起记在 `/etc/barezen-update.env`
+里，升级重放同一条命令，不会把 8080 重新暴露到所有网卡。
 
 三种情况它自己收场：dump 失败就**什么都不改**直接退出；`pull` 失败把标签退回去；升级后 `/readyz`
 一直 503 就把标签改回原版本再拉一次、再探一次，日志里写明回滚结果（脚本退出码：0 无事可做或已升好，
@@ -142,10 +146,13 @@ sudo systemctl disable --now barezen-update.timer   # 停掉
 `restart: unless-stopped` 与你自己部署的监控。
 
 重跑 `install.sh` 时那一问答「n」即可彻底拆掉单元文件（连脚本与 env 文件一起）；`.env` 里的
-`AUTO_UPDATE` 是它的答案，非交互重跑会沿用旧值，不会悄悄改。
+`AUTO_UPDATE` 是它的答案，非交互重跑会沿用旧值，不会悄悄改。拆除的前提是 `/etc/barezen-update.env`
+还在、且里面记的 `BAREZEN_DIR` 仍是本安装目录——那份文件就是归属证据，被手工删掉时脚本不会替别的
+实例拆单元（宁可留一个僵尸定时器，也不能关掉别人那台）。
 
-手机端（Android）另有一条：登录后每天检查一次，遇到新的稳定版就在当前网络下把 APK 下好并校验
-sha256，然后发一条通知，点通知才进系统安装页。安装确认是 Android 自己的，跳不过去。通知发不出去
+手机端（Android）另有一条：登录后每天检查一次，遇到新的稳定版就在当前网络下把 APK 下好，按清单里的
+sha256 与大小校验（清单没带哈希时这两项就只能省掉），然后发一条通知，点通知才进系统安装页。安装确认
+是 Android 自己的，跳不过去。通知发不出去
 时（Android 13+ 拒绝通知权限、或系统设置里关掉了本应用/本通道的通知）它**连下载都不做**：否则下好的
 包没人知道，而第二天又会因为「已经下过」跳过这个版本，升级提示就永久丢了。把通知打开，第二天照常。
 
