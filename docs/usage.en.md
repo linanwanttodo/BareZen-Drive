@@ -162,9 +162,21 @@ because the schema only ever gains columns; the older image reads the newer data
 release changes a column type or adds a constraint, automatic upgrades must be turned off for that
 release** - at that point a rollback is no longer free.
 
+A rollback needs the compose file to pin a **concrete version**: `install.sh` now resolves `latest` to the
+current release before writing the compose file (an explicit `--version` is kept as given). The old
+`latest` pin has no rollback target - retagging back to it means pulling the same mutable tag again - so
+the updater logs `no rollback target` and skips that day's upgrade. Re-run `install.sh` once to pin it.
+Only the newest 7 automatic dumps are kept (`backups/auto-*.sql.gz`), so a host whose upgrades keep failing
+cannot fill the data disk; `backups/barezen-*.sql.gz` from manual `install.sh` upgrades are not pruned.
+
 **It is an upgrader, not a watchdog.** If the instance is already down (crash, broken image) it cannot even
 reach `/api/version`, so it logs `skipped (exit 0)` and tries again tomorrow - it will not bring the
 service back. Keep-alive is compose's `restart: unless-stopped` plus monitoring of your own.
+
+The systemd units and `/etc/barezen-update.env` are host-global: automatic upgrade is designed for **one**
+server instance per host. A second server installed with another `--dir` on the same machine takes over the
+first one's timer (the teardown direction checks ownership, the install direction does not). Run separate
+instances on separate hosts.
 
 Re-running `install.sh` and answering "n" to that question removes the unit files (together with the
 script and its env file); `AUTO_UPDATE` in `.env` is the remembered answer, so a non-interactive re-run
@@ -180,7 +192,9 @@ notification opens the system installer. Android owns the final confirmation and
 the notification cannot be delivered (notification permission refused on Android 13+, or notifications for
 the app/channel switched off in system settings) it does **not download at all**: a package nobody is told
 about would be remembered as downloaded and the next day would skip that version, losing the upgrade hint
-for good. Turn notifications back on and the next day's pass works normally.
+for good. Turn notifications back on and the next day's pass works normally. If you tap the notification
+and then cancel Android's installer, that version is not announced again that day (it counts as
+downloaded); "Check for updates" in settings downloads it again, and the next release prompts as usual.
 
 ### Without Docker
 
@@ -324,6 +338,10 @@ The Pipeline automatically runs the tests, builds the web bundle / APK / server
 distribution, pushes the amd64+arm64 image, generates `update.json` and
 `checksums.txt`, and publishes the GitHub Release. If a single job fails,
 "Re-run failed jobs" rebuilds only that part and reuses everything else.
+
+To ship a **beta**, mark that Release as "pre-release" on GitHub: `releases/latest` and the `update.json`
+served from it point at stable releases only, so automatic upgrades never pick it up; a `-beta` version
+suffix is caught a second time by the plain `x.y.z` rule above. Leave it unmarked for a stable release.
 
 ## 7. Desktop and iOS status (stated plainly)
 
