@@ -32,6 +32,9 @@ case "$*" in
     # The mirror of FAIL_UP_VER for the pull: only the pin named here fails to
     # download, which is the branch that has to abort with nothing changed.
     if [ -n "$FAIL_PULL_VER" ] && grep -qF "barezen-drive:$FAIL_PULL_VER" "$COMPOSE_FILE"; then
+      # SCRAMBLE_PIN makes the restore that follows unable to find its source
+      # tag, which is the exit-2 branch: the pin names a release nothing runs.
+      [ -n "$SCRAMBLE_PIN" ] && sed -i "s/barezen-drive:$FAIL_PULL_VER/barezen-drive:9.9.9/" "$COMPOSE_FILE"
       exit 1
     fi ;;
   *"up -d server"*)
@@ -97,6 +100,11 @@ has "$d" "pull server"   || fail "no pull"
 has "$d" "up -d server"  || fail "no recreate"
 [ "$(pin_of "$d")" = "0.3.0" ] || fail "pin ended at $(pin_of "$d"), want 0.3.0"
 ls "$d"/backups/auto-0.3.0-*.sql.gz >/dev/null 2>&1 || fail "no pre-upgrade dump"
+# A dump is a full copy of the database. Under systemd's umask it would land
+# 0644 in a directory install.sh leaves traversable, so both are pinned.
+[ "$(stat -c %a "$d/backups")" = "700" ] || fail "the backups directory is $(stat -c %a "$d/backups"), not 700"
+[ "$(stat -c %a "$(ls "$d"/backups/auto-0.3.0-*.sql.gz | head -1)")" = "600" ] \
+  || fail "the dump is readable beyond its owner: $(stat -c %a "$d"/backups/auto-*.sql.gz | head -1)"
 grep -q "upgrading 0.2.1 -> 0.3.0" "$d/out.log" || fail "missing the upgrade line"
 echo "ok - newer stable upgrades"
 
@@ -156,6 +164,19 @@ hasnt "$d" "up -d" || fail "a failed pull still recreated the container"
 [ "$(pin_of "$d")" = "0.2.1" ] || fail "a failed pull left the pin at $(pin_of "$d")"
 grep -q "aborted (exit 3): pull failed" "$d/out.log" || fail "the pull abort does not name its exit code"
 echo "ok - failed pull exits 3 with the pin restored"
+
+# 8b. If that restore itself cannot be made, the pin names a release nothing is
+#     running: that is no longer "nothing was changed", so it is exit 2 with the
+#     line that says what to do, not a silent 3.
+d="$(new_env 0.2.1)"
+rc=0
+run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"0.3.0"}' \
+  FAIL_PULL_VER=0.3.0 SCRAMBLE_PIN=1 || rc=$?
+[ "$rc" = 2 ] || fail "a failed pull whose restore also fails must exit 2, got $rc"
+grep -q "FATAL (exit 2, manual recovery needed)" "$d/out.log" \
+  || fail "the unrecoverable pull abort does not say it needs a human: $(cat "$d/out.log")"
+[ "$(pin_of "$d")" = "9.9.9" ] || fail "the scramble did not reach the branch under test: $(pin_of "$d")"
+echo "ok - a restore that cannot be made exits 2 instead of claiming nothing changed"
 
 # 9. Same code from the other abort: a missing dump. Case 5 only proves this one
 #    exits non-zero, and "non-zero" is also what a rollback success looks like.
@@ -240,6 +261,29 @@ run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"0.3.0"}'
 [ -e "$d/backups/auto-0.2.1-20260101-000001.sql.gz" ] && fail "the oldest automatic dump was not pruned"
 [ "$(ls -1 "$d"/backups/auto-*.sql.gz | wc -l)" = "7" ] || fail "expected 7 dumps after pruning, found $(ls -1 "$d"/backups/auto-*.sql.gz | wc -l)"
 echo "ok - old automatic dumps are pruned, keeping the newest 7"
+
+# 16. A manifest that names the release "v0.3.0" describes image tag 0.3.0 -
+#     the `v` is the git tag. Writing it verbatim makes the pull look for a tag
+#     nobody pushed, and the upgrade aborts after the dump.
+d="$(new_env 0.2.1)"
+run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"v0.3.0"}'
+[ "$(pin_of "$d")" = "0.3.0" ] || fail "a v-prefixed manifest reached the pin: $(pin_of "$d")"
+has "$d" "up -d server" || fail "a v-prefixed manifest did not upgrade at all"
+echo "ok - a v-prefixed manifest version is normalized before it becomes a tag"
+
+# 17. Nothing that fails before the dump may end the run with exit 1: that code
+#     means "upgrade failed and the rollback worked". A file squatting on the
+#     backups path is the cheapest way to reach a pre-change abort without
+#     taking write permission away from the test's own log file.
+d="$(new_env 0.2.1)"
+: > "$d/backups"
+rc=0
+run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"0.3.0"}' || rc=$?
+[ "$rc" = 3 ] || fail "an unusable backups path exited $rc, not 3"
+grep -q "aborted (exit 3): cannot create" "$d/out.log" \
+  || fail "the pre-change abort does not name its exit code: $(cat "$d/out.log")"
+[ "$(pin_of "$d")" = "0.2.1" ] || fail "the aborted run moved the pin"
+echo "ok - a pre-change failure exits 3 and leaves the pin alone"
 
 # --- the host precheck in install.sh, extracted and run the way
 # install-type-test.sh runs the wizard's decision line. flock, a GNU sed and a
@@ -328,6 +372,43 @@ bz_pin() { # bz_pin <IMAGE_TAG before> <tag GitHub answers> -> the tag it ends o
 [ "$(bz_pin 1.2.3 v9.9.9)" = "1.2.3" ] || fail "an explicit --version was overwritten by the resolved release"
 echo "ok - a default install is pinned to the release it deploys"
 
+# --- the HTTPS deploy branch has to set COMPOSE_FILES itself. The wiring test
+# further down proves the env writer replays whatever it is handed, but nothing
+# there can see install.sh's HTTPS branch: deleting the assignment left this
+# suite green while the loopback-only port override was silently dropped, which
+# is the regression the recording exists to prevent. So the branch is located by
+# its fixed start and end, extracted and executed with a stub compose command,
+# the same way the wizard's decision line is run rather than paraphrased.
+HTTPS_BLOCK="$(sed -n '/^  if \[ -n "\$DOMAIN" \] && \[ "\$USE_HTTPS" = "yes" \]; then$/,/^  fi$/p' "$INSTALL_SH")"
+case "$HTTPS_BLOCK" in
+  *COMPOSE_FILES=*"up -d"*) ;;
+  *) fail "the HTTPS block extraction is incomplete (no COMPOSE_FILES assignment or no up -d) - install.sh changed shape, update this pattern with it" ;;
+esac
+mkdir -p "$BZ_HOST/https"
+cat > "$BZ_HOST/https/docker" <<'EOF'
+#!/bin/sh
+echo "docker $*" >> "$CALLS"
+EOF
+chmod +x "$BZ_HOST/https/docker"
+bz_https() { # bz_https -> FILES= and UP= lines from the real branch
+  local d
+  d="$(mktemp -d -p "$BZ_HOST")"
+  ( cd "$d" || exit 1
+    PATH="$BZ_HOST/https:$PATH" CALLS="$d/calls" COMPOSE="docker" \
+    DOMAIN="drive.example.com" USE_HTTPS=yes PORT=8080 PROBE_URL="http://127.0.0.1:8080" \
+    bash -c 'set -euo pipefail
+      COMPOSE_FILES=""
+      eval "$1"
+      printf "FILES=%s\n" "$COMPOSE_FILES"
+      printf "UP=%s\n" "$(grep -F " up -d" "$CALLS" || true)"' _ "$HTTPS_BLOCK" )
+}
+bz_https_out="$(bz_https)"
+[ "$(printf '%s\n' "$bz_https_out" | sed -n 's/^FILES=//p')" = "-f docker-compose.yml -f docker-compose.caddy.yml" ] \
+  || fail "the HTTPS branch does not record its override files: $bz_https_out"
+[ "$(printf '%s\n' "$bz_https_out" | sed -n 's/^UP=//p')" = "docker -f docker-compose.yml -f docker-compose.caddy.yml up -d" ] \
+  || fail "the HTTPS branch starts compose without its override files: $bz_https_out"
+echo "ok - the HTTPS deploy branch records the override it runs with"
+
 # --- the wizard's answer -> AUTO_UPDATE, run as written rather than paraphrased.
 # install-type-test.sh learned this the hard way: grepping a decision line proves
 # the text exists, not that the branch does what it claims, so the block is
@@ -381,11 +462,15 @@ echo "ok - timer wiring present"
 # Both halves of the wiring gate matter: an instance that does not own a database
 # must not be handed a updater that dumps somebody else's, and a first install -
 # where HAS_OWN_DB was read before the volume existed - must still get its timer.
+# The install direction needs the volume; the off direction does not, because a
+# re-run on a host where docker is down reads no volume at all and answering "no"
+# must still remove what an earlier run installed (the teardown is ownership-
+# guarded on its own). The assertion pins the whole condition for that reason.
 # The re-probe is matched by the shape of the new line, not by the volume name:
 # install.sh already inspects that volume earlier, so the bare command matches
 # even when the second look is gone.
-grep -qF 'if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then' "$INSTALL_SH" \
-  || fail "the timer is wired without checking that this instance owns its database"
+grep -qF 'if [ "$INSTALL_TYPE" != "web" ] && { [ -n "$HAS_OWN_DB" ] || [ "$AUTO_UPDATE" != "yes" ]; }; then' "$INSTALL_SH" \
+  || fail "the wiring gate no longer requires a database of its own for install, nor covers the off direction"
 grep -qF '[ -z "$HAS_OWN_DB" ] && docker volume inspect "$OUR_PGDATA_VOL"' "$INSTALL_SH" \
   || fail "a fresh install is never re-probed for the volume it just created"
 # Turning it off has to remove what turning it on installed, and the answer has to
@@ -576,6 +661,19 @@ esac
 [ "$(field "$res" UNITS)" = "" ] || fail "answering no left the unit files behind: $(field "$res" UNITS)"
 [ "$(field "$res" STATE)" = "gone" ] || fail "answering no left the updater's state directory behind"
 echo "ok - the no answer runs the same teardown list"
+
+# A server re-run that could not inspect the volume (docker down) has no
+# HAS_OWN_DB. It must still honour "no": the install direction needs the volume
+# to prove it may dump it, but the teardown proves ownership from the env file,
+# and leaving the timer enabled there means it keeps firing at a deployment
+# nobody upgraded any more.
+res="$(bz_wire server "" no)" || fail "the wiring scenario for [server '' no] exited non-zero"
+case "$(field "$res" CALLS)" in
+  *"disable --now barezen-update.timer"*) ;;
+  *) fail "answering no without a readable volume left the timer enabled: $(field "$res" CALLS)" ;;
+esac
+[ "$(field "$res" UNITS)" = "" ] || fail "answering no without a readable volume left the units behind: $(field "$res" UNITS)"
+echo "ok - the no answer tears down even when the volume could not be inspected"
 
 # Two controls, so the green above cannot come from a block that does nothing at
 # all: the yes branch must still install, and a web install that never had a timer

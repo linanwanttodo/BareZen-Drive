@@ -31,6 +31,12 @@
 # without this file open next to it.
 set -euo pipefail
 
+# Every file this script creates is either a lock or a full copy of the
+# database. Under systemd's default umask the dump would be world-readable
+# inside an install directory that install.sh leaves traversable; nobody but
+# the operator (root or sudo) has any business reading it.
+umask 077
+
 DIR="${BAREZEN_DIR:-/opt/barezen}"
 COMPOSE="${BAREZEN_COMPOSE:-docker compose}"
 PROBE="${BAREZEN_PROBE_URL:-http://127.0.0.1:8080}"
@@ -70,21 +76,28 @@ stable() {
 newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
 
 # healthy - /readyz answers. /health would answer 200 with the database down,
-# which is precisely the state an upgrade must not be left in.
-healthy() { curl -fsS "${PROBE}/readyz" >/dev/null 2>&1; }
+# which is precisely the state an upgrade must not be left in. The timeouts are
+# what keep a wedged container (TCP accepted, no reply) from eating the unit's
+# whole 30-minute budget: without them the probe blocks, systemd kills the run,
+# and the pin stays on the new tag with neither a rollback nor a FATAL line.
+healthy() { curl -fsS --connect-timeout 3 --max-time 10 "${PROBE}/readyz" >/dev/null 2>&1; }
 
-mkdir -p "$STATE"
-exec 9>"$STATE/lock"
+mkdir -p "$STATE" || { log "aborted (exit 3): cannot create $STATE, nothing was changed"; exit 3; }
+exec 9>"$STATE/lock" || { log "aborted (exit 3): cannot open $STATE/lock, nothing was changed"; exit 3; }
 flock -n 9 || { log "skipped (exit 0): another update is already running"; exit 0; }
 
-cd "$DIR"
+cd "$DIR" || { log "aborted (exit 3): cannot enter $DIR, nothing was changed"; exit 3; }
 [ -f docker-compose.yml ] || { log "aborted (exit 3): no docker-compose.yml in $DIR, nothing was changed"; exit 3; }
 
-json="$(curl -fsS "$PROBE/api/version" 2>/dev/null || true)"
+json="$(curl -fsS --connect-timeout 3 --max-time 10 "$PROBE/api/version" 2>/dev/null || true)"
 if [ -z "$json" ]; then log "skipped (exit 0): $PROBE/api/version is unreachable"; exit 0; fi
 
 running="$(printf '%s' "$json" | sed -n 's/.*"serverVersion":"\([^"]*\)".*/\1/p')"
 latest="$(printf '%s' "$json" | sed -n 's/.*"latestVersion":"\([^"]*\)".*/\1/p')"
+# A manifest that names the release "v0.3.0" is describing image tag 0.3.0: the
+# `v` lives in the git tag, not in the registry. Stripping it here keeps the
+# retag from writing a tag that cannot be pulled.
+latest="${latest#v}"
 pinned="$(current_tag docker-compose.yml)"
 
 if [ -z "$running" ]; then log "skipped (exit 0): the response carried no serverVersion"; exit 0; fi
@@ -110,7 +123,8 @@ DB_NAME="$(sed -n 's/^POSTGRES_DB=//p' .env | tail -1)"; DB_NAME="${DB_NAME:-bar
 # Dump while the old version is still up and its schema is still the one the dump
 # describes. Unattended, a missing backup is a reason to stop: the whole point of
 # running this at 04:15 with nobody watching is that nothing can be undone by hand.
-mkdir -p "$DIR/backups"
+mkdir -p "$DIR/backups" \
+  || { log "aborted (exit 3): cannot create $DIR/backups, nothing was changed"; exit 3; }
 dump="$DIR/backups/auto-$latest-$(date -u +%Y%m%d-%H%M%S).sql.gz"
 if ! $COMPOSE exec -T db pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$dump"; then
   rm -f "$dump"
@@ -128,12 +142,15 @@ fi
 
 retag docker-compose.yml "$pinned" "$latest" || { log "aborted (exit 3): retag failed, the pin still says $pinned"; exit 3; }
 if ! $COMPOSE pull server; then
-  log "aborted (exit 3): pull failed, restoring the pin to $pinned, no container was recreated"
   # Guarded: unguarded, set -e would end the run with sed's exit code, and a
   # non-zero that is not 3 reads as a different outcome to whoever checks the
-  # journal. The restore is best-effort here - the message already says the pin
-  # may name $latest, and nothing was recreated.
-  retag docker-compose.yml "$latest" "$pinned" || log "warning: could not restore the pin to $pinned"
+  # journal. If the restore itself fails the pin names a release nothing is
+  # running - that is no longer "nothing was changed", so it is exit 2.
+  if ! retag docker-compose.yml "$latest" "$pinned"; then
+    log "FATAL (exit 2, manual recovery needed): pull failed and the pin could not be moved back to $pinned - docker-compose.yml still names $latest, though no container was recreated. Set the image tag back to $pinned."
+    exit 2
+  fi
+  log "aborted (exit 3): pull failed, the pin is back to $pinned, no container was recreated"
   exit 3
 fi
 # A recreate that fails outright is the same incident as one that comes up unhealthy:
