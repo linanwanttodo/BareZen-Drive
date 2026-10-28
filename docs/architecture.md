@@ -187,7 +187,10 @@ work_mem=4MB` + healthcheck。镜像的 `HEALTHCHECK` 读 `/readyz`（借一条�
 自动升级住在宿主机而不是容器里（容器换不了自己的镜像）：`install.sh` 把 `scripts/barezen-update.sh`
 装到 `/usr/local/bin`，配一对 systemd 单元（`barezen-update.timer` 每天 04:15 + 随机抖动，`.service`
 是 `Type=oneshot`），只跟稳定版（版本取自清单、再要求纯 `x.y.z`），dump 先行，`/readyz` 判活，失败
-自动退回原标签。它不看守服务是否活着——实例已宕时只会安静跳过，保活仍归 compose 的 restart 策略。
+自动退回原标签。回滚目标就是 compose 里钉的那个标签，所以 `install.sh` 会把 `latest` 解析成当前发布
+版本再写进去；遇到仍是 `latest` 的旧实例，脚本记一行 `no rollback target` 并跳过，不拿可变标签假装
+回滚。自动 dump 只留最近 7 份。它不看守服务是否活着——实例已宕时只会安静跳过，保活仍归 compose 的
+restart 策略。
 HTTPS 安装会把 `-f docker-compose.caddy.yml`（把明文端口收回 loopback）一起写进
 `/etc/barezen-update.env` 的 compose 命令，升级重放的是同一条命令，不会把 8080 重新暴露到所有网卡。
 `AUTO_UPDATE=no` 或卸载时 `install.sh` 会按 `/etc/barezen-update.env` 里的 `BAREZEN_DIR` 确认那一对

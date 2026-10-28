@@ -214,6 +214,33 @@ has "$d" "-f docker-compose.caddy.yml up -d server" \
 [ "$(pin_of "$d")" = "0.3.0" ] || fail "the upgrade with a compose override did not land: $(pin_of "$d")"
 echo "ok - the updater replays the compose command with its override files"
 
+# 14. A mutable `latest` pin has no rollback target: retagging back to it would
+#     pull the same release that just failed. Refusing up front is the only
+#     honest answer, and it has to happen before the dump - an install that
+#     cannot be rolled back must not reach the point of no return either.
+d="$(new_env latest)"
+run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"0.3.0"}'
+hasnt "$d" "exec -T db pg_dump" || fail "a latest pin reached the dump before refusing"
+hasnt "$d" "pull server" || fail "a latest pin pulled an image"
+[ "$(pin_of "$d")" = "latest" ] || fail "the refused run moved the pin to $(pin_of "$d")"
+grep -q "no rollback target" "$d/out.log" || fail "the refusal does not say why: $(cat "$d/out.log")"
+echo "ok - a mutable latest pin is refused before anything changes"
+
+# 15. Automatic dumps are pruned to the newest 7. The eighth-oldest file below
+#     is named so the assertion can tell deletion from "nothing happened".
+d="$(new_env 0.2.1)"
+mkdir -p "$d/backups"
+for i in 1 2 3 4 5 6 7 8; do
+  f="$d/backups/auto-0.2.$i-20260101-00000$i.sql.gz"
+  : > "$f"
+  # Distinct timestamps, oldest first: `-t` sorts by mtime, not by name.
+  touch -d "2026-01-0${i} 00:00:00" "$f"
+done
+run_case "$d" '{"serverVersion":"0.2.1","latestVersion":"0.3.0"}'
+[ -e "$d/backups/auto-0.2.1-20260101-000001.sql.gz" ] && fail "the oldest automatic dump was not pruned"
+[ "$(ls -1 "$d"/backups/auto-*.sql.gz | wc -l)" = "7" ] || fail "expected 7 dumps after pruning, found $(ls -1 "$d"/backups/auto-*.sql.gz | wc -l)"
+echo "ok - old automatic dumps are pruned, keeping the newest 7"
+
 # --- the host precheck in install.sh, extracted and run the way
 # install-type-test.sh runs the wizard's decision line. flock, a GNU sed and a
 # `sort -V` that actually sorts by version are what the updater above is built
@@ -270,6 +297,36 @@ if [ -x "$BZ_HOST/present/flock" ] && [ -x "$BZ_HOST/present/sed" ] && [ -x "$BZ
   done
   echo "ok - a host with the tools is not refused"
 fi
+
+# --- pin_release_version: the install has to land on a release tag, not on the
+# mutable `latest` channel, because the updater's rollback target is the pin it
+# reads. This is the install half of the refusal case 14 drives on the updater
+# side; the tag is resolved by reading GitHub's redirect, so curl is stubbed and
+# the function is run, not grepped.
+eval "$(sed -n '/^latest_release_tag()/,/^}/p' "$INSTALL_SH")"
+eval "$(sed -n '/^pin_release_version()/,/^}/p' "$INSTALL_SH")"
+type latest_release_tag pin_release_version >/dev/null 2>&1 \
+  || fail "latest_release_tag / pin_release_version not found in install.sh"
+mkdir -p "$BZ_HOST/pin"
+cat > "$BZ_HOST/pin/curl" <<'EOF'
+#!/bin/sh
+[ -n "$STUB_TAG" ] || exit 22
+printf 'https://github.com/linanwanttodo/BareZen-Drive/releases/tag/%s' "$STUB_TAG"
+EOF
+chmod +x "$BZ_HOST/pin/curl"
+bz_pin() { # bz_pin <IMAGE_TAG before> <tag GitHub answers> -> the tag it ends on
+  # STUB_TAG is exported because the stub curl is a separate process: an
+  # unexported shell variable would reach the command substitution but not the
+  # child, and every case below would then look like "GitHub unreachable".
+  ( export PATH="$BZ_HOST/pin:$PATH" STUB_TAG="$2"
+    GITHUB_REPO="linanwanttodo/BareZen-Drive" IMAGE_TAG="$1"
+    pin_release_version
+    printf '%s' "$IMAGE_TAG" )
+}
+[ "$(bz_pin latest v0.2.1)" = "0.2.1" ] || fail "a default install was not pinned to the resolved release: $(bz_pin latest v0.2.1)"
+[ "$(bz_pin latest '')" = "latest" ] || fail "an unresolvable release left a tag other than latest"
+[ "$(bz_pin 1.2.3 v9.9.9)" = "1.2.3" ] || fail "an explicit --version was overwritten by the resolved release"
+echo "ok - a default install is pinned to the release it deploys"
 
 # --- the wizard's answer -> AUTO_UPDATE, run as written rather than paraphrased.
 # install-type-test.sh learned this the hard way: grepping a decision line proves
@@ -469,6 +526,10 @@ bz_wire() { # bz_wire <install-type> <has-own-db> <answer> [empty|other] - what 
   COMPOSE="docker compose" COMPOSE_FILES="${BZ_COMPOSE_FILES:-}" PORT=8080 REPO_RAW="bz://stub" \
   bash -c '
     set -euo pipefail
+    # A restrictive umask is the case the explicit chmod on the env file exists
+    # for: `tee` would otherwise leave it root-readable-only and the ownership
+    # read in the teardown would fail silently.
+    umask 077
     log() { printf "log: %s\n" "$*" >> "$BZ_OUT"; }
     warn() { printf "warn: %s\n" "$*" >> "$BZ_OUT"; }
     err() { printf "err: %s\n" "$*" >> "$BZ_OUT"; exit 1; }
@@ -544,6 +605,13 @@ grep -qFx 'BAREZEN_COMPOSE=docker compose -f docker-compose.yml -f docker-compos
 res="$(bz_wire server yes yes)" || fail "the wiring scenario without an override exited non-zero"
 grep -qFx 'BAREZEN_COMPOSE=docker compose' "$bz_sb/env" \
   || fail "a plain install recorded an override it does not use: $(tr '\n' ';' < "$bz_sb/env" 2>/dev/null)"
+# A first install, where the file does not exist yet: `tee` would create it 0600
+# under the harness's umask and the teardown's ownership read (unprivileged)
+# would then fail silently. A pre-existing file would keep its own mode and hide
+# exactly the case this pins, hence the `empty` fixture.
+res="$(bz_wire server yes yes empty)" || fail "the first-install wiring scenario exited non-zero"
+[ "$(stat -c %a "$bz_sb/env")" = "644" ] \
+  || fail "the env file is $(stat -c %a "$bz_sb/env"), so a restrictive umask makes the ownership read fail"
 echo "ok - the env file records the compose command with its override files"
 # Nothing on file for a static install to remove: no systemctl call, no message,
 # and no teardown running for show on a host that never had the updater wired.

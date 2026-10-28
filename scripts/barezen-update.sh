@@ -35,7 +35,11 @@ DIR="${BAREZEN_DIR:-/opt/barezen}"
 COMPOSE="${BAREZEN_COMPOSE:-docker compose}"
 PROBE="${BAREZEN_PROBE_URL:-http://127.0.0.1:8080}"
 STATE="${BAREZEN_STATE_DIR:-$DIR/.auto-update}"
-HEALTH_TRIES="${BAREZEN_HEALTH_TRIES:-30}"
+# 90 x 2 s: a cold JVM plus Flyway on a 1C/1G box can take a minute more than
+# the 60 s this used to allow, and rolling back a container that is still
+# migrating is worse than waiting. A genuinely broken release still gets rolled
+# back inside the unit's 30-minute timeout.
+HEALTH_TRIES="${BAREZEN_HEALTH_TRIES:-90}"
 HEALTH_DELAY="${BAREZEN_HEALTH_DELAY:-2}"
 IMAGE_REPO="ghcr.io/linanwanttodo/barezen-drive"
 
@@ -88,6 +92,15 @@ if [ -z "$latest" ]; then log "skipped (exit 0): the server could not resolve an
 if ! stable "$latest"; then log "skipped (exit 0): $latest is not a stable release"; exit 0; fi
 if ! newer "$latest" "$running"; then log "up to date (exit 0): running $running, newest stable $latest"; exit 0; fi
 if [ -z "$pinned" ]; then log "aborted (exit 3): cannot read the pinned tag out of docker-compose.yml, nothing was changed"; exit 3; fi
+# The pin is the rollback target: the failure paths retag it back to whatever was
+# on file before this run. A mutable tag like `latest` makes that target the same
+# (or a newer) release, so there is nothing to roll back to - refuse to upgrade
+# rather than promise a recovery that cannot happen. install.sh pins the actual
+# release, so this is only the case for an install made before it did.
+if ! stable "$pinned"; then
+  log "skipped (exit 0): the compose pin is '$pinned', not a release version, so an upgrade would have no rollback target. Re-run install.sh to pin the current release."
+  exit 0
+fi
 
 log "upgrading $running -> $latest (compose pin $pinned)"
 
@@ -105,6 +118,13 @@ if ! $COMPOSE exec -T db pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$dump"; then
   exit 3
 fi
 log "database dumped to $dump"
+# Keep the last 7 automatic dumps. Each is a full copy of the database and this
+# disk usually also holds the drive's data; a release that fails on this host
+# would otherwise leave another one every morning until the disk fills.
+if ! ls -1t -- "$DIR"/backups/auto-*.sql.gz 2>/dev/null | tail -n +8 \
+  | while IFS= read -r old; do rm -f -- "$old"; done; then
+  log "warning: could not prune old automatic dumps in $DIR/backups"
+fi
 
 retag docker-compose.yml "$pinned" "$latest" || { log "aborted (exit 3): retag failed, the pin still says $pinned"; exit 3; }
 if ! $COMPOSE pull server; then

@@ -141,9 +141,19 @@ sudo systemctl disable --now barezen-update.timer   # 停掉
 1 已回滚，2 回滚也失败需要人工，3 动手前就中止）。回滚只换镜像标签、不动数据——schema 只增列，
 旧镜像读得懂新库。**哪天某个版本要改列类型或加约束，必须先对该版本关掉自动升级**，那时回滚不再免费。
 
+回滚的前提是 compose 里钉着一个**具体版本**：`install.sh` 现在会把 `latest` 解析成当前发布版本再写进
+compose（`--version` 显式指定时照旧）。旧的 `latest` 钉法没有回滚目标——改回去还是那个可变标签，等于
+把刚失败的版本再拉一遍——所以遇到这种钉法脚本会记一行 `no rollback target` 并跳过当天的升级；重跑一次
+`install.sh` 重新钉好即可。自动 dump 只保留最近 7 份（`backups/auto-*.sql.gz`），免得一台总是升级失败的
+机器把数据盘塞满；`backups/barezen-*.sql.gz` 是 `install.sh` 手工升级时留的，不在此列。
+
 **它是升级器，不是看门狗。** 实例本来就停着（宕机、镜像坏了）时，它连 `/api/version` 都问不到，
 只会安静退出并记一条 `skipped (exit 0)`，第二天再来一次——不会把服务拉起来。要保活靠 compose 的
 `restart: unless-stopped` 与你自己部署的监控。
+
+宿主机上的那一对 systemd 单元与 `/etc/barezen-update.env` 是全局的：自动升级只按**一台**实例设计，
+同一台机器上用第二个 `--dir` 装第二套服务端会接管前一套的定时器（拆除方向有归属检查，安装方向没有）。
+需要多套实例时请把它们放在不同机器上。
 
 重跑 `install.sh` 时那一问答「n」即可彻底拆掉单元文件（连脚本与 env 文件一起）；`.env` 里的
 `AUTO_UPDATE` 是它的答案，非交互重跑会沿用旧值，不会悄悄改。拆除的前提是 `/etc/barezen-update.env`
@@ -155,6 +165,8 @@ sha256 与大小校验（清单没带哈希时这两项就只能省掉），然�
 是 Android 自己的，跳不过去。通知发不出去
 时（Android 13+ 拒绝通知权限、或系统设置里关掉了本应用/本通道的通知）它**连下载都不做**：否则下好的
 包没人知道，而第二天又会因为「已经下过」跳过这个版本，升级提示就永久丢了。把通知打开，第二天照常。
+点了通知又把系统安装框取消的话，这个版本当天不会再弹一次（记录里已经当作「已下载」）；设置页的手动
+「检查更新」仍可重新下载，下一个版本也会照常提示。
 
 ### 不用 Docker 的情况
 
@@ -260,6 +272,10 @@ git tag v0.0.2 && git push origin master v0.0.2
 Pipeline 会自动：跑测试 → 构建 Web/APK/服务端包 → 推送 amd64+arm64 镜像 → 生成
 `update.json` 与 `checksums.txt` → 发布 GitHub Release。单个 job 失败用 "Re-run failed jobs"
 只重跑失败部分，已构建的产物直接复用。
+
+发**测试版**时在 GitHub 上把那一条 Release 勾成 "pre-release"：`releases/latest` 与它下面的
+`update.json` 只指向正式版，自动升级便不会取到；版本号带 `-beta` 之类的后缀也会被前文的纯 `x.y.z`
+规则再挡一次。正式发版则不要勾选。
 
 ## 七、桌面端与 iOS 现状（如实说明）
 

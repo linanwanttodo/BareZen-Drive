@@ -108,6 +108,33 @@ install_type_of() {
   esac
 }
 
+# latest_release_tag - the tag of the newest published release ("v0.2.1"), or
+# empty when GitHub cannot be asked. GitHub resolves releases/latest by
+# redirecting to /releases/tag/<tag>, and the redirect is read instead of the
+# JSON API so this stays unauthenticated and un-rated-limited.
+latest_release_tag() {
+  local url
+  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${GITHUB_REPO}/releases/latest" 2>/dev/null)" \
+    || return 0
+  url="${url##*/tag/}"
+  case "$url" in v[0-9]*) printf '%s' "$url" ;; esac
+  return 0
+}
+
+# pin_release_version - replace the mutable `latest` with the concrete release
+# this install is about to deploy. The unattended updater rolls back by
+# retagging the compose pin to whatever it read before the upgrade; with
+# `latest` on file that target is the same mutable tag, so the "rollback" pulls
+# the release that just failed. A host that cannot reach GitHub keeps `latest`
+# and the updater then skips with a line saying why.
+pin_release_version() {
+  [ "$IMAGE_TAG" = "latest" ] || return 0
+  local tag
+  tag="$(latest_release_tag)"
+  if [ -n "$tag" ]; then IMAGE_TAG="${tag#v}"; fi
+  return 0
+}
+
 # env_set <key> <value> <file> - rewrite a key in place, append it when missing.
 # Re-running the wizard has to write back what it just asked for: keeping the
 # old value would print an address the service is not listening on.
@@ -192,6 +219,7 @@ t() {
       dump_failed)   echo "  数据库备份未完成（服务可能没在运行）。升级本身会继续，但请先手工确认备份可用。" ;;
       env_seed)      echo "  .env 缺少本次安装必需的项，已新生成：" ;;
       compose_bak)   echo "  本地的 docker-compose.yml 与线上版本不一致，已保留为 " ;;
+      pin_latest_failed) echo "  查不到最新发布版本，镜像标签留为 latest：自动升级会因为没有可回滚的版本而跳过，直到重跑本脚本成功解析出发布版本。" ;;
       cancelled)     echo "已取消：没有启动或改动任何服务。" ;;
       cert)          echo "启用 HTTPS（Caddy 自动申请并续签 Let's Encrypt 证书）？[Y/n]: " ;;
       cert_skip)     echo "  未填域名，证书无法签发给纯 IP，将使用 HTTP。" ;;
@@ -248,6 +276,7 @@ t() {
       dump_failed)   echo "  The database backup did not complete (the service may not be running). The upgrade continues, but check that a usable backup exists." ;;
       env_seed)      echo "  .env was missing a key this install type needs - generated:" ;;
       compose_bak)   echo "  The local docker-compose.yml differed from the published one, kept as " ;;
+      pin_latest_failed) echo "  Could not resolve the newest release, so the image tag stays 'latest': auto-update will skip until a re-run resolves a release, because there is no version to roll back to." ;;
       cancelled)     echo "Cancelled: no service was started or changed." ;;
       cert)          echo "Enable HTTPS (Caddy issues and renews Let's Encrypt certificates automatically)? [Y/n]: " ;;
       cert_skip)     echo "  No domain given: a certificate cannot be issued for a bare IP, using HTTP." ;;
@@ -756,6 +785,11 @@ else
     warn "$(t compose_bak) docker-compose.yml.local"
   fi
   mv docker-compose.yml.new docker-compose.yml
+  # Which release this install lands on, not just the mutable channel. The
+  # unattended updater reads this pin to know what to roll back to, and `latest`
+  # is not a rollback target (see pin_release_version).
+  pin_release_version
+  if [ "$IMAGE_TAG" = "latest" ]; then warn "$(t pin_latest_failed)"; fi
   sed -i.bak "s#ghcr.io/linanwanttodo/barezen-drive:latest#ghcr.io/linanwanttodo/barezen-drive:${IMAGE_TAG}#" docker-compose.yml && rm -f docker-compose.yml.bak
 
   # uid 10001 inside the container writes every blob here. 777 would let any
@@ -909,6 +943,11 @@ if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then
     # past Caddy, so the answer cannot depend on a certificate.
     printf 'BAREZEN_DIR=%s\nBAREZEN_COMPOSE=%s\nBAREZEN_PROBE_URL=http://127.0.0.1:%s\n' \
       "$INSTALL_DIR" "$COMPOSE${COMPOSE_FILES:+ $COMPOSE_FILES}" "$PORT" | $SUDO tee /etc/barezen-update.env >/dev/null
+    # Explicit mode: the teardown reads this file back as the invoking user to
+    # prove the units belong to this --dir. Under a restrictive sudo umask the
+    # default is root-only, the read fails silently, and answering "no" would
+    # leave the timer running. It holds no secrets.
+    $SUDO chmod 0644 /etc/barezen-update.env
     # A deployment that is already up and healthy is not worth failing the whole
     # wizard over: the units are on file either way, so what is missing is one
     # command, and it is printed instead of being lost in a stack trace.
