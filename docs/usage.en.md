@@ -131,6 +131,48 @@ the data is not a backup. Nightly at 01:00:
 With `STORAGE_BACKEND=s3`, `./data/storage` holds only `tmp/` and that responsibility moves to the
 bucket (enable versioning); the database dump above stays exactly the same.
 
+### Automatic upgrades (optional, on by default)
+
+`install.sh` installs a host-side systemd timer that runs once a day at 04:15 with up to 45 minutes of
+random delay (so a fleet of instances does not pull images at the same instant):
+
+```bash
+systemctl status barezen-update.timer            # installed? next run?
+journalctl -u barezen-update.service -n 50       # what the last run did
+sudo systemctl disable --now barezen-update.timer   # stop it
+```
+
+It follows **stable releases only**: it asks the local `/api/version`, whose version comes from GitHub's
+`releases/latest` endpoint (that endpoint never returns a pre-release, so betas cannot arrive that way),
+and it additionally requires a plain `x.y.z` version - anything with a `-` or `+` suffix is skipped. When
+an upgrade applies, the order is fixed: dump the database to
+`<install-dir>/backups/auto-<version>-<time>.sql.gz` → retag the compose file → `docker compose pull
+server` → `up -d server` → probe `/readyz`.
+
+Three outcomes it handles by itself: a failed dump changes **nothing** and exits; a failed `pull` puts the
+tag back; a `/readyz` that keeps answering 503 retags to the previous version, pulls and probes once more,
+and logs the result (exit codes: 0 nothing to do or upgraded, 1 rolled back, 2 rollback also failed - needs
+a human, 3 aborted before changing anything). A rollback swaps image tags only and touches no data,
+because the schema only ever gains columns; the older image reads the newer database fine. **The day a
+release changes a column type or adds a constraint, automatic upgrades must be turned off for that
+release** - at that point a rollback is no longer free.
+
+**It is an upgrader, not a watchdog.** If the instance is already down (crash, broken image) it cannot even
+reach `/api/version`, so it logs `skipped (exit 0)` and tries again tomorrow - it will not bring the
+service back. Keep-alive is compose's `restart: unless-stopped` plus monitoring of your own.
+
+Re-running `install.sh` and answering "n" to that question removes the unit files (together with the
+script and its env file); `AUTO_UPDATE` in `.env` is the remembered answer, so a non-interactive re-run
+keeps whatever is there instead of changing it behind your back.
+
+On Android there is a second path: once signed in, the app checks once a day, downloads and sha256-verifies
+the APK of a new stable release over whatever network is up, and posts a notification; only tapping that
+notification opens the system installer. Android owns the final confirmation and no app can skip it. When
+the notification cannot be delivered (notification permission refused on Android 13+, or notifications for
+the app/channel switched off in system settings) it does **not download at all**: a package nobody is told
+about would be remembered as downloaded and the next day would skip that version, losing the upgrade hint
+for good. Turn notifications back on and the next day's pass works normally.
+
 ### Without Docker
 
 Download `BareZen-Drive-<version>-server.tar.gz` from Releases (the Web client
@@ -232,6 +274,11 @@ are connected to** instead of calling GitHub directly:
    - Desktop/iOS (reserved): will list the platform package the same way.
 3. Every asset in the manifest carries sha256 and size; the Release page also
    provides `checksums.txt`.
+
+This manual check always works. Server and Android automatic upgrades are
+described under "Automatic upgrades" in section 1; when phone notifications are
+switched off, the automatic path does nothing and this manual check is the only
+way in.
 
 The `update.json` shape (desktop and iOS entries are appended when enabled; no
 schema change needed):
