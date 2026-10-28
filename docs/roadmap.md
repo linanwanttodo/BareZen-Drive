@@ -126,6 +126,28 @@
     29 个调用点换自定义封装才拿得动，圆角 24 与标题 18/600 已由令牌达成）；设置卡间距（原判断
     「外边距 6 太密」读错了变量——6dp 是单边，卡与卡之间实际是 12dp，已在要求的 8-10 之外）
 
+- [x] 稳定版自动升级（服务端 + Android，2026-10-28）
+  - 宿主机 `systemd` 定时器：`install.sh` 装 `barezen-update.timer`（每天 04:15 + 45 分钟随机抖动）
+    与 `barezen-update.service`（`Type=oneshot`），脚本落 `/usr/local/bin`，配置落
+    `/etc/barezen-update.env`。容器换不了自己的镜像，所以这个动作只能住在宿主机
+  - 只跟稳定版：版本来自本机 `/api/version`（默认读 `releases/latest/download/update.json`，
+    读不到才回落 GitHub 的 `releases/latest`，缓存 10 分钟），再要求纯 `x.y.z`——清单里的
+    `version` 本身不过滤 pre-release，带 `-`/`+` 的 beta 与 build 号靠这一步跳过；
+    判定抽成 `stable()` 并有脚本测试
+  - 顺序固定：`pg_dump` 到 `<目录>/backups/auto-*` → 改 compose 标签 → `pull server` →
+    `up -d server` → 探 `/readyz`。dump 失败什么都不改就退出；pull 失败退回标签；升级后 503 就
+    退回旧标签重拉重探一次。退出码 0/1/2/3 区分「无事可做或已升好 / 已回滚 / 回滚也失败 / 动手前中止」
+  - 回滚免费的前提是 schema 只增列；哪天要改列类型或加约束，必须先对该版本关掉自动升级。这条同时
+    写进 `usage.md` 与脚本注释
+  - 它不是看门狗：实例本来就宕着时只会安静跳过，保活仍靠 compose 的 restart 策略与外部监控
+  - Android：登录后每天一次 WorkManager 检查（任意网络，`CONNECTED`），有新稳定版就下载并校验
+    sha256，然后只发一条通知；点通知才进系统安装页（安装确认是 Android 的，去不掉）。通知发不出去
+    （13+ 拒绝权限、应用或通道被关）时连网络都不碰——因此也不会有「下好了却没人知道、第二天又因
+    已下过而跳过」的永久丢失。已下好的版本号记在本地，没人点就不每天重下
+  - `install.sh` 的安装类型收成两项（1 仅 Web 静态端 / 2 服务端含 Web，原 2/3 输出逐字节相同），
+    非交互重跑沿用 `.env` 里的答案，不会把 web-only 实例悄悄改成服务器；缺 `flock`、GNU `sed -i`、
+    `sort -V` 或没有 systemd 时强制关闭自动升级并打印缺什么
+
 ## v0.3+（远期）
 
 - 多设备同步与冲突解决

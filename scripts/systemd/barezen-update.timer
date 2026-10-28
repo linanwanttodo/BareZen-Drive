@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily BareZen-Drive update check
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+# A fixed minute would have every instance on the network pull the manifest at
+# the same second; the jitter is the whole point of the delay.
+RandomizedDelaySec=45m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

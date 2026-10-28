@@ -62,6 +62,9 @@ interface AppPrefs {
     /** True once the first-run "review which albums to back up" prompt has been
      *  answered, so it is offered exactly once. */
     var albumBucketsReviewed: Boolean
+
+    /** Version of the update package already sitting on disk, "" when none. */
+    var stagedUpdateVersion: String
 }
 
 expect object AppPreferences {
