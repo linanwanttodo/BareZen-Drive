@@ -36,6 +36,21 @@ object BuildInfo {
     }
 
     /**
+     * True only for a plain `x.y.z`. A name with a `-beta`/`+build` suffix is a
+     * test build, and nothing that runs unattended should install one: the
+     * release endpoint already filters these out, so this is the same rule
+     * checked again where the consequence of getting it wrong is a server nobody
+     * is watching.
+     */
+    fun isStable(version: String): Boolean {
+        val v = version.trim().removePrefix("v")
+        if (v.isEmpty()) return false
+        if (v.any { !(it.isDigit() || it == '.') }) return false
+        val parts = v.split('.')
+        return parts.size == 3 && parts.all { it.isNotEmpty() && it.all(Char::isDigit) }
+    }
+
+    /**
      * Android versionCode derived from the product version, so the two cannot
      * drift: major*10000 + minor*100 + patch. Monotonic for normal releases.
      */
