@@ -71,17 +71,26 @@ actual object TransferNotifier {
 
     /**
      * Whether anything this process posts can actually reach the shade.
-     * Internal rather than private: the background update pass asks it before
-     * spending a download on a prompt nobody would see (see UpdateAutoWorker),
+     * Internal rather than private: the update prompt asks it before spending
+     * a download on a notification nobody would see (see UpdateNotifier),
      * and that caller lives in this same module, so module visibility is the
      * smallest exposure that serves it.
+     *
+     * Two switches, and the system applies both without a word. The app-wide
+     * one is consulted first because below Android 13 it is the only way a
+     * user could have turned notifications off at all; the POST_NOTIFICATIONS
+     * grant is the 13+ face of the same switch (so on those versions the two
+     * agree, and checking both costs nothing). A channel the user muted is a
+     * third, channel-scoped switch and is checked where the channel is known.
      */
-    internal fun canNotify(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+    internal fun canNotify(): Boolean {
+        if (manager()?.areNotificationsEnabled() != true) return false
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             androidx.core.content.ContextCompat.checkSelfPermission(
                 AndroidContext.app,
                 android.Manifest.permission.POST_NOTIFICATIONS,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
 
     private fun ensureChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

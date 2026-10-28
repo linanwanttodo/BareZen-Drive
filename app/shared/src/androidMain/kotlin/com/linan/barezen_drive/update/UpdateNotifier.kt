@@ -42,6 +42,30 @@ object UpdateNotifier {
     }
 
     /**
+     * Whether the "ready to install" prompt can reach the shade at all.
+     *
+     * The background pass asks this before it spends a download, and
+     * [notifyReady] asks it again right before posting, because everything it
+     * covers makes `notify()` a silent no-op - and a version remembered as
+     * staged without an announced prompt is never offered again. Besides the
+     * app-wide switch in [TransferNotifier.canNotify], this adds the one
+     * channel-level block that is just as silent: a user who turned the update
+     * channel off leaves the app unable to raise its importance again.
+     *
+     * Fail-closed on a channel that is still missing after [ensureChannel]: a
+     * successful create always leaves a channel behind, so null here means the
+     * platform refused, and "refused" must not read as "not muted".
+     */
+    internal fun canPostReady(): Boolean = runCatching {
+        if (!TransferNotifier.canNotify()) return@runCatching false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return@runCatching true
+        ensureChannel()
+        val nm = AndroidContext.app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val importance = nm.getNotificationChannel(CHANNEL)?.importance ?: return@runCatching false
+        importance != NotificationManager.IMPORTANCE_NONE
+    }.getOrDefault(false)
+
+    /**
      * Post the "ready to install" prompt. Returns whether it actually went
      * out: the caller has to know, because a version remembered as staged
      * without an announced prompt is an upgrade hint lost forever.
@@ -49,15 +73,14 @@ object UpdateNotifier {
      * Every failure mode reports false rather than throwing: a failed prompt
      * must not kill the worker pass that already paid for the package. The
      * quiet paths the old void version returned through - permission refused,
-     * no small icon resolvable, the system refusing the post - are now the
-     * caller's signal to leave the staged key unwritten.
+     * notifications or this channel switched off, no small icon resolvable,
+     * the system refusing the post - are now the caller's signal to leave the
+     * staged key unwritten.
      */
     fun notifyReady(version: String, path: String): Boolean = runCatching {
-        // Same capability gate the transfer notifications use: from Android
-        // 13 on, a refused POST_NOTIFICATIONS makes notify() a silent no-op,
-        // so "posted" would be a lie without checking first.
-        if (!TransferNotifier.canNotify()) return@runCatching false
-        ensureChannel()
+        // Everything that turns notify() into a silent no-op, asked before the
+        // work: "posted" would be a lie without it.
+        if (!canPostReady()) return@runCatching false
         // The bitmap icon the app already installs for itself (see BareZenApp);
         // without one there is no notification to post.
         val small = TransferNotifier.smallIcon() ?: return@runCatching false
