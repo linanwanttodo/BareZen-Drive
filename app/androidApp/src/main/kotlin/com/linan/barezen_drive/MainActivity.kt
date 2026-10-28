@@ -12,6 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.content.ContextCompat
+import com.linan.barezen_drive.data.local.AppPreferences
+import com.linan.barezen_drive.platform.installStagedUpdate
+import com.linan.barezen_drive.update.UpdateNotifier
 
 class MainActivity : ComponentActivity() {
     // Transfer progress notifications need POST_NOTIFICATIONS from Android 13.
@@ -37,6 +40,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             App()
         }
+        installFromNotification(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -45,6 +49,7 @@ class MainActivity : ComponentActivity() {
         // notification while the app is foregrounded arrive here, not in
         // onCreate.
         forwardTransferTap(intent)
+        installFromNotification(intent)
     }
 
     /**
@@ -60,6 +65,25 @@ class MainActivity : ComponentActivity() {
         ) {
             com.linan.barezen_drive.platform.TransferDeepLink.request()
         }
+    }
+
+    /**
+     * A tapped "update ready" notification carries the verified package. This is
+     * the only place the installer is launched from the background path, and it
+     * happens because the user tapped - which is as far as an app may go.
+     */
+    private fun installFromNotification(intent: Intent?) {
+        val path = intent?.getStringExtra(UpdateNotifier.EXTRA_STAGED_APK) ?: return
+        // Consume the extra: the same intent object is re-delivered when this
+        // activity is (re)created, and the installer must pop exactly once per
+        // tap, not once per recreation.
+        intent.removeExtra(UpdateNotifier.EXTRA_STAGED_APK)
+        if (!installStagedUpdate(path)) {
+            // The file is gone (cleaned up, or the app was reinstalled): drop the
+            // remembered version so the next pass fetches it again.
+            AppPreferences.get().stagedUpdateVersion = ""
+        }
+        UpdateNotifier.clear()
     }
 
     private fun maybeRequestNotificationPermission() {

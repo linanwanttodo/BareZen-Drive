@@ -393,6 +393,10 @@ interface Strings {
      *  these through [com.linan.barezen_drive.i18n.I18n.strings]). */
     val notifyChannelBackup: String
     val notifyChannelBackupDesc: String
+    val notifyChannelUpdate: String
+    val notifyChannelUpdateDesc: String
+    fun notifyUpdateReady(version: String): String
+    val notifyUpdateReadyText: String
     val notifyChannelTransfers: String
     val notifyChannelTransferResults: String
     val notifyBackupTitle: String
