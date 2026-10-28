@@ -33,6 +33,28 @@ expect suspend fun downloadAndInstallUpdate(
 ): Boolean
 
 /**
+ * Downloads and verifies the package without showing anything to the user, and
+ * returns the absolute path of the staged file - or null when every mirror
+ * failed. Split out of [downloadAndInstallUpdate] because a background pass must
+ * not be able to pop the system installer: the file waits here until the user
+ * taps the notification.
+ */
+expect suspend fun stageUpdateApk(
+    urls: List<String>,
+    sha256: String? = null,
+    size: Long? = null,
+    onProgress: (Float) -> Unit = {},
+): String?
+
+/**
+ * Hands a file returned by [stageUpdateApk] to the OS installer. Returns false
+ * when there is nothing to install (web, or a file that has since been cleaned
+ * up). The user still confirms in the system sheet - that step is Android's, and
+ * no caller here can or should skip it.
+ */
+expect fun installStagedUpdate(path: String): Boolean
+
+/**
  * Reloads the running app so it picks up a newer build served by the same
  * origin. Meaningful on the web client (the server ships the bundle); on
  * packaged apps the OS restarts the process instead, so this is a no-op.

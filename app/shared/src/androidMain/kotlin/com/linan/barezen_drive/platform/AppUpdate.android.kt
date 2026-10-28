@@ -45,19 +45,39 @@ actual suspend fun downloadAndInstallUpdate(
     sha256: String?,
     size: Long?,
     onProgress: (Float) -> Unit,
-): Boolean = withContext(Dispatchers.IO) {
-    urls.firstOrNull { url ->
-        runCatching { downloadOne(url, sha256, size, onProgress) }.getOrDefault(false)
-    } != null
+): Boolean {
+    val staged = stageUpdateApk(urls, sha256, size, onProgress) ?: return false
+    // A rejected installer intent is not a download failure: the bytes are
+    // verified and on disk, and the next mirror would fetch the same package.
+    runCatching { installStagedUpdate(staged) }
+    return true
 }
 
-/** Downloads one mirror; false leaves [urls]' next candidate to take over. */
+actual suspend fun stageUpdateApk(
+    urls: List<String>,
+    sha256: String?,
+    size: Long?,
+    onProgress: (Float) -> Unit,
+): String? = withContext(Dispatchers.IO) {
+    urls.firstNotNullOfOrNull { url ->
+        runCatching { downloadOne(url, sha256, size, onProgress) }.getOrNull()
+    }
+}
+
+actual fun installStagedUpdate(path: String): Boolean {
+    val file = File(path)
+    if (!file.isFile) return false
+    runCatching { installApk(AndroidContext.app, file) }
+    return true
+}
+
+/** Downloads one mirror to a verified file and returns its path; null hands [urls]' next candidate over. */
 private fun downloadOne(
     url: String,
     sha256: String?,
     size: Long?,
     onProgress: (Float) -> Unit,
-): Boolean {
+): String? {
     val context = AndroidContext.app
     val name = url.substringBefore('?').substringAfterLast('/')
     val destination = File(context.getExternalFilesDir(null), "updates/$name")
@@ -69,7 +89,7 @@ private fun downloadOne(
         instanceFollowRedirects = true
     }
     try {
-        if (connection.responseCode !in 200..299) return false
+        if (connection.responseCode !in 200..299) return null
         val total = connection.contentLengthLong
         destination.outputStream().use { out ->
             connection.inputStream.use { input ->
@@ -95,7 +115,7 @@ private fun downloadOne(
         // A truncated file must never reach the installer: drop it so the
         // next mirror starts clean instead of resuming garbage.
         destination.delete()
-        return false
+        return null
     } finally {
         connection.disconnect()
     }
@@ -105,19 +125,15 @@ private fun downloadOne(
     // so the next mirror starts clean, exactly like a broken connection.
     if (!verifyDownloaded(destination, sha256, size)) {
         destination.delete()
-        return false
+        return null
     }
 
-    // Download is complete; report the last percent before handing the file
-    // to the installer so the UI never ends on 99.
+    // Download is complete and verified; report the last percent so the UI
+    // never ends on 99, then hand the path back. The verified file stays in
+    // updates/ under its own name - same-name writes overwrite, so nothing
+    // accumulates.
     onProgress(1f)
-    // A rejected installer intent (no handler, OEM quirk) must not read as
-    // "download failed": the bytes are verified, and the next mirror would
-    // fetch the very same package before hitting the same wall. The verified
-    // file stays in updates/ under its own name - same-name writes overwrite,
-    // so nothing accumulates.
-    runCatching { installApk(context, destination) }
-    return true
+    return destination.absolutePath
 }
 
 /**
