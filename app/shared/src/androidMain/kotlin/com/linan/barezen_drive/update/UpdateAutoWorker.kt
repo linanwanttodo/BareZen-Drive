@@ -9,8 +9,6 @@ import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.data.local.TokenStorage
 import com.linan.barezen_drive.data.update.UpdateChecker
 import com.linan.barezen_drive.data.update.UpdateStatus
-import com.linan.barezen_drive.data.update.shouldAttemptBackgroundStage
-import com.linan.barezen_drive.platform.TransferNotifier
 import com.linan.barezen_drive.platform.stageUpdateApk
 
 /**
@@ -20,6 +18,9 @@ import com.linan.barezen_drive.platform.stageUpdateApk
  *
  * A signed-out pass has nothing to ask, so it exits success without touching the
  * network - same guard the sync workers use.
+ *
+ * All the decisions live in [runUpdatePass]; this class only connects it to the
+ * real objects and translates the outcome into WorkManager's vocabulary.
  */
 class UpdateAutoWorker(context: android.content.Context, params: WorkerParameters) :
     CoroutineWorker(context, params) {
@@ -29,41 +30,25 @@ class UpdateAutoWorker(context: android.content.Context, params: WorkerParameter
         // the sync workers re-seed here too and re-seeding is free.
         runCatching { AndroidContext.init(applicationContext) }
         if (TokenStorage.baseUrl.isBlank() || TokenStorage.accessToken == null) return Result.success()
-        // The gate that comes before everything: if no prompt could reach the
-        // shade (Android 13+ refusal, or the check itself failing - read it as
-        // "cannot notify"), this pass must not download a package it cannot
-        // announce. Downloading anyway and remembering the version as staged
-        // would silently lose that release forever, because shouldAutoStage
-        // skips an already-staged version. Fail-closed, and checked before
-        // any network access: no reason to spend a request, let alone 20 MB,
-        // on a pass that has no way to finish.
-        val canNotify = runCatching { TransferNotifier.canNotify() }.getOrDefault(false)
-        if (!canNotify) return Result.success()
         val prefs = AppPreferences.get()
-        val status = runCatching { UpdateChecker.check(AppClient.files) }.getOrNull() ?: return Result.retry()
-        // An unreachable or broken instance is "not this time, maybe next":
-        // check() reports Failed instead of throwing, so the retry decision
-        // has to be read off the status, not off an exception.
-        if (status is UpdateStatus.Failed) return Result.retry()
-        val target = shouldAttemptBackgroundStage(
-            canNotify = canNotify,
-            status = status,
+        val deps = UpdatePassDeps(
+            // The gate that comes before everything, and the reason it is
+            // [UpdateNotifier.canPostReady] rather than the bare permission
+            // check: a refused permission, notifications switched off app-wide,
+            // or this one channel muted all make the post a silent no-op, and
+            // any of them leaves a downloaded package nobody is told about.
+            canNotify = { UpdateNotifier.canPostReady() },
+            checkStatus = { UpdateChecker.check(AppClient.files) },
             currentVersion = BuildInfo.VERSION,
-            stagedVersion = prefs.stagedUpdateVersion,
-        ) ?: return Result.success()
-
-        val staged = stageUpdateApk(updateMirrorUrls(target), target.sha256, target.size)
-            ?: return Result.retry()  // a dead mirror is worth another pass
-        // The prompt reports whether it actually went out. The key is written
-        // only on the strength of that: a stage whose notification was dropped
-        // (icon gone, channel disabled, system said no) must leave nothing
-        // remembered, or the next pass would skip this release and the hint
-        // would be lost silently and permanently. Without the key the next
-        // pass re-stages - costly, but visible, which is the whole point.
-        if (UpdateNotifier.notifyReady(target.version, staged)) {
-            prefs.stagedUpdateVersion = target.version
+            stagedVersion = { prefs.stagedUpdateVersion },
+            rememberStaged = { prefs.stagedUpdateVersion = it },
+            stage = { target -> stageUpdateApk(updateMirrorUrls(target), target.sha256, target.size) },
+            notifyReady = { version, path -> UpdateNotifier.notifyReady(version, path) },
+        )
+        return when (runUpdatePass(deps)) {
+            UpdatePassOutcome.DONE -> Result.success()
+            UpdatePassOutcome.RETRY -> Result.retry()
         }
-        return Result.success()
     }
 
     companion object {
