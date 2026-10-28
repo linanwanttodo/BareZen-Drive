@@ -89,11 +89,16 @@ class MainActivity : ComponentActivity() {
         // activity is (re)created, and the installer must pop exactly once per
         // tap, not once per recreation.
         intent.removeExtra(UpdateNotifier.EXTRA_STAGED_APK)
-        if (!installStagedUpdate(path)) {
-            // The file is gone (cleaned up, or the app was reinstalled): drop the
-            // remembered version so the next pass fetches it again.
-            AppPreferences.get().stagedUpdateVersion = ""
-        }
+        // The tap consumes the staged marker even when the installer does not
+        // finish: cancelling Android's confirmation is not an install, and a
+        // marker left behind would make the next pass skip this release for
+        // good. Re-downloading it tomorrow is the cheaper mistake. Once the
+        // install actually completes the version check agrees and stages
+        // nothing anyway.
+        AppPreferences.get().stagedUpdateVersion = ""
+        // The file can be gone (cleaned up, or the app was reinstalled); the
+        // marker is already cleared above so the next pass fetches it again.
+        installStagedUpdate(path)
         UpdateNotifier.clear()
     }
 

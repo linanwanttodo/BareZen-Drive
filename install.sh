@@ -914,7 +914,12 @@ remove_unattended_updater() {
 # claim a timer that this run never installed.
 UNIT_DIR=/etc/systemd/system
 TIMER_ON=""
-if [ "$INSTALL_TYPE" != "web" ] && [ -n "$HAS_OWN_DB" ]; then
+# Turning it off must not depend on this run being able to inspect the volume:
+# on a re-run where docker is down, HAS_OWN_DB is empty, and gating the teardown
+# on it left a timer firing daily at a deployment that no longer exists. The
+# teardown itself is ownership-guarded, so answering "no" can always be honoured;
+# only the install direction needs its own database.
+if [ "$INSTALL_TYPE" != "web" ] && { [ -n "$HAS_OWN_DB" ] || [ "$AUTO_UPDATE" != "yes" ]; }; then
   if [ "$AUTO_UPDATE" = "yes" ]; then
     log "$(t auto_on)"
     TIMER_ON=yes

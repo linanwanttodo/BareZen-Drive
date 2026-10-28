@@ -155,7 +155,8 @@ recorded in `/etc/barezen-update.env` and replayed verbatim, so an upgrade does 
 every interface.
 
 Three outcomes it handles by itself: a failed dump changes **nothing** and exits; a failed `pull` puts the
-tag back; a `/readyz` that keeps answering 503 retags to the previous version, pulls and probes once more,
+tag back (exit 2 if even that fails, since the compose file would then name a release nobody runs); a
+`/readyz` that keeps answering 503 retags to the previous version, pulls and probes once more,
 and logs the result (exit codes: 0 nothing to do or upgraded, 1 rolled back, 2 rollback also failed - needs
 a human, 3 aborted before changing anything). A rollback swaps image tags only and touches no data,
 because the schema only ever gains columns; the older image reads the newer database fine. **The day a
@@ -193,8 +194,8 @@ the notification cannot be delivered (notification permission refused on Android
 the app/channel switched off in system settings) it does **not download at all**: a package nobody is told
 about would be remembered as downloaded and the next day would skip that version, losing the upgrade hint
 for good. Turn notifications back on and the next day's pass works normally. If you tap the notification
-and then cancel Android's installer, that version is not announced again that day (it counts as
-downloaded); "Check for updates" in settings downloads it again, and the next release prompts as usual.
+and then cancel Android's installer, that "already downloaded" record is cleared too: the next daily check
+downloads and prompts again ("Check for updates" in settings does it immediately).
 
 ### Without Docker
 
