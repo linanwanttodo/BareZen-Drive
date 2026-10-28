@@ -41,38 +41,48 @@ object UpdateNotifier {
         }
     }
 
-    fun notifyReady(version: String, path: String) {
-        // Every public method in the notification layer swallows: a failed
-        // prompt must not kill the worker pass that already paid for the
-        // package, and a missing small icon here means "skip quietly", not
-        // "crash a background job".
-        runCatching {
-            ensureChannel()
-            // The bitmap icon the app already installs for itself (see BareZenApp);
-            // without one there is no notification to post.
-            val small = TransferNotifier.smallIcon() ?: return
-            val intent = Intent()
-                .setClassName(AndroidContext.app, MAIN_ACTIVITY)
-                .setAction(Intent.ACTION_VIEW)
-                .putExtra(EXTRA_STAGED_APK, path)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            // FLAG_IMMUTABLE is required from API 31 and accepted below it; without it
-            // the tap throws on newer Android and the notification is a dead end.
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            val pending = PendingIntent.getActivity(AndroidContext.app, NOTIFICATION_ID, intent, flags)
-            val nm = AndroidContext.app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(
-                NOTIFICATION_ID,
-                NotificationCompat.Builder(AndroidContext.app, CHANNEL)
-                    .setSmallIcon(small)
-                    .setContentTitle(I18n.strings.notifyUpdateReady(version))
-                    .setContentText(I18n.strings.notifyUpdateReadyText)
-                    .setContentIntent(pending)
-                    .setAutoCancel(true)
-                    .build(),
-            )
-        }
-    }
+    /**
+     * Post the "ready to install" prompt. Returns whether it actually went
+     * out: the caller has to know, because a version remembered as staged
+     * without an announced prompt is an upgrade hint lost forever.
+     *
+     * Every failure mode reports false rather than throwing: a failed prompt
+     * must not kill the worker pass that already paid for the package. The
+     * quiet paths the old void version returned through - permission refused,
+     * no small icon resolvable, the system refusing the post - are now the
+     * caller's signal to leave the staged key unwritten.
+     */
+    fun notifyReady(version: String, path: String): Boolean = runCatching {
+        // Same capability gate the transfer notifications use: from Android
+        // 13 on, a refused POST_NOTIFICATIONS makes notify() a silent no-op,
+        // so "posted" would be a lie without checking first.
+        if (!TransferNotifier.canNotify()) return@runCatching false
+        ensureChannel()
+        // The bitmap icon the app already installs for itself (see BareZenApp);
+        // without one there is no notification to post.
+        val small = TransferNotifier.smallIcon() ?: return@runCatching false
+        val intent = Intent()
+            .setClassName(AndroidContext.app, MAIN_ACTIVITY)
+            .setAction(Intent.ACTION_VIEW)
+            .putExtra(EXTRA_STAGED_APK, path)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        // FLAG_IMMUTABLE is required from API 31 and accepted below it; without it
+        // the tap throws on newer Android and the notification is a dead end.
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val pending = PendingIntent.getActivity(AndroidContext.app, NOTIFICATION_ID, intent, flags)
+        val nm = AndroidContext.app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(
+            NOTIFICATION_ID,
+            NotificationCompat.Builder(AndroidContext.app, CHANNEL)
+                .setSmallIcon(small)
+                .setContentTitle(I18n.strings.notifyUpdateReady(version))
+                .setContentText(I18n.strings.notifyUpdateReadyText)
+                .setContentIntent(pending)
+                .setAutoCancel(true)
+                .build(),
+        )
+        true
+    }.getOrDefault(false)
 
     /** The package is installed or thrown away, so the prompt must not linger. */
     fun clear() {

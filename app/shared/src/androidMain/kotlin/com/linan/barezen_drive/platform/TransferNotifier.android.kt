@@ -69,7 +69,14 @@ actual object TransferNotifier {
     private fun manager(): NotificationManagerCompat? =
         runCatching { NotificationManagerCompat.from(AndroidContext.app) }.getOrNull()
 
-    private fun canNotify(): Boolean =
+    /**
+     * Whether anything this process posts can actually reach the shade.
+     * Internal rather than private: the background update pass asks it before
+     * spending a download on a prompt nobody would see (see UpdateAutoWorker),
+     * and that caller lives in this same module, so module visibility is the
+     * smallest exposure that serves it.
+     */
+    internal fun canNotify(): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             androidx.core.content.ContextCompat.checkSelfPermission(
                 AndroidContext.app,
