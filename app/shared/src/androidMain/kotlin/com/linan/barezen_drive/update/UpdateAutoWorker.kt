@@ -9,7 +9,8 @@ import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.data.local.TokenStorage
 import com.linan.barezen_drive.data.update.UpdateChecker
 import com.linan.barezen_drive.data.update.UpdateStatus
-import com.linan.barezen_drive.data.update.shouldAutoStage
+import com.linan.barezen_drive.data.update.shouldAttemptBackgroundStage
+import com.linan.barezen_drive.platform.TransferNotifier
 import com.linan.barezen_drive.platform.stageUpdateApk
 
 /**
@@ -28,13 +29,24 @@ class UpdateAutoWorker(context: android.content.Context, params: WorkerParameter
         // the sync workers re-seed here too and re-seeding is free.
         runCatching { AndroidContext.init(applicationContext) }
         if (TokenStorage.baseUrl.isBlank() || TokenStorage.accessToken == null) return Result.success()
+        // The gate that comes before everything: if no prompt could reach the
+        // shade (Android 13+ refusal, or the check itself failing - read it as
+        // "cannot notify"), this pass must not download a package it cannot
+        // announce. Downloading anyway and remembering the version as staged
+        // would silently lose that release forever, because shouldAutoStage
+        // skips an already-staged version. Fail-closed, and checked before
+        // any network access: no reason to spend a request, let alone 20 MB,
+        // on a pass that has no way to finish.
+        val canNotify = runCatching { TransferNotifier.canNotify() }.getOrDefault(false)
+        if (!canNotify) return Result.success()
         val prefs = AppPreferences.get()
         val status = runCatching { UpdateChecker.check(AppClient.files) }.getOrNull() ?: return Result.retry()
         // An unreachable or broken instance is "not this time, maybe next":
         // check() reports Failed instead of throwing, so the retry decision
         // has to be read off the status, not off an exception.
         if (status is UpdateStatus.Failed) return Result.retry()
-        val target = shouldAutoStage(
+        val target = shouldAttemptBackgroundStage(
+            canNotify = canNotify,
             status = status,
             currentVersion = BuildInfo.VERSION,
             stagedVersion = prefs.stagedUpdateVersion,
@@ -42,10 +54,15 @@ class UpdateAutoWorker(context: android.content.Context, params: WorkerParameter
 
         val staged = stageUpdateApk(updateMirrorUrls(target), target.sha256, target.size)
             ?: return Result.retry()  // a dead mirror is worth another pass
-        // The key is written only after a verified file exists: a failed stage
-        // must leave nothing behind, or the version would never be retried.
-        prefs.stagedUpdateVersion = target.version
-        UpdateNotifier.notifyReady(target.version, staged)
+        // The prompt reports whether it actually went out. The key is written
+        // only on the strength of that: a stage whose notification was dropped
+        // (icon gone, channel disabled, system said no) must leave nothing
+        // remembered, or the next pass would skip this release and the hint
+        // would be lost silently and permanently. Without the key the next
+        // pass re-stages - costly, but visible, which is the whole point.
+        if (UpdateNotifier.notifyReady(target.version, staged)) {
+            prefs.stagedUpdateVersion = target.version
+        }
         return Result.success()
     }
 

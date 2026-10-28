@@ -28,3 +28,27 @@ fun shouldAutoStage(
     if (stagedVersion == available.version) return null
     return available
 }
+
+/**
+ * Whether the background pass is worth running at all, given whether the
+ * notification that closes the loop can be delivered.
+ *
+ * [shouldAutoStage] answers "should this version be upgraded to"; this wrapper
+ * answers the earlier question of "may we even try", and the only condition it
+ * adds is [canNotify]. Without a deliverable prompt the pass is worse than
+ * useless: it burns about 20 MB, and if it then remembers the version as
+ * staged, [shouldAutoStage] skips that release forever - the upgrade hint
+ * would be lost silently and permanently. A refused POST_NOTIFICATIONS (or
+ * any other reason nothing can reach the shade) must therefore stop the pass
+ * before it starts, not shape the upgrade decision itself: every criterion
+ * below the gate is delegated to [shouldAutoStage] untouched.
+ */
+fun shouldAttemptBackgroundStage(
+    canNotify: Boolean,
+    status: UpdateStatus,
+    currentVersion: String,
+    stagedVersion: String?,
+): UpdateStatus.Available? {
+    if (!canNotify) return null
+    return shouldAutoStage(status, currentVersion, stagedVersion)
+}
