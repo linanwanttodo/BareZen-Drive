@@ -210,13 +210,14 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
     install(CallLogging) {
         // Signed content/thumbnail URLs carry a bearer-grade `sig` in the query
-        // string; the default formatter would write it to the access log, so
-        // replace it with a placeholder while keeping the default layout.
+        // string, and a presigned S3 URL carries the same grade of secret in
+        // `X-Amz-Signature`; the default formatter would write either to the
+        // access log, so replace them while keeping the default layout.
         format { call ->
             val req = call.request
-            val safeUri = if (req.queryParameters.contains("sig")) {
-                req.uri.replace(Regex("sig=[^&#]*"), "sig=***")
-            } else req.uri
+            val safeUri = req.uri
+                .replace(Regex("sig=[^&#]*"), "sig=***")
+                .replace(Regex("(?i)X-Amz-Signature=[^&#]*"), "X-Amz-Signature=***")
             "${call.response.status()}: ${req.httpMethod.value} - $safeUri"
         }
     }
