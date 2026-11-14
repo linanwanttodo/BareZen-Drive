@@ -65,7 +65,7 @@ fun davSegments(rawPath: String): List<String>? {
  * escaped one - that check alone does not cover it, because decoding only runs
  * on a segment that contains a percent sign.
  */
-private fun hasUnpairedSurrogate(s: String): Boolean {
+internal fun hasUnpairedSurrogate(s: String): Boolean {
     var i = 0
     while (i < s.length) {
         val c = s[i]
@@ -81,7 +81,7 @@ private fun hasUnpairedSurrogate(s: String): Boolean {
     return false
 }
 
-private fun percentDecode(s: String): String? {
+internal fun percentDecode(s: String): String? {
     if ('%' !in s) return s
     // A raw non-ASCII character occupies up to three UTF-8 bytes, so a buffer
     // sized by character count is too small for the very paths this branch exists
