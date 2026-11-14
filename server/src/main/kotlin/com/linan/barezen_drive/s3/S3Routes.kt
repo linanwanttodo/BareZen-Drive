@@ -83,19 +83,25 @@ internal fun ApplicationCall.s3RawKey(): String {
     return if (slash < 0) "" else trimmed.substring(slash + 1)
 }
 
-/** 保留桶名访问一律 404 NoSuchBucket，绝不回 SPA（否则客户端把 HTML 当成功解析）。 */
+/**
+ * 保留桶名绝不回 SPA（否则客户端把 HTML 当成功解析）。spec §4.4 分两半：
+ * CreateBucket（PUT 且不带键）用保留名是 400 InvalidBucketName，其余访问是
+ * 404 NoSuchBucket——PUT 带键是 PutObject，不是建桶。
+ */
 internal fun ApplicationCall.s3GuardReservedBucket() {
-    if (s3BucketName().lowercase() in S3_RESERVED_BUCKETS) {
-        throw S3Exception("NoSuchBucket", HttpStatusCode.NotFound, "桶不存在")
+    if (s3BucketName().lowercase() !in S3_RESERVED_BUCKETS) return
+    if (request.httpMethod.value.uppercase() == "PUT" && s3RawKey().isEmpty()) {
+        throw S3Exception("InvalidBucketName", HttpStatusCode.BadRequest, "桶名非法")
     }
+    throw S3Exception("NoSuchBucket", HttpStatusCode.NotFound, "桶不存在")
 }
 
 fun Route.s3Routes() {
-    get("/") { call.s3Handle { s3NotYetImplemented() } }
+    get("/") { call.s3Handle { token -> s3ListBuckets(token) } }
     route("/{bucket}") {
-        s3BucketMethods { s3Handle { s3GuardReservedBucket(); s3NotYetImplemented() } }
+        s3BucketMethods { s3Handle { token -> s3BucketDispatch(token) } }
         route("/") {
-            s3BucketMethods { s3Handle { s3GuardReservedBucket(); s3NotYetImplemented() } }
+            s3BucketMethods { s3Handle { token -> s3BucketDispatch(token) } }
         }
         route("{key...}") {
             s3BucketMethods { s3Handle { s3GuardReservedBucket(); s3NotYetImplemented() } }
