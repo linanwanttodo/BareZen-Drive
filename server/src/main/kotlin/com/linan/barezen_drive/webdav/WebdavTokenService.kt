@@ -1,5 +1,6 @@
 package com.linan.barezen_drive.webdav
 
+import com.linan.barezen_drive.auth.SecretCipher
 import com.linan.barezen_drive.auth.TokenSecret
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.UsersTable
@@ -18,6 +19,17 @@ import java.util.UUID
 
 /** A credential that authenticated a WebDAV request, as the routes need it. */
 data class WebdavTokenRecord(val userId: UUID, val readOnly: Boolean, val id: UUID)
+
+/** S3 取签名密钥的三种结果。两种失败都是 403，但 Code 不同，所以不能合并成 null。 */
+sealed interface S3KeyLookup {
+    data class Found(val record: WebdavTokenRecord, val secret: String) : S3KeyLookup
+
+    /** 不是合法 UUID，或行不存在（含已吊销）。 */
+    data object UnknownKey : S3KeyLookup
+
+    /** 行在，但没有可解密的副本：本版本之前签发，或 JWT_SECRET 换过。 */
+    data object NotS3Capable : S3KeyLookup
+}
 
 /**
  * What the settings list shows. Carries no secret: the plaintext exists in
@@ -56,6 +68,7 @@ object WebdavTokenService {
                 it[WebdavTokensTable.id] = id
                 it[WebdavTokensTable.user] = userId
                 it[WebdavTokensTable.tokenHash] = TokenSecret.hash(token)
+                it[WebdavTokensTable.secretEnc] = SecretCipher.seal(token, id.toString())
                 it[WebdavTokensTable.label] = label
                 it[WebdavTokensTable.readOnly] = readOnly
                 it[createdAt] = now
@@ -133,4 +146,24 @@ object WebdavTokenService {
                 WebdavTokenRecord(userId, row[WebdavTokensTable.readOnly], row[WebdavTokensTable.id])
             }
         }
+
+    /**
+     * 按 accessKeyId（= 令牌 id）取 SigV4 的 HMAC 密钥。
+     *
+     * 与 authenticate 一样尽力而为地写 lastUsedAt：记不上自己的使用不该让请求失败。
+     * 解密失败与"没有副本"对调用方是同一件事——都要求重新签发令牌。
+     */
+    suspend fun lookupSigningKey(accessKeyId: String): S3KeyLookup = withContext(Dispatchers.IO) {
+        val id = runCatching { UUID.fromString(accessKeyId) }.getOrNull() ?: return@withContext S3KeyLookup.UnknownKey
+        transaction(DatabaseFactory.db) {
+            val row = WebdavTokensTable.selectAll().where { WebdavTokensTable.id eq id }.firstOrNull()
+                ?: return@transaction S3KeyLookup.UnknownKey
+            val sealed = row[WebdavTokensTable.secretEnc] ?: return@transaction S3KeyLookup.NotS3Capable
+            val secret = SecretCipher.open(sealed, id.toString()) ?: return@transaction S3KeyLookup.NotS3Capable
+            runCatching {
+                WebdavTokensTable.update({ WebdavTokensTable.id eq id }) { it[lastUsedAt] = System.currentTimeMillis() }
+            }
+            S3KeyLookup.Found(WebdavTokenRecord(row[WebdavTokensTable.user], row[WebdavTokensTable.readOnly], id), secret)
+        }
+    }
 }

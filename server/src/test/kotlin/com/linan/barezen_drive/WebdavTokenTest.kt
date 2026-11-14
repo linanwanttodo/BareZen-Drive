@@ -4,6 +4,8 @@ import com.linan.barezen_drive.config.AppConfig
 import com.linan.barezen_drive.db.UsersTable
 import com.linan.barezen_drive.db.WebdavTokensTable
 import com.linan.barezen_drive.storage.LocalStorageProvider
+import com.linan.barezen_drive.webdav.S3KeyLookup
+import com.linan.barezen_drive.webdav.WebdavTokenService
 import io.ktor.client.request.*
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -17,6 +19,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.nio.file.Files
 import java.nio.file.Path
@@ -278,5 +281,37 @@ class WebdavTokenTest {
         }
         val me = transaction { UsersTable.selectAll().single()[UsersTable.id] }
         assertEquals(listOf(me), owners, "the token must be bound to the creating account")
+    }
+
+    @Test
+    fun aNewTokenCarriesADecryptableCopyBoundToItsId() = testApplication {
+        setup()
+        val issued = issue("s3")
+        val lookup = WebdavTokenService.lookupSigningKey(issued.id)
+        assertTrue(lookup is S3KeyLookup.Found, "新签发的令牌必须能取回签名密钥")
+        assertEquals(issued.plaintext, (lookup as S3KeyLookup.Found).secret)
+        assertEquals(issued.id, lookup.record.id.toString())
+    }
+
+    @Test
+    fun aTokenWithoutTheEncryptedCopyIsNotS3Capable() = testApplication {
+        setup()
+        val issued = issue("old")
+        transaction {
+            WebdavTokensTable.update({ WebdavTokensTable.id eq UUID.fromString(issued.id) }) {
+                it[WebdavTokensTable.secretEnc] = null
+            }
+        }
+        assertTrue(
+            WebdavTokenService.lookupSigningKey(issued.id) is S3KeyLookup.NotS3Capable,
+            "没有可解密副本的令牌在 S3 侧不可用",
+        )
+        // A real /dav/ request, not just authenticate(): the latter would skip the
+        // routing wiring, which is half of what "DAV is unaffected" means.
+        assertNotEquals(
+            HttpStatusCode.Unauthorized,
+            client.get("/dav/") { header(HttpHeaders.Authorization, basic("user1", issued.plaintext)) }.status,
+            "抹掉 secret_enc 绝不能影响 WebDAV",
+        )
     }
 }

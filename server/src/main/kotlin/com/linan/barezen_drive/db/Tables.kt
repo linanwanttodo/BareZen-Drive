@@ -68,6 +68,8 @@ object FilesTable : Table("files") {
     val mimeType = varchar("mime_type", 255).nullable()
     val sha256 = varchar("sha256", 64)
     val storageKey = varchar("storage_key", 512)
+    /** S3 用户元数据，{"键":"值"} 的 JSON，键已小写；非 S3 写入为 NULL。 */
+    val userMeta = varchar("user_meta", 4096).nullable()
     // SQL-level default (not clientDefault): createMissingTablesAndColumns ALTERs
     // existing databases, and a NOT NULL add without DEFAULT fails on any table
     // that already holds rows (PostgreSQL rejects it outright).
@@ -127,6 +129,7 @@ object UploadSessionsTable : Table("upload_sessions") {
     val chunkSize = long("chunk_size")
     val clientSha256 = varchar("client_sha256", 64).nullable()
     val takenAt = long("taken_at").nullable()
+    val userMeta = varchar("user_meta", 4096).nullable()
     // SQL-level default: existing databases get ALTERed with DEFAULT FALSE,
     // never a NOT NULL add that fails on populated rows.
     val overwrite = bool("overwrite").default(false)
@@ -149,6 +152,11 @@ object UploadChunksTable : Table("upload_chunks") {
     val session = uuid("session_id").references(UploadSessionsTable.id)
     val chunkIndex = integer("chunk_index")
     val size = long("size")
+    /** 分片内容的 SHA-256 hex；普通分块上传不写，S3 UploadPart 写。 */
+    val etag = varchar("etag", 64).nullable()
+    /** S3 校验和的 base64；与 checksumAlgorithm 成对出现。 */
+    val checksum = varchar("checksum", 128).nullable()
+    val checksumAlgorithm = varchar("checksum_algorithm", 16).nullable()
     override val primaryKey = PrimaryKey(session, chunkIndex)
 }
 
@@ -223,6 +231,9 @@ object WebdavTokensTable : Table("webdav_tokens") {
     // SQL-level default, not clientDefault: the ALTER for existing databases
     // needs DEFAULT 0 to backfill rows instead of failing.
     val lastUsedAt = long("last_used_at").default(0)
+    /** AES-GCM 封装的令牌明文，供 S3 SigV4 校验取 HMAC 密钥；DAV 仍走 tokenHash。
+     *  本版本之前签发的令牌照旧为 NULL，在 S3 侧不可用（见 SecretCipher）。 */
+    val secretEnc = varchar("secret_enc", 255).nullable()
     val createdAt = long("created_at").clientDefault { System.currentTimeMillis() }
     override val primaryKey = PrimaryKey(id)
     init {

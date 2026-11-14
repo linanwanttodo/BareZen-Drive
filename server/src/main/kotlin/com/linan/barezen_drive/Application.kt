@@ -2,6 +2,7 @@ package com.linan.barezen_drive
 
 import com.linan.barezen_drive.auth.JwtService
 import com.linan.barezen_drive.auth.LinkService
+import com.linan.barezen_drive.auth.SecretCipher
 import com.linan.barezen_drive.auth.authRoutes
 import com.linan.barezen_drive.config.AppConfig
 import com.linan.barezen_drive.core.dto.ApiError
@@ -139,6 +140,7 @@ internal fun Database.probe(): Boolean =
 fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     JwtService.init(cfg.jwtSecret)
     LinkService.init(cfg.jwtSecret)
+    SecretCipher.init(cfg.jwtSecret)
     // Connect + schema DDL inside module() so testApplication exercises it too.
     // Guarded so repeated testApplication entry reuses the Exposed connection.
     connectDatabaseOnce(cfg)
