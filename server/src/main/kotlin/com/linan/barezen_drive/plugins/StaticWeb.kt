@@ -3,6 +3,7 @@ package com.linan.barezen_drive.plugins
 import io.ktor.http.*
 import io.ktor.server.request.*
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
@@ -43,51 +44,57 @@ private const val CACHE_REVALIDATE = "no-cache"
  * uniformly for directory and jar classpaths.
  */
 fun Route.staticWeb() {
-    get("{...}") {
-        val segments = call.request.path().trim('/').split('/').filter { it.isNotEmpty() }
+    get("{...}") { call.respondStaticWeb() }
+}
 
-        // Reserved prefixes answer 404 for unmatched subroutes (real /api/** and /health
-        // routes are registered earlier and win by specificity).
-        if (segments.firstOrNull() in RESERVED_PREFIXES) {
-            call.respond(HttpStatusCode.NotFound)
-            return@get
+/**
+ * 静态站点的响应实体。抽出来是为了让 S3 路由在判定"这不是 S3 请求"之后能把
+ * 请求原样交回来——根路径与 SPA 共用命名空间，两边不能互相遮住。
+ */
+suspend fun ApplicationCall.respondStaticWeb() {
+    val segments = request.path().trim('/').split('/').filter { it.isNotEmpty() }
+
+    // Reserved prefixes answer 404 for unmatched subroutes (real /api/** and /health
+    // routes are registered earlier and win by specificity).
+    if (segments.firstOrNull() in RESERVED_PREFIXES) {
+        respond(HttpStatusCode.NotFound)
+        return
+    }
+
+    // Path traversal defense. Each segment is decoded on its own and then judged
+    // as a whole path element: only a segment that IS "." / ".." or that carries a
+    // separator or drive marker after decoding is rejected. Comparing the decoded
+    // text with a bare ".." substring used to reject legitimate names such as
+    // "chart..final.png", which then silently fell through to the SPA fallback.
+    // A segment that fails to decode keeps its raw form for the check, so a
+    // literal "%" in a filename stays usable (the raw path is what gets served).
+    val unsafe = segments.any { raw ->
+        val decoded = runCatching { java.net.URLDecoder.decode(raw, Charsets.UTF_8) }.getOrDefault(raw)
+        decoded == "." || decoded == ".." ||
+            decoded.contains('/') || decoded.contains('\\') ||
+            decoded.contains(':') || decoded.contains('\u0000')
+    }
+    val assetPath = if (unsafe || segments.isEmpty()) null else "web/" + segments.joinToString("/")
+    val asset = assetPath?.let { path -> loadAsset(path)?.let { bytes -> path to bytes } }
+
+    when {
+        // Real asset found on the classpath: serve with its content type.
+        asset != null -> {
+            val ext = asset.first.substringAfterLast('.').lowercase()
+            response.header(
+                HttpHeaders.CacheControl,
+                if (ext in IMMUTABLE_EXTENSIONS) CACHE_IMMUTABLE else CACHE_REVALIDATE,
+            )
+            respondBytes(asset.second, CONTENT_TYPES[ext] ?: ContentType.Application.OctetStream)
         }
-
-        // Path traversal defense. Each segment is decoded on its own and then judged
-        // as a whole path element: only a segment that IS "." / ".." or that carries a
-        // separator or drive marker after decoding is rejected. Comparing the decoded
-        // text with a bare ".." substring used to reject legitimate names such as
-        // "chart..final.png", which then silently fell through to the SPA fallback.
-        // A segment that fails to decode keeps its raw form for the check, so a
-        // literal "%" in a filename stays usable (the raw path is what gets served).
-        val unsafe = segments.any { raw ->
-            val decoded = runCatching { java.net.URLDecoder.decode(raw, Charsets.UTF_8) }.getOrDefault(raw)
-            decoded == "." || decoded == ".." ||
-                decoded.contains('/') || decoded.contains('\\') ||
-                decoded.contains(':') || decoded.contains('\u0000')
-        }
-        val assetPath = if (unsafe || segments.isEmpty()) null else "web/" + segments.joinToString("/")
-        val asset = assetPath?.let { path -> loadAsset(path)?.let { bytes -> path to bytes } }
-
-        when {
-            // Real asset found on the classpath: serve with its content type.
-            asset != null -> {
-                val ext = asset.first.substringAfterLast('.').lowercase()
-                call.response.header(
-                    HttpHeaders.CacheControl,
-                    if (ext in IMMUTABLE_EXTENSIONS) CACHE_IMMUTABLE else CACHE_REVALIDATE,
-                )
-                call.respondBytes(asset.second, CONTENT_TYPES[ext] ?: ContentType.Application.OctetStream)
-            }
-            // SPA fallback: anything that is not a real asset gets the entry page.
-            else -> {
-                val index = loadAsset("web/index.html")
-                if (index != null) {
-                    call.response.header(HttpHeaders.CacheControl, CACHE_REVALIDATE)
-                    call.respondBytes(index, ContentType.Text.Html, HttpStatusCode.OK)
-                } else {
-                    call.respond(HttpStatusCode.NotFound)
-                }
+        // SPA fallback: anything that is not a real asset gets the entry page.
+        else -> {
+            val index = loadAsset("web/index.html")
+            if (index != null) {
+                response.header(HttpHeaders.CacheControl, CACHE_REVALIDATE)
+                respondBytes(index, ContentType.Text.Html, HttpStatusCode.OK)
+            } else {
+                respond(HttpStatusCode.NotFound)
             }
         }
     }

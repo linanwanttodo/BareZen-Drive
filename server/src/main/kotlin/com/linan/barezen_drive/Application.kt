@@ -40,6 +40,12 @@ import com.linan.barezen_drive.system.systemRoutes
 import com.linan.barezen_drive.system.versionRoutes
 import com.linan.barezen_drive.jobs.UploadCleanupJob
 import com.linan.barezen_drive.plugins.staticWeb
+import com.linan.barezen_drive.s3.S3_RESERVED_BUCKETS
+import com.linan.barezen_drive.s3.hasS3Marker
+import com.linan.barezen_drive.s3.s3GuardReservedBucket
+import com.linan.barezen_drive.s3.s3Handle
+import com.linan.barezen_drive.s3.s3NotYetImplemented
+import com.linan.barezen_drive.s3.s3Routes
 import com.linan.barezen_drive.storage.LocalStorageProvider
 import com.linan.barezen_drive.storage.S3StorageProvider
 import com.linan.barezen_drive.storage.StorageProvider
@@ -314,6 +320,14 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
                 "worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'",
             safeOnly = false,
         )
+        // 保留桶名必须在路由之前拦下：/health 与 /readyz 是常量路由，评分高于
+        // /{bucket}，S3 路由永远看不到它们，签名请求会拿到健康检查的 JSON。
+        if (call.hasS3Marker() &&
+            call.request.path().trim('/').substringBefore('/').lowercase() in S3_RESERVED_BUCKETS
+        ) {
+            call.s3Handle { s3GuardReservedBucket(); s3NotYetImplemented() }
+            finish()
+        }
         // JSON payloads here are small DTOs (register, rename, share create);
         // 1 MiB is far above any of them. Upload chunks are exempt by design -
         // they are legitimately up to 20 MiB and are streamed, not buffered.
@@ -374,6 +388,9 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         // before staticWeb() so an unmatched /dav path is a DAV-shaped 404
         // rather than the SPA's index.html.
         webdavResourceRoutes()
+        // S3 与静态站点共用根路径命名空间，必须在 staticWeb() 之前注册；每个
+        // handler 自己判定"不是 S3 就交回静态站点"（见 s3Routes）。
+        s3Routes()
         staticWeb()
     }
 }
