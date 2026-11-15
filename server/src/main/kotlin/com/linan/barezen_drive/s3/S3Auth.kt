@@ -16,6 +16,13 @@ import kotlin.math.abs
 
 val s3TokenKey = AttributeKey<WebdavTokenRecord>("BareZenS3Token")
 
+/** aws-chunked 的块签名链要用本次请求的签名材料续算，鉴权通过后必须留一份。 */
+internal data class S3SigningContext(
+    val secret: String, val region: String, val dateStamp: String, val amzDate: String, val seedSignature: String,
+)
+
+internal val s3SigningContextKey = AttributeKey<S3SigningContext>("BareZenS3Signing")
+
 /** 与 login / dav-auth 各自独立的失败预算：挂载点每个请求都带凭据，错误密钥的
  *  重试循环不该把登录额度烧光（RFC 7617 附录的同一理由）。 */
 const val S3_AUTH_MAX_PER_WINDOW = 20
@@ -55,13 +62,14 @@ suspend fun ApplicationCall.s3Authenticate(): WebdavTokenRecord {
     if (!Throttle.tryConsume(budgetKey, S3_AUTH_MAX_PER_WINDOW, S3_AUTH_WINDOW_MS)) {
         throw S3Exception("SlowDown", HttpStatusCode.ServiceUnavailable, "鉴权失败次数过多")
     }
-    val token = authenticateInner()
+    val (token, signing) = authenticateInner()
     Throttle.refund(budgetKey, S3_AUTH_WINDOW_MS)
     attributes.put(s3TokenKey, token)
+    attributes.put(s3SigningContextKey, signing)
     return token
 }
 
-private suspend fun ApplicationCall.authenticateInner(): WebdavTokenRecord {
+private suspend fun ApplicationCall.authenticateInner(): Pair<WebdavTokenRecord, S3SigningContext> {
     val authorization = request.header(HttpHeaders.Authorization)
     if (authorization != null && authorization.startsWith("AWS ")) {
         throw S3Exception("NotImplemented", HttpStatusCode.NotImplemented, "不支持 SigV2")
@@ -122,5 +130,5 @@ private suspend fun ApplicationCall.authenticateInner(): WebdavTokenRecord {
         request, accessKey, found.secret, region, dateStamp, amzDate, signedHeaders, signature,
         presign = presign != null,
     )?.let { throw it }
-    return found.record
+    return found.record to S3SigningContext(found.secret, region, dateStamp, amzDate, signature)
 }

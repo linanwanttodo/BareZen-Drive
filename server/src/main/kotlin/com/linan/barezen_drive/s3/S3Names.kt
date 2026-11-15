@@ -4,6 +4,7 @@ import com.linan.barezen_drive.api.isUniqueViolation
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
+import com.linan.barezen_drive.db.UploadChunksTable
 import com.linan.barezen_drive.db.UploadSessionsTable
 import com.linan.barezen_drive.webdav.hasUnpairedSurrogate
 import com.linan.barezen_drive.webdav.percentDecode
@@ -11,6 +12,7 @@ import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
@@ -116,7 +118,8 @@ internal suspend fun s3EnsureParents(userId: UUID, bucketId: UUID, segments: Lis
 /**
  * 从 [folderId] 向上剪掉空目录，到桶目录为止（桶自己永不剪，否则删掉最后一个
  * 对象后桶会消失，rclone 会以为桶没了）。"空"= 没有子目录、没有任何状态的文件
- * （含回收站）、没有被上传会话引用。
+ * （含回收站）、没有未完成的上传会话。已完成/已取消的会话不再往目录里写东西，
+ * 算进去会让刚 PUT 过的目录在会话过期前一直剪不掉。
  */
 internal suspend fun s3PruneEmptyAncestors(userId: UUID, folderId: UUID?, bucketId: UUID) {
     withContext(Dispatchers.IO) {
@@ -129,9 +132,17 @@ internal suspend fun s3PruneEmptyAncestors(userId: UUID, folderId: UUID?, bucket
                 }.firstOrNull() ?: return@transaction null
                 val hasChildren = FoldersTable.select(FoldersTable.id).where { FoldersTable.parent eq id }.any()
                 val hasFiles = FilesTable.select(FilesTable.id).where { FilesTable.folder eq id }.any()
-                val hasSessions = UploadSessionsTable.select(UploadSessionsTable.id)
-                    .where { UploadSessionsTable.folder eq id }.any()
-                if (hasChildren || hasFiles || hasSessions) return@transaction null
+                val hasOpenSessions = UploadSessionsTable.select(UploadSessionsTable.id)
+                    .where { (UploadSessionsTable.folder eq id) and (UploadSessionsTable.status eq "open") }.any()
+                if (hasChildren || hasFiles || hasOpenSessions) return@transaction null
+                // 已完成/已取消的会话行仍按 FK 指着这个目录，不先清掉目录就删不动
+                // （与 FileService.deleteFolder 同一处理）。
+                val finished = UploadSessionsTable.select(UploadSessionsTable.id)
+                    .where { UploadSessionsTable.folder eq id }.map { it[UploadSessionsTable.id] }
+                if (finished.isNotEmpty()) {
+                    UploadChunksTable.deleteWhere { UploadChunksTable.session inList finished }
+                    UploadSessionsTable.deleteWhere { UploadSessionsTable.id inList finished }
+                }
                 FoldersTable.deleteWhere { FoldersTable.id eq id }
                 row[FoldersTable.parent]
             }

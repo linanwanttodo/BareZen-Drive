@@ -17,6 +17,8 @@ private val HEADER_ALGORITHMS = mapOf(
 
 internal fun s3ChecksumHeader(algorithm: String): String = "x-amz-checksum-" + algorithm.lowercase()
 
+internal fun s3ChecksumAlgorithm(headerName: String): String? = HEADER_ALGORITHMS[headerName.lowercase()]
+
 /** 请求侧声明的校验和。CRC64NVME 不支持：JDK 没有它，spec §7.1 明确拒。 */
 internal fun ApplicationCall.s3Checksums(): Map<String, String> {
     val out = LinkedHashMap<String, String>()

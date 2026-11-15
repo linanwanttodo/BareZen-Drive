@@ -318,7 +318,7 @@ private data class DavPutResult(val sha256: String)
  * would learn nothing. `putChunk` independently refuses a short chunk, so the
  * length verdict does not depend on which of the two notices it first.
  */
-private suspend fun davStreamChunks(
+internal suspend fun davStreamChunks(
     userId: UUID,
     sessionId: UUID,
     body: ByteReadChannel,
@@ -421,7 +421,7 @@ private suspend fun ApplicationCall.davSpoolBody(
  * would turn a successful upload into a database error. Anything unparseable or
  * oversized is stored as unknown rather than rejected - the bytes are the file.
  */
-private fun ApplicationCall.davPutMimeType(): String? {
+internal fun ApplicationCall.davPutMimeType(): String? {
     val raw = request.headers[HttpHeaders.ContentType] ?: return null
     // Parsed rather than split, so a parameter list ("text/plain; charset=utf-8")
     // is dropped instead of being stored as part of the type - and so a malformed

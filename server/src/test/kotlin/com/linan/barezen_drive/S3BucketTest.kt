@@ -290,6 +290,24 @@ class S3BucketTest {
     }
 
     @Test
+    fun aCompletedUploadSessionDoesNotBlockBucketDeletion() = testApplication {
+        setup()
+        s3("PUT", "/testbucket")
+        // 已完成的会话行还会按 FK 指着桶 24h：算进"非空"会让刚 PUT 过的桶删不掉。
+        transaction(DatabaseFactory.db) {
+            UploadSessionsTable.insert {
+                it[UploadSessionsTable.id] = UUID.randomUUID(); it[UploadSessionsTable.user] = UUID.fromString(userId)
+                it[UploadSessionsTable.folder] = bucketId("testbucket"); it[UploadSessionsTable.name] = "done.bin"
+                it[UploadSessionsTable.size] = 1; it[UploadSessionsTable.chunkSize] = 1
+                it[UploadSessionsTable.status] = "completed"
+                it[UploadSessionsTable.expiresAt] = System.currentTimeMillis() + 24L * 3600 * 1000
+            }
+        }
+        assertEquals(HttpStatusCode.NoContent, s3("DELETE", "/testbucket").status)
+        assertEquals(HttpStatusCode.NotFound, s3("HEAD", "/testbucket").status)
+    }
+
+    @Test
     fun aLiveFileAtTheRootBlocksTheBucketName() = testApplication {
         setup()
         transaction(DatabaseFactory.db) {

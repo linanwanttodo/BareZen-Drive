@@ -5,7 +5,10 @@ import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
 import com.linan.barezen_drive.db.UploadSessionsTable
 import com.linan.barezen_drive.db.UsersTable
+import com.linan.barezen_drive.files.FileService
 import com.linan.barezen_drive.files.FileTree
+import com.linan.barezen_drive.files.deleteStoredBlobs
+import com.linan.barezen_drive.storage.StorageRegistry
 import com.linan.barezen_drive.webdav.DavProperties
 import com.linan.barezen_drive.webdav.WebdavTokenRecord
 import io.ktor.http.ContentType
@@ -145,16 +148,20 @@ private suspend fun ApplicationCall.s3HeadBucket(token: WebdavTokenRecord, name:
 
 private suspend fun ApplicationCall.s3DeleteBucket(token: WebdavTokenRecord, name: String) {
     val id = s3RequireBucket(token.userId, name)
-    withContext(Dispatchers.IO) {
+    val storage = StorageRegistry.defaultProvider() ?: error("no storage backend registered")
+    val keys = withContext(Dispatchers.IO) {
         transaction(DatabaseFactory.db) {
             val subtree = FileTree.subtreeWithRoot(token.userId, id)
-            // 任何状态的文件（含回收站）与任何上传会话都算非空
+            // 任何状态的文件（含回收站）都算非空；上传会话只算未完成的——已完成/
+            // 已取消的行不再往目录里写东西，算进去会让刚 PUT 过的桶 24h 内删不掉。
             for (batch in subtree.chunked(500)) {
                 val fileOp = SqlExpressionBuilder.run { FilesTable.folder inList batch }
                 if (FilesTable.select(FilesTable.id).where { fileOp }.any()) {
                     throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
                 }
-                val sessionOp = SqlExpressionBuilder.run { UploadSessionsTable.folder inList batch }
+                val sessionOp = SqlExpressionBuilder.run {
+                    (UploadSessionsTable.folder inList batch) and (UploadSessionsTable.status eq "open")
+                }
                 if (UploadSessionsTable.select(UploadSessionsTable.id).where { sessionOp }.any()) {
                     throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
                 }
@@ -162,9 +169,11 @@ private suspend fun ApplicationCall.s3DeleteBucket(token: WebdavTokenRecord, nam
             if (subtree.size > 1) {
                 throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
             }
-            FoldersTable.deleteWhere { FoldersTable.id eq id }
+            // 已完成的会话行仍按 FK 指着桶：走既有的级联删除，不在这里写第二份。
+            FileService.deleteFolder(token.userId, id).blobKeys
         }
     }
+    if (keys.isNotEmpty()) deleteStoredBlobs(storage, keys)
     respondText("", ContentType.Application.Xml, HttpStatusCode.NoContent)
 }
 

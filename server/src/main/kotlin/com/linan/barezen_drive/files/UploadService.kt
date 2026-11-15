@@ -521,10 +521,12 @@ object UploadService {
             // Hex-encode the raw digest. Do NOT hash the digest again - the blob key
             // must equal the content hash for dedup/instant upload to match.
             val sha = raw["SHA256"]!!.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+            // verify 先跑：S3 在这里核对载荷哈希并抛自己的错误码，下面那条通用
+            // 400 只作为非 S3 调用方的兜底。两者都在 publish 之前。
+            verify(raw)
             if (clientSha != null && !clientSha.equals(sha, ignoreCase = true)) {
                 throw ApiException.badRequest("整体哈希与 init 不符", ErrorCodes.CHUNK_INVALID)
             }
-            verify(raw)
             val key = storage.blobKey(sha)
             if (!storage.exists(key)) {
                 // Rename first, copy only when a rename is impossible: the merge
