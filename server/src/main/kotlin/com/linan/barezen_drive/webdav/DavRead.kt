@@ -48,12 +48,13 @@ internal fun Route.davGetAndHead() {
     // `head { }` only because the plugin has to be installed on the node that
     // holds the handler - `head { }` hands over the handler and nothing else.
     method(HttpMethod.Head) {
-        install(DavAutoHead)
+        install(AutoHeadBody)
         handle { call.respondDavRead() }
     }
 }
 
-private val DavAutoHead = createRouteScopedPlugin("DavAutoHead") {
+/** Shared with the S3 surface: Ktor's engine streams whatever a HEAD handler produces. */
+internal val AutoHeadBody = createRouteScopedPlugin("AutoHeadBody") {
     /**
      * The body a HEAD response must carry: none.
      *

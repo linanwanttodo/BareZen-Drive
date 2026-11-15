@@ -2,10 +2,13 @@ package com.linan.barezen_drive.s3
 
 import com.linan.barezen_drive.api.ApiException
 import com.linan.barezen_drive.plugins.respondStaticWeb
+import com.linan.barezen_drive.webdav.AutoHeadBody
 import com.linan.barezen_drive.webdav.WebdavTokenRecord
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.install
 import io.ktor.server.application.log
 import io.ktor.server.request.header
 import io.ktor.server.request.httpMethod
@@ -15,7 +18,7 @@ import io.ktor.server.response.header
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
-import io.ktor.server.routing.head
+import io.ktor.server.routing.method
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
@@ -104,7 +107,7 @@ fun Route.s3Routes() {
             s3BucketMethods { s3Handle { token -> s3BucketDispatch(token) } }
         }
         route("{key...}") {
-            s3BucketMethods { s3Handle { s3GuardReservedBucket(); s3NotYetImplemented() } }
+            s3BucketMethods { s3Handle { token -> s3ObjectDispatch(token) } }
         }
     }
 }
@@ -112,7 +115,12 @@ fun Route.s3Routes() {
 /** 五个方法共用一个 handler；业务分发在 handler 内部按 method/query 做。 */
 private fun Route.s3BucketMethods(handler: suspend ApplicationCall.() -> Unit) {
     get { call.handler() }
-    head { call.handler() }
+    // Ktor 的引擎会把 handler 产出的 body 原样发出去，HEAD 也不例外：不装这个
+    // 插件，HeadObject 就会把整个对象下载一遍。与 DAV 共用同一个插件。
+    method(HttpMethod.Head) {
+        install(AutoHeadBody)
+        handle { call.handler() }
+    }
     put { call.handler() }
     delete { call.handler() }
     post { call.handler() }
