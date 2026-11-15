@@ -323,6 +323,7 @@ object FileService {
                     it[FilesTable.storageKey] = source[FilesTable.storageKey]
                     it[FilesTable.hasThumbnail] = source[FilesTable.hasThumbnail]
                     it[FilesTable.takenAt] = source[FilesTable.takenAt]
+                    it[FilesTable.userMeta] = source[FilesTable.userMeta]
                     it[FilesTable.isFavorite] = source[FilesTable.isFavorite]
                     it[FilesTable.archivedAt] = source[FilesTable.archivedAt]
                     it[FilesTable.deletedAt] = 0L
@@ -412,6 +413,7 @@ object FileService {
                 val folder: UUID, val name: String, val size: Long, val mimeType: String?,
                 val sha256: String, val storageKey: String, val hasThumbnail: Boolean,
                 val takenAt: Long?, val isFavorite: Boolean, val archivedAt: Long,
+                val userMeta: String?,
             )
 
             val subtreeIds = ArrayList<UUID>(inOrder)
@@ -427,6 +429,7 @@ object FileService {
                     FilesTable.folder, FilesTable.name, FilesTable.size, FilesTable.mimeType,
                     FilesTable.sha256, FilesTable.storageKey, FilesTable.hasThumbnail,
                     FilesTable.takenAt, FilesTable.isFavorite, FilesTable.archivedAt,
+                    FilesTable.userMeta,
                 ).where { subtreeOp and (FilesTable.user eq userId) and (FilesTable.deletedAt eq 0L) }
                     .forEach { row ->
                         val target = row[FilesTable.folder]?.let { mapped[it] } ?: return@forEach
@@ -436,6 +439,7 @@ object FileService {
                             storageKey = row[FilesTable.storageKey], hasThumbnail = row[FilesTable.hasThumbnail],
                             takenAt = row[FilesTable.takenAt], isFavorite = row[FilesTable.isFavorite],
                             archivedAt = row[FilesTable.archivedAt],
+                            userMeta = row[FilesTable.userMeta],
                         )
                     }
             }
@@ -453,6 +457,7 @@ object FileService {
                     this[FilesTable.takenAt] = row.takenAt
                     this[FilesTable.isFavorite] = row.isFavorite
                     this[FilesTable.archivedAt] = row.archivedAt
+                    this[FilesTable.userMeta] = row.userMeta
                     this[FilesTable.deletedAt] = 0L
                     this[FilesTable.createdAt] = now
                     this[FilesTable.updatedAt] = now
