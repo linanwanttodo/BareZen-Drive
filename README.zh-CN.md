@@ -1,5 +1,7 @@
 # BareZen-Drive
 
+（此项目正在逐渐完善打磨中，拥有良好的开发骨架）
+
 [![Release](https://img.shields.io/github/v/release/linanwanttodo/BareZen-Drive?label=release&color=red)](https://github.com/linanwanttodo/BareZen-Drive/releases)
 [![Downloads](https://img.shields.io/github/downloads/linanwanttodo/BareZen-Drive/total?label=downloads&color=red)](https://github.com/linanwanttodo/BareZen-Drive/releases)
 [![License](https://img.shields.io/github/license/linanwanttodo/BareZen-Drive)](https://github.com/linanwanttodo/BareZen-Drive/blob/master/LICENSE)
