@@ -68,11 +68,22 @@ internal suspend fun s3ObjectRow(userId: UUID, fileId: UUID): S3ObjectRow? = wit
 /** 对象级分发。key 为空时不该到这里（路由已分开），但兜住尾随斜杠的形状。 */
 internal suspend fun ApplicationCall.s3ObjectDispatch(token: WebdavTokenRecord) {
     s3UnsupportedSubresource()
+    val hasUploadId = request.queryParameters.names().any { it.equals("uploadId", ignoreCase = true) }
     when (request.httpMethod.value.uppercase()) {
-        "GET", "HEAD" -> s3GetObject(token)
-        "PUT" -> s3PutObject(token)
-        "DELETE" -> s3DeleteObject(token)
-        "POST" -> s3NotYetImplemented()     // Task 16
+        "GET", "HEAD" -> {
+            if (hasUploadId) throw S3Exception("NotImplemented", HttpStatusCode.NotImplemented, "不支持 ListParts")
+            s3GetObject(token)
+        }
+        "PUT" -> if (hasUploadId) { s3Writable(token); s3UploadPart(token) } else s3PutObject(token)
+        "DELETE" -> if (hasUploadId) { s3Writable(token); s3AbortMultipart(token) } else s3DeleteObject(token)
+        "POST" -> {
+            s3Writable(token)
+            when {
+                request.queryParameters.names().any { it.equals("uploads", ignoreCase = true) } -> s3CreateMultipart(token)
+                hasUploadId -> s3CompleteMultipart(token)
+                else -> throw S3Exception("NotImplemented", HttpStatusCode.NotImplemented, "不支持的 POST")
+            }
+        }
         else -> throw S3Exception("NotImplemented", HttpStatusCode.NotImplemented, "不支持的方法")
     }
 }
