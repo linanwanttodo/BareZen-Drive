@@ -276,8 +276,8 @@ private fun String.davEtagHolds(actual: String?, weak: Boolean): Boolean {
 }
 
 /** Epoch millis floored to whole seconds, which is all an HTTP date carries. */
-private fun Long.davWholeSeconds(): Long = this / 1000L * 1000L
+internal fun Long.davWholeSeconds(): Long = this / 1000L * 1000L
 
 /** An unparseable date is ignored rather than fatal (RFC 9110 §5.6.1). */
-private fun davHttpDateOrNull(value: String): Long? =
+internal fun davHttpDateOrNull(value: String): Long? =
     runCatching { value.trim().fromHttpToGmtDate().timestamp }.getOrNull()

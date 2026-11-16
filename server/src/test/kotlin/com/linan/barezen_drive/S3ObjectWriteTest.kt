@@ -318,12 +318,13 @@ class S3ObjectWriteTest {
     }
 
     @Test
-    fun copySourceIsNotImplementedYet() = testApplication {
+    fun copySourceIsDispatchedBeforeTheUploadPipeline() = testApplication {
         setup()
         s3("PUT", "/testbucket")
+        // 没有 body 也没有 Content-Length：走上传管线会是 411，走复制才是 404。
         val r = s3("PUT", "/testbucket/a.txt", extraHeaders = mapOf("x-amz-copy-source" to "/testbucket/b.txt"))
-        assertEquals(HttpStatusCode.NotImplemented, r.status)
-        assertTrue(r.bodyAsText().contains("<Code>NotImplemented</Code>"), r.bodyAsText())
+        assertEquals(HttpStatusCode.NotFound, r.status, r.bodyAsText())
+        assertTrue(r.bodyAsText().contains("<Code>NoSuchKey</Code>"), r.bodyAsText())
     }
 
     @Test

@@ -121,8 +121,8 @@ internal suspend fun ApplicationCall.s3GetObject(token: WebdavTokenRecord) {
 internal suspend fun ApplicationCall.s3PutObject(token: WebdavTokenRecord) {
     s3Writable(token)
     if (request.headers["x-amz-copy-source"] != null) {
-        // Task 15 把这一行换成 s3CopyObject(token)。
-        throw S3Exception("NotImplemented", HttpStatusCode.NotImplemented, "CopyObject 尚未实现")
+        s3CopyObject(token)
+        return
     }
     val bucketName = s3BucketName()
     val bucketId = s3BucketId(token.userId, bucketName)

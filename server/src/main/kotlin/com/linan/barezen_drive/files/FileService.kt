@@ -302,37 +302,50 @@ object FileService {
      * for. Gallery flags travel with the row (they describe the content), the
      * trash timestamp does not - a copy is never born trashed.
      */
-    fun copyFile(userId: UUID, sourceFileId: UUID, destParentId: UUID?, destName: String): UUID {
+    fun copyFile(userId: UUID, sourceFileId: UUID, destParentId: UUID?, destName: String): UUID =
+        transaction(DatabaseFactory.db) { copyFileRow(userId, sourceFileId, destParentId, destName) }
+
+    /**
+     * [copyFile] 的事务内内核，供已经开着事务的调用方（S3 的"删旧目标 + 插新行"）复用。
+     *
+     * [meta] 是函数而不是可空值：null 本身有意义（清空元数据），所以"沿用源行"没法
+     * 用 null 表达。默认恒等即沿用。
+     */
+    internal fun copyFileRow(
+        userId: UUID,
+        sourceFileId: UUID,
+        destParentId: UUID?,
+        destName: String,
+        meta: (String?) -> String? = { it },
+    ): UUID {
         if (!nameOk(destName)) throw ApiException.badRequest("名称非法")
-        return transaction(DatabaseFactory.db) {
-            val source = FilesTable.selectAll().where { FilesTable.id eq sourceFileId }.singleOrNull()
-                ?: throw ApiException.notFound("文件不存在")
-            if (source[FilesTable.user] != userId) throw ApiException.forbidden("无权访问该文件")
-            if (source[FilesTable.deletedAt] != 0L) throw ApiException.notFound("文件不存在")
-            val id = UUID.randomUUID()
-            val now = System.currentTimeMillis()
-            mapNameConflict {
-                FilesTable.insert {
-                    it[FilesTable.id] = id
-                    it[FilesTable.user] = userId
-                    it[FilesTable.folder] = destParentId
-                    it[FilesTable.name] = destName
-                    it[FilesTable.size] = source[FilesTable.size]
-                    it[FilesTable.mimeType] = source[FilesTable.mimeType]
-                    it[FilesTable.sha256] = source[FilesTable.sha256]
-                    it[FilesTable.storageKey] = source[FilesTable.storageKey]
-                    it[FilesTable.hasThumbnail] = source[FilesTable.hasThumbnail]
-                    it[FilesTable.takenAt] = source[FilesTable.takenAt]
-                    it[FilesTable.userMeta] = source[FilesTable.userMeta]
-                    it[FilesTable.isFavorite] = source[FilesTable.isFavorite]
-                    it[FilesTable.archivedAt] = source[FilesTable.archivedAt]
-                    it[FilesTable.deletedAt] = 0L
-                    it[FilesTable.createdAt] = now
-                    it[FilesTable.updatedAt] = now
-                }
+        val source = FilesTable.selectAll().where { FilesTable.id eq sourceFileId }.singleOrNull()
+            ?: throw ApiException.notFound("文件不存在")
+        if (source[FilesTable.user] != userId) throw ApiException.forbidden("无权访问该文件")
+        if (source[FilesTable.deletedAt] != 0L) throw ApiException.notFound("文件不存在")
+        val id = UUID.randomUUID()
+        val now = System.currentTimeMillis()
+        mapNameConflict {
+            FilesTable.insert {
+                it[FilesTable.id] = id
+                it[FilesTable.user] = userId
+                it[FilesTable.folder] = destParentId
+                it[FilesTable.name] = destName
+                it[FilesTable.size] = source[FilesTable.size]
+                it[FilesTable.mimeType] = source[FilesTable.mimeType]
+                it[FilesTable.sha256] = source[FilesTable.sha256]
+                it[FilesTable.storageKey] = source[FilesTable.storageKey]
+                it[FilesTable.hasThumbnail] = source[FilesTable.hasThumbnail]
+                it[FilesTable.takenAt] = source[FilesTable.takenAt]
+                it[FilesTable.userMeta] = meta(source[FilesTable.userMeta])
+                it[FilesTable.isFavorite] = source[FilesTable.isFavorite]
+                it[FilesTable.archivedAt] = source[FilesTable.archivedAt]
+                it[FilesTable.deletedAt] = 0L
+                it[FilesTable.createdAt] = now
+                it[FilesTable.updatedAt] = now
             }
-            id
         }
+        return id
     }
 
     /**

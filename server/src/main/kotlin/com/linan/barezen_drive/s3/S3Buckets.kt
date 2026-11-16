@@ -77,7 +77,7 @@ internal suspend fun ApplicationCall.s3BucketDispatch(token: WebdavTokenRecord) 
         "DELETE" -> { s3Writable(token); s3DeleteBucket(token, name) }
         "POST" -> {
             s3Writable(token)
-            if (hasQuery("delete")) s3NotYetImplemented()
+            if (hasQuery("delete")) s3DeleteObjects(token)
             else throw S3Exception("NotImplemented", HttpStatusCode.NotImplemented, "不支持的 POST")
         }
         else -> throw S3Exception("NotImplemented", HttpStatusCode.NotImplemented, "不支持的方法")

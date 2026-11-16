@@ -26,6 +26,11 @@ const val S3_XML_LIMIT = 1024 * 1024
 suspend fun ApplicationCall.readS3Xml(limit: Int = S3_XML_LIMIT): Element {
     val raw = readBounded(request.receiveChannel(), limit.toLong(), request.contentLength() ?: 0)
         ?: throw S3Exception("InvalidRequest", HttpStatusCode.BadRequest, "请求体超过 $limit 字节")
+    return parseS3XmlBytes(raw)
+}
+
+/** 已经读过 body 的调用方（DeleteObjects 要先核对 Content-MD5）走这里，硬化配方只有一份。 */
+fun parseS3XmlBytes(raw: ByteArray): Element {
     val text = raw.toString(Charsets.UTF_8).trim()
     if (text.isEmpty()) throw S3Exception("MalformedXML", HttpStatusCode.BadRequest, "请求体为空")
     val factory = DocumentBuilderFactory.newInstance().apply {
