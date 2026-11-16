@@ -1,6 +1,7 @@
 package com.linan.barezen_drive.s3
 
 import com.linan.barezen_drive.storage.SigV4
+import com.linan.barezen_drive.webdav.percentDecode
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.request.ApplicationRequest
 import io.ktor.server.request.httpMethod
@@ -53,9 +54,12 @@ object S3SigV4 {
     }
 
     fun parsePresign(rawQuery: String): S3PresignAuth? {
-        val params = rawQuery.split('&').filter { it.isNotEmpty() }.map {
+        // 值是按百分号编码送来的：X-Amz-Credential 的五段 scope 之间是 %2F，不解码就
+        // 切不出五段，整条预签名请求会退化成"没有凭证"。签名仍用原始 query 计算。
+        val params = rawQuery.split('&').filter { it.isNotEmpty() }.mapNotNull {
             val eq = it.indexOf('=')
-            if (eq < 0) it to "" else it.substring(0, eq) to it.substring(eq + 1)
+            if (eq < 0) return@mapNotNull null
+            it.substring(0, eq) to (percentDecode(it.substring(eq + 1)) ?: return@mapNotNull null)
         }
         fun get(name: String): String? = params.firstOrNull { it.first.equals(name, ignoreCase = true) }?.second
         if (get("X-Amz-Algorithm") != ALGORITHM) return null

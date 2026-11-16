@@ -65,8 +65,8 @@ internal suspend fun ApplicationCall.s3BucketDispatch(token: WebdavTokenRecord) 
             hasQuery("location") -> s3BucketLocation(token, name)
             hasQuery("versioning") -> s3BucketVersioning(token, name)
             hasQuery("uploads") -> s3BucketUploads(token, name)
-            hasQuery("list-type") -> s3ListObjects(token)
-            else -> throw S3Exception("InvalidRequest", HttpStatusCode.BadRequest, "只支持 ListObjectsV2（list-type=2）")
+            // 不写 list-type 是 ListObjects V1，签名和 V2 一样：rclone 按 auto 先发 V1。
+            else -> s3ListObjects(token)
         }
         "HEAD" -> s3HeadBucket(token, name)
         "PUT" -> {

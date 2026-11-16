@@ -350,20 +350,20 @@ class S3BucketTest {
     }
 
     @Test
-    fun aBucketGetWithoutListTypeIsInvalidRequest() = testApplication {
+    fun aBadListTypeValueIsInvalidArgument() = testApplication {
         setup()
         s3("PUT", "/testbucket")
-        val r = s3("GET", "/testbucket")
+        // 不写 list-type 走 V1（rclone 的 auto 会这么发），写了就必须是 2。
+        val r = s3("GET", "/testbucket", "list-type=3")
         assertEquals(HttpStatusCode.BadRequest, r.status)
-        assertTrue(r.bodyAsText().contains("<Code>InvalidRequest</Code>"), r.bodyAsText())
+        assertTrue(r.bodyAsText().contains("<Code>InvalidArgument</Code>"), r.bodyAsText())
     }
 
     @Test
     fun aMissingBucketIsNoSuchBucketOnEveryRead() = testApplication {
         setup()
-        // 不带 list-type 的裸 GET 是协议错误（400），与桶存不存在无关，
-        // 由 aBucketGetWithoutListTypeIsInvalidRequest 单独钉住。
-        for (q in listOf("location=", "versioning=", "uploads=")) {
+        // 裸 GET（V1）也一样按桶存不存在判定，与分页参数无关。
+        for (q in listOf("", "list-type=2", "location=", "versioning=", "uploads=")) {
             val r = s3("GET", "/absentbucket", q)
             assertEquals(HttpStatusCode.NotFound, r.status, "$q -> ${r.status} ${r.bodyAsText()}")
             assertTrue(r.bodyAsText().contains("<Code>NoSuchBucket</Code>"), r.bodyAsText())

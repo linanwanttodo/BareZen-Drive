@@ -58,8 +58,12 @@ internal suspend fun ApplicationCall.s3ListObjects(token: WebdavTokenRecord) {
     val bucketId = s3BucketId(token.userId, bucketName)
         ?: throw S3Exception("NoSuchBucket", HttpStatusCode.NotFound, "桶不存在")
     val params = request.queryParameters
-    if (params["list-type"] != "2") {
-        throw S3Exception("InvalidRequest", HttpStatusCode.BadRequest, "只支持 ListObjectsV2")
+    // V1 与 V2 的差别只在分页参数与响应字段，遍历逻辑完全共用。rclone 在
+    // provider=Other 时按 auto 发 V1，所以两条都要能走通。
+    val v2 = when (params["list-type"]) {
+        "2" -> true
+        null -> false
+        else -> throw S3Exception("InvalidArgument", HttpStatusCode.BadRequest, "list-type 非法")
     }
     val prefix = params["prefix"] ?: ""
     val delimiter = params["delimiter"] ?: ""
@@ -74,8 +78,9 @@ internal suspend fun ApplicationCall.s3ListObjects(token: WebdavTokenRecord) {
     if (maxKeysRaw < 0) throw S3Exception("InvalidArgument", HttpStatusCode.BadRequest, "max-keys 非法")
     val maxKeys = minOf(maxKeysRaw, MAX_KEYS_LIMIT)
     val encodingUrl = params["encoding-type"] == "url"
-    val startAfter = params["start-after"]
-    val continuation = params["continuation-token"]
+    val startAfter = if (v2) params["start-after"] else null
+    val continuation = if (v2) params["continuation-token"] else null
+    val marker = if (v2) null else params["marker"]?.takeIf { it.isNotEmpty() }
 
     // prefix 切分：去掉末尾空段后逐段解析到起始目录；不以 / 结尾时最后一段是名字前缀
     val endsWithSlash = prefix.endsWith("/")
@@ -88,7 +93,7 @@ internal suspend fun ApplicationCall.s3ListObjects(token: WebdavTokenRecord) {
 
     val items = ArrayList<Item>(maxKeys + 1)
     if (maxKeys > 0 && startDir != null) {
-        val stack = initialStack(token.userId, startDir, startPath, continuation, startAfter)
+        val stack = initialStack(token.userId, startDir, startPath, continuation, startAfter ?: marker)
         if (stack != null) {
             val walker = Walker(token.userId, stack, startPath, namePrefix, delimiter, maxKeys + 1)
             while (items.size < maxKeys + 1) {
@@ -109,13 +114,20 @@ internal suspend fun ApplicationCall.s3ListObjects(token: WebdavTokenRecord) {
         append("<ListBucketResult xmlns=\"").append(S3_NS).append("\">")
         append("<Name>").append(enc(bucketName)).append("</Name>")
         append("<Prefix>").append(enc(prefix)).append("</Prefix>")
-        if (delimiter.isNotEmpty()) append("<Delimiter>").append(enc(delimiter)).append("</Delimiter>")
+        if (v2) append("<KeyCount>").append(page.size).append("</KeyCount>")
+        else append("<Marker>").append(enc(marker.orEmpty())).append("</Marker>")
+        // V1 只靠 NextMarker 翻页（没有 opaque token），截断时必须给出去。
+        if (!v2 && truncated && page.isNotEmpty()) {
+            append("<NextMarker>").append(enc(page.last().key)).append("</NextMarker>")
+        }
         append("<MaxKeys>").append(maxKeys).append("</MaxKeys>")
-        append("<KeyCount>").append(page.size).append("</KeyCount>")
+        if (delimiter.isNotEmpty()) append("<Delimiter>").append(enc(delimiter)).append("</Delimiter>")
         append("<IsTruncated>").append(truncated).append("</IsTruncated>")
-        if (continuation != null) append("<ContinuationToken>").append(DavProperties.xmlEscaped(continuation)).append("</ContinuationToken>")
-        if (nextToken != null) append("<NextContinuationToken>").append(DavProperties.xmlEscaped(nextToken)).append("</NextContinuationToken>")
-        if (startAfter != null) append("<StartAfter>").append(enc(startAfter)).append("</StartAfter>")
+        if (v2) {
+            if (continuation != null) append("<ContinuationToken>").append(DavProperties.xmlEscaped(continuation)).append("</ContinuationToken>")
+            if (nextToken != null) append("<NextContinuationToken>").append(DavProperties.xmlEscaped(nextToken)).append("</NextContinuationToken>")
+            if (startAfter != null) append("<StartAfter>").append(enc(startAfter)).append("</StartAfter>")
+        }
         for (item in page) {
             when (item) {
                 is Item.Obj -> {

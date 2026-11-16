@@ -393,6 +393,10 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         s3Routes()
         staticWeb()
     }
+    log.warn(
+        "S3 compatible API is enabled on the same port at /<bucket>/<key>. " +
+            "Signatures are not encrypted over plain HTTP - put HTTPS in front of it.",
+    )
 }
 
 private fun Application.connectDatabaseOnce(cfg: AppConfig) {

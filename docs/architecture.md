@@ -134,6 +134,52 @@ server/src/main/kotlin/com/linan/barezen_drive/
 
 `GET /api/files/{id}/content` 委托 Ktor `PartialContent` 插件：无 Range -> 200 全量流式；`bytes=a-b/a-/-n` -> 206 + Content-Range（惰性切片，不整载）；不满足 -> 416。web 静态资源托管在 `/`，SPA 回退到 index.html，`/api/**` 与 `/health` 优先。
 
+### S3 兼容表面
+
+`/api`（JSON）、`/dav`（WebDAV）之外还有第三个入口：S3 兼容子集，挂在**同一个进程、
+同一个端口**的根路径上，path-style 寻址 `https://host/<bucket>/<key>`。它不是网关、没有
+第二份数据，也不引入任何新依赖。
+
+```text
+server/src/main/kotlin/com/linan/barezen_drive/
+  s3/                   # S3Routes/S3Auth/S3SigV4/S3Buckets/S3Objects/S3Listing/S3Copy/S3Multipart/
+                        # S3Names/S3Metadata/S3Checksums/S3Xml/S3Errors/AwsChunkedChannel
+```
+
+路由的判定顺序是 `/api/**` → `/dav/**` → 「像不像一个 S3 请求」（带 SigV4 材料，或路径
+首段是合法桶名）→ 静态站点。四条优先级都有测试钉住，因为任何一条写反都会让已装的网站
+突然变成 `NoSuchBucket` XML。`/health`、分享链接、静态托管的站点都在 S3 之后照常命中。
+
+**与既有模型的关系（这是这个表面成立的前提）**：
+
+- **桶 = 顶层文件夹**，对象 = `files` 行。只有一份 `folders`/`files` 表，App、WebDAV、S3
+  读写的是同一批行；只有名字符合 S3 桶名规则的顶层文件夹在 S3 侧可见。
+- **凭证复用 WebDAV 的应用密码**：`accessKeyId` 是令牌 `id`，`secretAccessKey` 是创建时
+  那一次明文。因为验签需要拿到明文密钥、而 SHA-256 不可逆，令牌行多存一份
+  `secret_enc`：HKDF-SHA256(JWT_SECRET) 派生 AES-256-GCM 密钥，AAD 绑定令牌 id，所以一行
+  密文挪不到另一行。它只用于逐请求验签，不落日志、不回传。JDK 21 没有 `javax.crypto.KDF`，
+  HKDF 是按 RFC 5869 手写的。
+- **写路径复用上传管线**。单发 PUT 走 `davStreamChunks` + `UploadService.completeWithDigests`，
+  分片走 `UploadService.publishMerged`——把「合并 → 校验整文件 → 落库 → 缩略图」从普通分块
+  上传里抽出来共用，S3 不再写第二份合并逻辑。`initUpload` 的 `snapshotOnOverwrite=false`
+  就是为这个表面加的：对象存储的覆盖不产生版本行。
+- **删除复用 `FileService.hardDelete` + `orphanBlobKeys` + `deleteStoredBlobs` 的宽限期队列**，
+  引用计数与既有一致：一个 blob 被多个名字共享时，删掉一个名字不会回收字节。
+
+**两处刻意与 RFC/协议不同**：分帧载荷（aws-chunked）自己实现了一个只读的解帧通道，
+因为 Ktor 没有内置；分片上传的 ETag 返回整文件 sha256 而不是 `md5-of-md5s-N`，这样
+`rclone check` 有可比的内容哈希（代价见 usage.md 的已知差异）。
+
+**错误模型**：S3 的错误 body 是 XML，绝不能落进 `/api` 的 JSON 信封（客户端会解析失败）。
+S3 路由在自己的 handler 里捕获 `Throwable`（`CancellationException` 除外，必须原样重抛，
+否则客户端断开会被当成服务器错误），每个响应都带 `x-amz-request-id`。不支持的操作一律
+501 `NotImplemented` 而不是 404——让客户端知道「不支持」，不是「不存在」。
+
+**部署面没有变化**：没有新容器、新端口、新环境变量、新依赖。`SERVER_PORT` 就是 S3 端口。
+CI 多一个 `s3` job（PostgreSQL + `installDist` + 装 rclone 跑 `scripts/s3_smoke.sh`），并且
+`docker` 与 `manifest` 两个 job 的 `needs` 都含它——真实 HTTP 失败必须挡住镜像**和**更新
+manifest，只挡一半会留下「镜像被挡、客户端照样收到更新」的缺口。
+
 ## 客户端架构（app/shared，Android + Web 共享）
 
 - 数据层：`ApiClient`（ktor-client，Bearer 自动刷新：401 -> POST /api/auth/refresh -> 更新 TokenStore -> 重放一次；失败清空 token）+ `AuthRepository`/`FilesRepository`（标准 `Result<T>`，失败为 `ApiFailure`）+ `UploadManager`（进度 StateFlow）+ `UpdateChecker`（比较服务端 `/api/version` 与本机版本）。`ApiClient` 在进程内只有一份（`AppClient.api` / `AppClient.files`），界面与后台 worker 共用：引擎没有 `close()`，多开一个就是多一套 dispatcher 与空闲长连接，而响应缓存落在 `cacheDir/http` 的同一个 journal 目录上，两个 `Cache` 实例指同一目录时 OkHttp 只会让其中一个真正生效。

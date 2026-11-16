@@ -7,6 +7,7 @@ import com.linan.barezen_drive.db.FoldersTable
 import com.linan.barezen_drive.s3.s3ObjectRow
 import com.linan.barezen_drive.storage.LocalStorageProvider
 import com.linan.barezen_drive.storage.SigV4
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -345,5 +346,66 @@ class S3ObjectReadTest {
         // resolveDavPath 已经过滤回收站，走 HTTP 永远测不到这一层；
         // 后续任务会直接按 id 调这个助手，所以必须单独钉住它自己的两个过滤条件。
         assertNull(s3ObjectRow(uid, fid))
+    }
+
+    /**
+     * 按 S3 的预签名规则拼 URL：每个值百分号编码（Credential 里的 '/' 是 %2F），
+     * 签名对"去掉 X-Amz-Signature 的原始 query"计算——正是 rclone 发出来的形状。
+     */
+    private fun presign(path: String, expires: Long = 900, at: Instant = Instant.now()): String {
+        val amzDate = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC).format(at)
+        val dateStamp = amzDate.substring(0, 8)
+        val scope = "$dateStamp/us-east-1/s3/aws4_request"
+        val query = "X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+            "&X-Amz-Credential=" + SigV4.uriEncode("$accessKey/$scope") +
+            "&X-Amz-Date=$amzDate&X-Amz-Expires=$expires&X-Amz-SignedHeaders=host"
+        val canonical = SigV4.canonicalRequestRaw(
+            "GET",
+            SigV4.canonicalUriRaw(path),
+            SigV4.canonicalQueryRaw(query),
+            SigV4.canonicalHeaders(mapOf("host" to listOf("localhost")), listOf("host")),
+            "host",
+            "UNSIGNED-PAYLOAD",
+        )
+        val signature = SigV4.signatureHex(
+            SigV4.signingKey(secret, dateStamp, "us-east-1", "s3"),
+            SigV4.stringToSign(amzDate, scope, canonical),
+        )
+        return "$path?$query&X-Amz-Signature=$signature"
+    }
+
+    /** 预签名请求不带 Authorization；Host 仍要显式发，它参与了签名。 */
+    private suspend fun ApplicationTestBuilder.presignedGet(url: String): HttpResponse =
+        client.get(url) { header(HttpHeaders.Host, "localhost") }
+
+    @Test
+    fun aPresignedGetNeedsNoAuthorizationHeader() = testApplication {
+        setup()
+        s3("PUT", "/testbucket")
+        uploadViaApi("a.txt", "hello s3")
+        val r = presignedGet(presign("/testbucket/a.txt"))
+        assertEquals(HttpStatusCode.OK, r.status, r.bodyAsText())
+        assertEquals("hello s3", r.bodyAsText())
+    }
+
+    @Test
+    fun anExpiredPresignedGetIsRequestExpired() = testApplication {
+        setup()
+        s3("PUT", "/testbucket")
+        uploadViaApi("a.txt", "hello s3")
+        val r = presignedGet(presign("/testbucket/a.txt", expires = 1, at = Instant.now().minusSeconds(600)))
+        assertEquals(HttpStatusCode.Forbidden, r.status, r.bodyAsText())
+        assertTrue(r.bodyAsText().contains("<Code>RequestExpired</Code>"), r.bodyAsText())
+    }
+
+    @Test
+    fun aPresignedUrlWithATamperedSignatureIsRejected() = testApplication {
+        setup()
+        s3("PUT", "/testbucket")
+        uploadViaApi("a.txt", "hello s3")
+        val url = presign("/testbucket/a.txt").replace(Regex("X-Amz-Signature=[0-9a-f]+"), "X-Amz-Signature=" + "0".repeat(64))
+        val r = presignedGet(url)
+        assertEquals(HttpStatusCode.Forbidden, r.status, r.bodyAsText())
+        assertTrue(r.bodyAsText().contains("<Code>SignatureDoesNotMatch</Code>"), r.bodyAsText())
     }
 }

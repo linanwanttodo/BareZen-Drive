@@ -231,6 +231,90 @@ jobs:
         if: always()
         run: kill "$(cat server.pid)" 2>/dev/null || true
 
+  # Same reason as webdav above: a header or an XML element that never reaches
+  # the wire is invisible to the in-process test host, and rclone depends on
+  # details (the X-Amz-Meta-* round trip, path-style addressing, presigned GET)
+  # that only a real client exercises. It gates the image and the release.
+  s3:
+    name: S3 over real HTTP
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: PostgreSQL
+        run: |
+          docker run -d --name bz-s3-pg \
+            -e POSTGRES_DB=barezen -e POSTGRES_USER=barezen -e POSTGRES_PASSWORD=dev123 \
+            -p 5432:5432 postgres:17-alpine
+          # -h 127.0.0.1 for the same reason as the webdav job: during first-time
+          # initialisation postgres runs a temporary socket-only server, so a
+          # socket probe reports ready and then goes back to rejecting.
+          for i in $(seq 1 90); do
+            if [ "$(docker inspect -f '{{.State.Running}}' bz-s3-pg 2>/dev/null)" != "true" ]; then
+              echo "postgres container exited during startup:" >&2
+              docker logs bz-s3-pg >&2 || true
+              exit 1
+            fi
+            if docker exec bz-s3-pg pg_isready -h 127.0.0.1 -U barezen >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec bz-s3-pg pg_isready -h 127.0.0.1 -U barezen
+      - name: Install rclone
+        run: |
+          curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip -o /tmp/rclone.zip
+          unzip -q /tmp/rclone.zip -d /tmp/rclone
+          sudo install -m 0755 /tmp/rclone/rclone-*-linux-amd64/rclone /usr/local/bin/rclone
+          rclone version
+      - name: Build the server distribution
+        run: ./gradlew :server:installDist --console=plain
+      - name: Start the server
+        env:
+          JDBC_URL: jdbc:postgresql://127.0.0.1:5432/barezen
+          DB_USER: barezen
+          DB_PASSWORD: dev123
+          JWT_SECRET: ci-secret-0123456789abcdef0123456789abcdef
+          STORAGE_DIR: ${{ runner.temp }}/s3-storage
+          SERVER_PORT: '18080'
+          REGISTRATION_OPEN: 'true'
+          # 100 MiB: enough for the smoke script's 12 MB multipart upload.
+          MAX_FILE_SIZE: '104857600'
+        run: |
+          mkdir -p "$STORAGE_DIR"
+          nohup server/build/install/server/bin/server > server.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null http://127.0.0.1:18080/health && break
+            sleep 1
+          done
+          curl -sf -o /dev/null http://127.0.0.1:18080/health || {
+            echo "server did not come up:"; cat server.log; exit 1; }
+      - name: Create the account the smoke script logs in with
+        run: |
+          curl -sf -X POST http://127.0.0.1:18080/api/auth/register \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"s3user","password":"password123"}' \
+            -o /dev/null -w 'register=%{http_code}\n' || true
+      - name: S3 smoke test
+        env:
+          BASE: http://127.0.0.1:18080
+          USER_NAME: s3user
+          PASS: password123
+          SERVER_LOG: server.log
+        run: bash scripts/s3_smoke.sh
+      - name: Server log
+        if: always()
+        run: tail -n 200 server.log || true
+      - name: Stop the server
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
+
   web:
     name: Web bundle
     runs-on: ubuntu-latest
@@ -371,9 +455,10 @@ jobs:
     name: Container image (amd64, arm64)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # webdav gates the image too, not only the release: install.sh pulls :latest,
-    # so an unvetted build must never land on the tag most installs download.
-    needs: [ version, server, webdav ]
+    # webdav and s3 gate the image too, not only the release: install.sh pulls
+    # :latest, so an unvetted build must never land on the tag most installs
+    # download.
+    needs: [ version, server, webdav, s3 ]
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
@@ -496,10 +581,11 @@ jobs:
     name: Update manifest
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # webdav is here so a real-HTTP failure blocks the release rather than
-    # being a green tick nobody reads. A DAV header that never reaches the wire
-    # makes the drive unmountable while every in-process test stays green.
-    needs: [ version, web, android, server, webdav ]
+    # webdav and s3 are here so a real-HTTP failure blocks the release rather
+    # than being a green tick nobody reads. A DAV header that never reaches the
+    # wire makes the drive unmountable while every in-process test stays green;
+    # the same class of defect applies to the S3 surface.
+    needs: [ version, web, android, server, webdav, s3 ]
     if: needs.version.outputs.is_release == 'true'
     steps:
       - uses: actions/checkout@v4

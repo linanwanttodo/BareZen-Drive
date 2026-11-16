@@ -33,6 +33,7 @@ import java.util.UUID
 import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class S3ListingTest {
@@ -168,6 +169,9 @@ class S3ListingTest {
 
     private fun nextToken(xml: String): String? =
         Regex("<NextContinuationToken>(.*?)</NextContinuationToken>").find(xml)?.groupValues?.get(1)
+
+    private fun nextMarker(xml: String): String? =
+        Regex("<NextMarker>(.*?)</NextMarker>").find(xml)?.groupValues?.get(1)
 
     @Test
     fun delimiterSlashFoldsDirectoriesIntoCommonPrefixes() = testApplication {
@@ -325,5 +329,52 @@ class S3ListingTest {
         assertEquals(listOf("b.txt", "c.txt"), keysOf(list("start-after=a.txt")))
         // 不存在的名字：按名字位置跳过
         assertEquals(listOf("b.txt", "c.txt"), keysOf(list("start-after=az.txt")))
+    }
+
+    // ---- ListObjects（V1）：rclone 在 provider=Other 时按 auto 发这一版 ----
+
+    @Test
+    fun listV1IsServedWhenNoListTypeIsGiven() = testApplication {
+        setup()
+        seedTree(emptyList(), listOf("a.txt", "b.txt"))
+        val xml = s3("GET", "/testbucket").bodyAsText()
+        assertEquals(listOf("a.txt", "b.txt"), keysOf(xml))
+        assertTrue(xml.contains("<Marker></Marker>"), xml)
+        assertFalse(xml.contains("<KeyCount>"), xml)
+        assertTrue(xml.contains("<IsTruncated>false</IsTruncated>"), xml)
+    }
+
+    @Test
+    fun listV1PagesWithNextMarker() = testApplication {
+        setup()
+        seedTree(emptyList(), listOf("a.txt", "b.txt", "c.txt"))
+        val first = s3("GET", "/testbucket", "max-keys=2").bodyAsText()
+        assertEquals(listOf("a.txt", "b.txt"), keysOf(first))
+        assertTrue(first.contains("<IsTruncated>true</IsTruncated>"), first)
+        val marker = nextMarker(first)
+        assertEquals("b.txt", marker)
+        val second = s3("GET", "/testbucket", "max-keys=2&marker=$marker").bodyAsText()
+        assertEquals(listOf("c.txt"), keysOf(second))
+        assertTrue(second.contains("<Marker>b.txt</Marker>"), second)
+        assertTrue(second.contains("<IsTruncated>false</IsTruncated>"), second)
+    }
+
+    @Test
+    fun listV1MarkerOnAMissingNameStartsAfterIt() = testApplication {
+        setup()
+        seedTree(emptyList(), listOf("a.txt", "b.txt", "c.txt"))
+        assertEquals(listOf("c.txt"), keysOf(s3("GET", "/testbucket", "marker=bb.txt").bodyAsText()))
+    }
+
+    @Test
+    fun listV1FoldsDirectoriesAndPagesAcrossThem() = testApplication {
+        setup()
+        seedTree(listOf("a", "b", "c"), listOf("a/one.txt", "b/one.txt", "c/one.txt"))
+        val first = s3("GET", "/testbucket", "delimiter=%2F&max-keys=2").bodyAsText()
+        assertEquals(listOf("a/", "b/"), prefixesOf(first))
+        assertTrue(first.contains("<IsTruncated>true</IsTruncated>"), first)
+        val second = s3("GET", "/testbucket", "delimiter=%2F&max-keys=2&marker=a%2F").bodyAsText()
+        assertEquals(listOf("b/", "c/"), prefixesOf(second))
+        assertTrue(second.contains("<IsTruncated>false</IsTruncated>"), second)
     }
 }
