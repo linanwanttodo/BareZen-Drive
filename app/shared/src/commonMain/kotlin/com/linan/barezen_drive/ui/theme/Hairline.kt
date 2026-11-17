@@ -25,6 +25,13 @@ import androidx.compose.ui.unit.dp
 fun hairlineStroke(alpha: Float = 1f): BorderStroke =
     BorderStroke(HairlineWidth, hairlineColor(alpha))
 
+/**
+ * The same hairline in a status color (error, warning). The width stays the
+ * app's single step so a status outline can never drift into being 2dp; only
+ * the color is the caller's.
+ */
+fun hairlineStroke(color: Color): BorderStroke = BorderStroke(HairlineWidth, color)
+
 /** [hairlineStroke] as a plain color, for `Modifier.border` on a background box. */
 @Composable
 fun hairlineColor(alpha: Float = 1f): Color =

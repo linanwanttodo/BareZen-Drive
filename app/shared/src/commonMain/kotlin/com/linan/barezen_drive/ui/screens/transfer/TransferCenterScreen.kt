@@ -1,6 +1,5 @@
 package com.linan.barezen_drive.ui.screens.transfer
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -64,6 +63,7 @@ import com.linan.barezen_drive.ui.component.EmptyState
 import com.linan.barezen_drive.ui.media.ThumbnailHub
 import com.linan.barezen_drive.ui.screens.files.formatFileSize
 import com.linan.barezen_drive.ui.theme.LocalPanelAlpha
+import com.linan.barezen_drive.ui.theme.hairlineStroke
 
 /**
  * One lane of the transfer centre: album work (sync batches plus manual
@@ -338,7 +338,7 @@ private fun TransferRow(
                             onClick = onRetry,
                             shape = MaterialTheme.shapes.small,
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                            border = hairlineStroke(MaterialTheme.colorScheme.error),
                             contentPadding = PaddingValues(horizontal = 12.dp),
                             modifier = Modifier.height(28.dp),
                         ) {
