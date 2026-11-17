@@ -156,7 +156,19 @@ fun WebdavTokensScreen(
 
                     else -> LazyColumn(Modifier.fillMaxSize()) {
                         items(s, key = { it.id }) { token ->
-                            WebdavTokenRow(token = token, onRevoke = { confirmingRevoke = token })
+                            WebdavTokenRow(
+                                token = token,
+                                onCopyAccessKey = { key ->
+                                    scope.launch {
+                                        if (copyToClipboard(key)) {
+                                            snackbar.showSnackbar(I18n.strings.s3AccessKeyCopied)
+                                        } else {
+                                            snackbar.showSnackbar(I18n.strings.webdavTokenCopyFailed)
+                                        }
+                                    }
+                                },
+                                onRevoke = { confirmingRevoke = token },
+                            )
                             HorizontalDivider()
                         }
                     }
@@ -282,6 +294,7 @@ private class FreshToken(val plaintext: String, val label: String)
 @Composable
 private fun WebdavTokenRow(
     token: WebdavTokenDto,
+    onCopyAccessKey: (String) -> Unit,
     onRevoke: () -> Unit,
 ) {
     Row(
@@ -319,6 +332,21 @@ private fun WebdavTokenRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // Access Key 就是 token.id：公开标识，不是秘密，所以每次都能再复制；
+            // 秘密只在创建时给一次。
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${LocalStrings.current.s3AccessKey}: ${token.id}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                TextButton(onClick = { onCopyAccessKey(token.id) }) {
+                    Text(LocalStrings.current.s3AccessKeyCopy, style = MaterialTheme.typography.labelMedium)
+                }
+            }
         }
         // Read-only is a badge, not a switch: flipping it here would not reach
         // an already-mounted device, so a toggle would promise something this

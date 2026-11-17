@@ -388,6 +388,10 @@ interface Strings {
     fun webdavLastUsed(dateTime: String): String
     val webdavNeverUsed: String
     fun webdavCreatedAt(dateTime: String): String
+    /** S3 的 Access Key 就是令牌 id：公开值，用来填客户端，不是秘密。 */
+    val s3AccessKey: String
+    val s3AccessKeyCopy: String
+    val s3AccessKeyCopied: String
 
     /** Notification channels and worker-side strings (non-Compose callers read
      *  these through [com.linan.barezen_drive.i18n.I18n.strings]). */
