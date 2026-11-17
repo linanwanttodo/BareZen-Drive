@@ -9,7 +9,7 @@
 - 客户端：Android + Web（Compose Multiplatform 共享 UI）、整文件流式哈希、单块重试、上传进度
 - 部署：Dockerfile 三段构建 + 1G1C 调优 compose
 
-## v0.2（进行中，当前发布 v0.2.1）
+## v0.2（进行中，当前发布 v0.2.2）
 
 - [x] 客户端缩略图（图片+视频封面，上传时生成，服务端只存/发）+ 相册按月时间轴（2026-09-05）
 - [x] 在线预览：图片缩放/滑动、视频/音频（Android Media3、Web 新标签页）、文本前 256KB、PDF（Android pdfium、Web 新标签页）（2026-09-05）
@@ -54,6 +54,13 @@
   - MOVE/COPY 只会覆盖**文件**；目标是已存在的**集合**一律 409，不代为硬删那棵子树（要删就显式 DELETE）
   - 删除不对称：文件进回收站可恢复，**集合是硬删除整棵子树**——`folders` 没有 `deleted_at` 而 `files.folder_id` 有外键，模型上无法表达「文件夹进回收站」
   - 未经真实 Windows/macOS 客户端验证：只到协议层测试与真实 HTTP 冒烟脚本（`scripts/dav_smoke.sh`）全绿
+- [x] 对外 S3 兼容接口（2026-11-17。同进程同端口、path-style `/<bucket>/<key>`，桶=顶层文件夹、对象=files 行，凭证复用 WebDAV 令牌）
+  - 桶操作、ListObjects V1/V2（含分页与 delimiter 折叠）、Get/Head/Put/Copy/Delete Object、DeleteObjects、分片上传、预签名 GET、aws-chunked 分帧、用户元数据与校验和
+  - 令牌行多存一份 `secret_enc`（HKDF-SHA256 派生 AES-256-GCM，AAD 绑定令牌 id）供逐请求验签；`accessKeyId` 是令牌 id，`secretAccessKey` 只在创建时给一次
+  - 不带鉴权材料的 GET 仍交回 SPA，`api`/`dav`/`health`/`readyz` 为保留桶名，避免抢走既有路由
+  - 分片完成的 ETag 是整文件 sha256 而非 `md5-of-md5s-N`，`rclone check` 因此有可比的内容哈希
+  - CI 新增 `s3` job（真实 rclone + 预签名 curl 的 `scripts/s3_smoke.sh`），并进入 `docker` 与 `manifest` 的前置
+  - 未经真实 AWS CLI / SDK 验证：只到 rclone、curl 与协议层测试；客户端令牌页常驻显示并可复制 Access Key
 - [x] 服务端 DB 与资源收敛（2026-10-17，以下数字都在一次性 PostgreSQL 16 容器上实测）
   - `/api/search` 加上 `lower(name)` 的 trigram GIN 索引：启动时幂等 `CREATE EXTENSION IF NOT EXISTS pg_trgm` 再建索引（非超级用户也能装，pg_trgm 是 trusted 扩展），装不上就退回原样（只慢不错）。17 万行库上确认该索引能被 `lower(name) LIKE '%q%'` 用作 Index Cond，路由原本的查询形状（`ORDER BY updated_at DESC LIMIT 100`）在命中稀少的关键词上选了它（Bitmap Index Scan）；命中面很宽的关键词仍按选择性走 `(user_id, deleted_at, updated_at)` 那条 btree——要让它稳定走 trigram，得改成按相关度排序，那属于查询语义变更，不在本次修复里做
   - 相册 `?root=<folderId>` 的子树改由 SQL 内递归 CTE 展开（锚点带 `user_id`，别人目录的 id 实测解析为空集），不再每翻一页读一遍整棵目录树，也不再拼无界 `IN (...)`
