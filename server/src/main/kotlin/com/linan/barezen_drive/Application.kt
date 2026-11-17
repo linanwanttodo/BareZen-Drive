@@ -2,6 +2,7 @@ package com.linan.barezen_drive
 
 import com.linan.barezen_drive.auth.JwtService
 import com.linan.barezen_drive.auth.LinkService
+import com.linan.barezen_drive.auth.SecretCipher
 import com.linan.barezen_drive.auth.authRoutes
 import com.linan.barezen_drive.config.AppConfig
 import com.linan.barezen_drive.core.dto.ApiError
@@ -39,6 +40,12 @@ import com.linan.barezen_drive.system.systemRoutes
 import com.linan.barezen_drive.system.versionRoutes
 import com.linan.barezen_drive.jobs.UploadCleanupJob
 import com.linan.barezen_drive.plugins.staticWeb
+import com.linan.barezen_drive.s3.S3_RESERVED_BUCKETS
+import com.linan.barezen_drive.s3.hasS3Marker
+import com.linan.barezen_drive.s3.s3GuardReservedBucket
+import com.linan.barezen_drive.s3.s3Handle
+import com.linan.barezen_drive.s3.s3NotYetImplemented
+import com.linan.barezen_drive.s3.s3Routes
 import com.linan.barezen_drive.storage.LocalStorageProvider
 import com.linan.barezen_drive.storage.S3StorageProvider
 import com.linan.barezen_drive.storage.StorageProvider
@@ -139,6 +146,7 @@ internal fun Database.probe(): Boolean =
 fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     JwtService.init(cfg.jwtSecret)
     LinkService.init(cfg.jwtSecret)
+    SecretCipher.init(cfg.jwtSecret)
     // Connect + schema DDL inside module() so testApplication exercises it too.
     // Guarded so repeated testApplication entry reuses the Exposed connection.
     connectDatabaseOnce(cfg)
@@ -208,13 +216,14 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; encodeDefaults = true }) }
     install(CallLogging) {
         // Signed content/thumbnail URLs carry a bearer-grade `sig` in the query
-        // string; the default formatter would write it to the access log, so
-        // replace it with a placeholder while keeping the default layout.
+        // string, and a presigned S3 URL carries the same grade of secret in
+        // `X-Amz-Signature`; the default formatter would write either to the
+        // access log, so replace them while keeping the default layout.
         format { call ->
             val req = call.request
-            val safeUri = if (req.queryParameters.contains("sig")) {
-                req.uri.replace(Regex("sig=[^&#]*"), "sig=***")
-            } else req.uri
+            val safeUri = req.uri
+                .replace(Regex("sig=[^&#]*"), "sig=***")
+                .replace(Regex("(?i)X-Amz-Signature=[^&#]*"), "X-Amz-Signature=***")
             "${call.response.status()}: ${req.httpMethod.value} - $safeUri"
         }
     }
@@ -311,6 +320,14 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
                 "worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'",
             safeOnly = false,
         )
+        // 保留桶名必须在路由之前拦下：/health 与 /readyz 是常量路由，评分高于
+        // /{bucket}，S3 路由永远看不到它们，签名请求会拿到健康检查的 JSON。
+        if (call.hasS3Marker() &&
+            call.request.path().trim('/').substringBefore('/').lowercase() in S3_RESERVED_BUCKETS
+        ) {
+            call.s3Handle { s3GuardReservedBucket(); s3NotYetImplemented() }
+            finish()
+        }
         // JSON payloads here are small DTOs (register, rename, share create);
         // 1 MiB is far above any of them. Upload chunks are exempt by design -
         // they are legitimately up to 20 MiB and are streamed, not buffered.
@@ -371,8 +388,15 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
         // before staticWeb() so an unmatched /dav path is a DAV-shaped 404
         // rather than the SPA's index.html.
         webdavResourceRoutes()
+        // S3 与静态站点共用根路径命名空间，必须在 staticWeb() 之前注册；每个
+        // handler 自己判定"不是 S3 就交回静态站点"（见 s3Routes）。
+        s3Routes()
         staticWeb()
     }
+    log.warn(
+        "S3 compatible API is enabled on the same port at /<bucket>/<key>. " +
+            "Signatures are not encrypted over plain HTTP - put HTTPS in front of it.",
+    )
 }
 
 private fun Application.connectDatabaseOnce(cfg: AppConfig) {

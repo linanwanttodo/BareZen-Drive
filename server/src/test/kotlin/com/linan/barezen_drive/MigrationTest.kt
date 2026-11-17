@@ -2,6 +2,7 @@ package com.linan.barezen_drive
 
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
+import com.linan.barezen_drive.db.WebdavTokensTable
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
@@ -12,6 +13,7 @@ import java.sql.DriverManager
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -216,6 +218,66 @@ class MigrationTest {
                 }
                 assertEquals(2L, FilesTable.selectAll().where { FilesTable.name eq "a.txt" }.count())
             }
+        }
+    }
+
+    /**
+     * The S3 columns arrive on a v0.2.1 database as plain nullable ALTER ADDs.
+     * The token row matters most: secret_enc stays NULL for a credential minted
+     * before this version, and that NULL is what tells the S3 surface to ask for
+     * a re-issue instead of silently authenticating nothing.
+     */
+    @Test
+    fun s3ColumnsAreAddedToAnExistingDatabase() {
+        val jdbcUrl = "jdbc:h2:mem:${java.util.UUID.randomUUID()};MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH"
+        val userId = java.util.UUID.fromString("55555555-5555-5555-5555-555555555555")
+        DriverManager.getConnection(jdbcUrl, "sa", "").use { conn ->
+            conn.createStatement().use { st ->
+                st.execute(
+                    """
+                    CREATE TABLE users (
+                        id UUID PRIMARY KEY,
+                        username VARCHAR(32) NOT NULL,
+                        password_hash VARCHAR(255) NOT NULL,
+                        created_at BIGINT NOT NULL,
+                        CONSTRAINT users_username_unique UNIQUE (username)
+                    )
+                    """.trimIndent(),
+                )
+                st.execute("INSERT INTO users VALUES ('$userId', 'legacy', 'x', 1)")
+                st.execute(
+                    """
+                    CREATE TABLE webdav_tokens (
+                        id UUID PRIMARY KEY,
+                        user_id UUID NOT NULL,
+                        token_hash VARCHAR(64) NOT NULL,
+                        label VARCHAR(64) NOT NULL,
+                        read_only BOOLEAN NOT NULL DEFAULT FALSE,
+                        last_used_at BIGINT NOT NULL DEFAULT 0,
+                        created_at BIGINT NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                st.execute(
+                    "INSERT INTO webdav_tokens VALUES (RANDOM_UUID(), '$userId', '${"a".repeat(64)}', 'old', FALSE, 0, 1)",
+                )
+            }
+
+            // connect() runs createMissingTablesAndColumns itself. It has to happen
+            // while conn is still open: an H2 in-memory database without
+            // DB_CLOSE_DELAY is destroyed when its last connection closes.
+            val db = DatabaseFactory.connect(jdbcUrl, "sa", "")
+            transaction(db) {
+                val row = WebdavTokensTable.selectAll().single()
+                assertNull(row[WebdavTokensTable.secretEnc], "历史令牌的新列必须是 NULL，不是空串")
+                WebdavTokensTable.update({ WebdavTokensTable.label eq "old" }) {
+                    it[WebdavTokensTable.secretEnc] = "x"
+                }
+                assertEquals("x", WebdavTokensTable.selectAll().single()[WebdavTokensTable.secretEnc])
+            }
+            assertTrue(conn.createStatement().use { st ->
+                st.execute("SELECT 1 FROM webdav_tokens WHERE label = 'old'")
+            }, "legacy token must survive the migration")
         }
     }
 }

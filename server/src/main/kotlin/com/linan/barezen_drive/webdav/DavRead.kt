@@ -48,12 +48,13 @@ internal fun Route.davGetAndHead() {
     // `head { }` only because the plugin has to be installed on the node that
     // holds the handler - `head { }` hands over the handler and nothing else.
     method(HttpMethod.Head) {
-        install(DavAutoHead)
+        install(AutoHeadBody)
         handle { call.respondDavRead() }
     }
 }
 
-private val DavAutoHead = createRouteScopedPlugin("DavAutoHead") {
+/** Shared with the S3 surface: Ktor's engine streams whatever a HEAD handler produces. */
+internal val AutoHeadBody = createRouteScopedPlugin("AutoHeadBody") {
     /**
      * The body a HEAD response must carry: none.
      *
@@ -275,8 +276,8 @@ private fun String.davEtagHolds(actual: String?, weak: Boolean): Boolean {
 }
 
 /** Epoch millis floored to whole seconds, which is all an HTTP date carries. */
-private fun Long.davWholeSeconds(): Long = this / 1000L * 1000L
+internal fun Long.davWholeSeconds(): Long = this / 1000L * 1000L
 
 /** An unparseable date is ignored rather than fatal (RFC 9110 §5.6.1). */
-private fun davHttpDateOrNull(value: String): Long? =
+internal fun davHttpDateOrNull(value: String): Long? =
     runCatching { value.trim().fromHttpToGmtDate().timestamp }.getOrNull()

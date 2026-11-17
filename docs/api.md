@@ -544,3 +544,208 @@ DTO 一次性序列化进响应体与堆内存。`nextCursor` 为 `null` 表示�
 
 限流：`30 次 / 5 分钟`，按客户端地址，挂在 handler **第一行**（路径校验之前），所以非法路径不会
 成为免费探测器。额度取得比分享正文路由小得多——这里被消耗的是带宽而不是数据库连接。
+
+## S3 兼容接口
+
+把网盘的一个顶层文件夹当成一个桶，服务端子集与 AWS S3 协议兼容到 rclone / restic /
+mc / AWS CLI 能直接用。**同一个进程、同一个端口**，根路径 path-style：
+
+```
+https://<你的域名>/<bucket>/<key>
+```
+
+路由的判定顺序是：先 `/api/**`、再 `/dav/**`、再判定是否像一个 S3 请求（签名头或路径首段
+是合法桶名），否则交回静态站点。`/health` 与既有的公开链接（分享页、静态托管的站点）
+都不受影响。
+
+### 凭证
+
+复用 WebDAV 的应用密码，不新增一套账号：
+
+| S3 参数 | 取自 |
+|---|---|
+| `accessKeyId` | WebDAV 令牌的 `id` |
+| `secretAccessKey` | 创建令牌时返回的那一次明文 |
+
+令牌明文只在创建时可见（库里存的是 SHA-256 精确匹配用的哈希，明文事后取不回），所以
+`secretAccessKey` 无法事后取回。为了支持 S3 签名，令牌额外存了一份 **AES-256-GCM
+可解密副本**（`secret_enc`，密钥由 `JWT_SECRET` 经 HKDF-SHA256 派生，AAD 绑定令牌 id，
+所以一行密文不能挪用到另一行）。这副本只用于逐请求验签，不落日志、不回传。
+
+**本版本之前签发的令牌没有这份副本**，用于 S3 会 403 `AccessDenied`（WebDAV 不受影响），
+重新签发一个即可。
+
+只读令牌（`readOnly=true`）对所有写方法返 403 `AccessDenied`：`PUT`/`DELETE`/`POST`、
+CopyObject、分片的 Create/UploadPart/Complete/Abort、批量删除。
+
+### 方法表
+
+| 请求 | 行为 |
+|---|---|
+| `GET /` | ListBuckets：该用户的合法顶层文件夹（`Name` + `CreationDate` + `Owner`）。空列表也返 200 |
+| `PUT /<bucket>` | CreateBucket：建顶层文件夹，200 + `Location`。已存在 → 409 `BucketAlreadyOwnedByYou`（rclone 视为成功）；同名是文件 → 409 `BucketAlreadyExists`。请求体里的 region 被忽略，恒为 `us-east-1` |
+| `HEAD /<bucket>` | 200 + `x-amz-bucket-region: us-east-1`；不存在 404 |
+| `DELETE /<bucket>` | 空桶 204。桶里还有任何后代文件夹、任何状态的文件（含回收站里的）或未完成的上传会话 → 409 `BucketNotEmpty` |
+| `GET /<bucket>?location` | 空 `LocationConstraint`（等价 `us-east-1`） |
+| `GET /<bucket>?versioning` | 空 `VersioningConfiguration`；`PUT ?versioning` → 501 |
+| `GET /<bucket>?uploads` | 空 `ListMultipartUploadsResult`（客户端会探测） |
+| `POST /<bucket>?delete` | DeleteObjects，见下 |
+| `GET /<bucket>?list-type=2` | ListObjectsV2，见下 |
+| `GET /<bucket>`（不带 `list-type`） | ListObjects V1，见下 |
+| `GET /<bucket>/<key>` | 200 流式。`ETag: "<sha256>"`、`Last-Modified`（RFC 1123，取 `updated_at`）、`Content-Length`、`Content-Type`、`Accept-Ranges: bytes`、`x-amz-meta-*`。Range 走 `PartialContent`（206/416），条件头 `If-Match` / `If-None-Match` / `If-Modified-Since` / `If-Unmodified-Since` |
+| `HEAD /<bucket>/<key>` | 同上但无 body；不存在 → 404 **空体**（S3 的 HEAD 不带错误 XML） |
+| `PUT /<bucket>/<key>` | PutObject。200 + `ETag` + 回显校验和 |
+| `PUT /<bucket>/<key>`（带 `x-amz-copy-source`） | CopyObject |
+| `DELETE /<bucket>/<key>` | 硬删除。不管在不在都 204，指向文件夹的 key 也 204；随后剪掉变空的祖先目录（桶自己永不剪） |
+| `POST /<bucket>/<key>?uploads` | CreateMultipartUpload → `InitiateMultipartUploadResult{UploadId}` |
+| `PUT /<bucket>/<key>?partNumber=N&uploadId=…` | UploadPart → 200 + part 的 `ETag` |
+| `POST /<bucket>/<key>?uploadId=…` | CompleteMultipartUpload → `CompleteMultipartUploadResult` |
+| `DELETE /<bucket>/<key>?uploadId=…` | AbortMultipartUpload → 204；未知或已过期 → 404 `NoSuchUpload` |
+
+### PutObject 的三种载荷
+
+`x-amz-content-sha256` 决定怎么读 body：
+
+1. **64 位 hex**：客户端预先知道全文哈希。服务端边收边算，先比对它，再比对
+   `x-amz-checksum-*` 与 `Content-MD5`。哈希与 blob 键相同，所以能秒传（服务端已有该
+   blob 时不重传字节）。**覆盖已有对象时不走秒传**——那时校验和必须在合并阶段、
+   publish 之前核对，否则一个校验失败的请求会先把旧内容换掉。
+2. **`UNSIGNED-PAYLOAD`**：不核对载荷哈希，其余校验和照旧。
+3. **`STREAMING-AWS4-HMAC-SHA256-PAYLOAD`**（aws-chunked 分帧）：真实长度取
+   `x-amz-decoded-content-length`，`Content-Length` 是分帧后的长度。每块尾部的
+   `chunk-signature` 逐个核对；`x-amz-trailer` 声明的校验和在读完 body 之后核对并回显。
+   `STREAMING-UNSIGNED-PAYLOAD-TRAILER` 也支持（不验块签名，只解帧）。
+
+任何签名、长度、校验和不符都在 **publish 之前**失败，返 400
+`XAmzContentSHA256Mismatch`（载荷哈希不符）或 `BadDigest`（其它校验和不符），不会留下
+半个对象。`STREAMING-AWS4-ECDSA-PAYLOAD-*`（SigV4A）返 501。
+
+### ListObjectsV2 与 V1
+
+两条走同一套遍历，差别只在分页参数与响应字段。rclone 在 `provider = Other` 时按
+auto 发 **V1**（`GET /<bucket>`，无 `list-type`），所以两条都必须实现。
+
+参数：`prefix`、`delimiter`（只接受 `""` 和 `"/"`，其它值 501）、`max-keys`（默认
+1000，>1000 截断到 1000，0 合法并返回空页，负数 400）、`encoding-type=url`，外加：
+
+- V2：`continuation-token`（不透明游标，优先）、`start-after`
+- V1：`marker`（按名字位置跳过，可以是一个不存在的名字）
+
+响应含 `Name`、`Prefix`、`MaxKeys`、`IsTruncated`、`Delimiter`、
+`Contents{Key, LastModified, ETag, Size, StorageClass=STANDARD}`、
+`CommonPrefixes{Prefix}`，外加各自的版本字段：
+
+- V2：`KeyCount`（`Contents` 与 `CommonPrefixes` 之和）、`ContinuationToken`、
+  `NextContinuationToken`、`StartAfter`
+- V1：`Marker`（回显请求值）、`NextMarker`（截断时给出，值是本页最后一个键或折叠前缀）
+
+`list-type` 写了但不是 `2` → 400 `InvalidArgument`；不写即 V1。
+
+排序用的是 App 自己的折叠名序，不是 S3 的字节序 —— 见「已知差异」。
+
+### CopyObject
+
+`x-amz-copy-source: /<srcBucket>/<srcKey>`，允许 URL 编码，允许同用户跨桶。
+
+- 源必须是文件。源 key 指向文件夹（只是个前缀）→ 404 `NoSuchKey`。
+- 目标已存在 → 覆盖（对象存储语义，不产生版本行）；目标同名是文件夹 → 409 `InvalidRequest`。
+- 一次事务内完成「删旧 + 插新」，提交后才把孤儿键交给删除队列，所以目标不会被删一半。
+- `x-amz-metadata-directive: COPY | REPLACE`（默认 COPY）。其它值 400 `InvalidArgument`。
+- 源与目标同路径且 `COPY` → 400 `InvalidRequest`；`REPLACE` 允许，用于原地改元数据。
+- 条件头 `x-amz-copy-source-if-{match,none-match,modified-since,unmodified-since}`，
+  不满足 → 412 `PreconditionFailed`。
+- 带 `?versionId` 的复制源 → 501（不支持版本控制）。
+- 不递归：目录复制请客户端逐个文件调用。
+
+### DeleteObjects
+
+`POST /<bucket>?delete`：
+
+- **必须带 `Content-MD5`**，且必须等于 body 的 MD5。缺失 → 400 `InvalidRequest`，
+  不符 → 400 `InvalidDigest`。两者都在任何删除发生之前判定。
+- body ≤ 1 MiB，XML 用与 WebDAV 同款硬化解析（禁 DOCTYPE、不展开外部实体），解析失败
+  一律 400 `MalformedXML`。
+- 一次最多 1000 个 `Object`，超过 → 400 `MalformedXML`。
+- 每个 key：文件 → 硬删并计入孤儿键；不存在、或解析到文件夹 → 当作已删除（S3 的幂等
+  语义）。响应把**每个被请求的键**都回成 `<Deleted><Key>`，`Quiet=true` 时只回错误项。
+- 删除后剪掉变空的祖先目录；一次请求产生的孤儿键合并后一次性交给删除队列。
+
+### 分片上传
+
+| 步骤 | 行为 |
+|---|---|
+| Create | 校验桶与 key，先建隐式父目录，返回 `UploadId`。24 小时有效 |
+| UploadPart | `partNumber` ∈ [1, 10000]；单片 ≤ 5 GiB，且累计 ≤ `MAX_FILE_SIZE`；边写边算 SHA-256 与请求带的校验和，核对通过才把暂存文件原子改名落账；每个 UploadPart 都把有效期续到 `now + 24h` |
+| Complete | part 必须严格升序且无重复（`InvalidPartOrder`）、每个 ETag 与服务端记录一致（`InvalidPart`）、除最后一片外每片 ≥ 5 MiB（`EntityTooSmall`）、总量 ≤ `MAX_FILE_SIZE`。然后合并、核对整文件哈希、发布。未列出的 part 直接丢弃 |
+| Abort | 删会话与暂存文件，204；未知或已过期 → 404 `NoSuchUpload` |
+
+**ETag 语义与 AWS 不同**：S3 的分片 ETag 是 `"md5-of-md5s-N"`，我们返回**整文件的
+sha256**，与单发 PUT 一致。这样 `rclone check` 有可比较的内容哈希，代价是任何依赖
+`-N` 后缀来识别分片上传的工具会认不出来。
+
+`x-amz-checksum-*` 在 Complete 上按 S3 的复合规则核对（各 part 的二进制摘要串起来再取
+一次摘要，base64 后加 `-N`）；只要有任一 part 没记录该算法，这个头就被忽略而不是报错。
+
+`ListParts`（`GET ?uploadId=`）返 501。
+
+### 错误模型
+
+错误 body 是 XML，不走 `/api` 的 JSON 信封：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<Error><Code>NoSuchKey</Code><Message>…</Message>
+<Resource>/bucket/key</Resource><RequestId>…</RequestId></Error>
+```
+
+每个 S3 响应（成功也是）都带 `x-amz-request-id`。S3 路由内部自捕获所有异常并渲染成
+S3 形状，绝不会漏到 `/api` 的错误处理里去。`Message` 严格 XML 转义——键名是用户输入。
+
+| 场景 | HTTP | Code |
+|---|---|---|
+| 未签名 / 只读令牌写 / 旧令牌无解密副本 | 403 | `AccessDenied` |
+| accessKeyId 不存在 | 403 | `InvalidAccessKeyId` |
+| 签名不符 | 403 | `SignatureDoesNotMatch` |
+| 时钟偏移超 15 分钟 / 预签名过期 | 403 | `RequestTimeTooSkewed` / `RequestExpired` |
+| 桶名非法 / 键非法 / 元数据超限 / 复合校验和不符 | 400 | `InvalidBucketName` / `InvalidArgument` / `MetadataTooLarge` / `BadDigest` |
+| 载荷哈希不符 | 400 | `XAmzContentSHA256Mismatch` |
+| `Content-MD5` 缺失或不符（DeleteObjects） | 400 | `InvalidRequest` / `InvalidDigest` |
+| 缺 Content-Length / 超过 `MAX_FILE_SIZE` | 411 / 400 | `MissingContentLength` / `EntityTooLarge` |
+| XML 请求体不合法 | 400 | `MalformedXML` |
+| 分片太小 / 顺序不对 / part 不存在 | 400 | `EntityTooSmall` / `InvalidPartOrder` / `InvalidPart` |
+| 桶 / 对象 / 上传会话不存在 | 404 | `NoSuchBucket` / `NoSuchKey` / `NoSuchUpload` |
+| 桶非空 | 409 | `BucketNotEmpty` |
+| 对象与文件夹同名 | 409 | `InvalidRequest` |
+| 条件头不成立 | 412 | `PreconditionFailed` |
+| 并发同名写（唯一索引冲突） | 503 | `SlowDown`（可重试语义） |
+| 限流 | 503 | `SlowDown` |
+| 不支持的方法 / 子资源 | 501 | `NotImplemented` |
+| 其它 | 500 | `InternalError` |
+
+### 限流与预签名
+
+按客户端地址计两个互相独立的预算：鉴权 `s3-auth` 20 次 / 5 分钟（挡住拿签名当探测器），
+业务 `s3` 600 次 / 分钟。超了返 503 `SlowDown`。
+
+预签名 URL 由客户端自己签（SigV4 query 形式），服务端只验不签：`X-Amz-Expires` ∈
+[1, 604800]（超出 → 403 `AuthorizationQueryParametersError`），签名时间在未来 → 403
+`RequestTimeTooSkewed`，超过 `X-Amz-Date + Expires` → 403 `RequestExpired`。
+
+访问日志里 `X-Amz-Signature` 的值被替换成 `***`——预签名 URL 整串都在查询行里，
+默认格式化器会把真签名写进日志。
+
+### 501 清单
+
+`?acl`、`?policy`、`?tagging`、`?cors`、`?lifecycle`、`?website`、`?logging`、
+`?notification`、`?replication`、`?encryption`、`?object-lock`、`?legal-hold`、
+`?retention`、`?restore`、`?select`、`?torrent`、`?attributes`、`?versionId`、
+`PUT ?versioning`、`ListParts`、SigV4A → 501 `NotImplemented`。
+
+刻意用 501 而不是 404：让客户端知道「服务端不支持这件事」，而不是「这个资源不存在」，
+后者会让客户端把 404 当缓存未命中继续往下走。
+
+### 已知差异
+
+见 [usage.md 的「当作 S3 对象存储用」](usage.md#九当作-s3-对象存储用rclone--restic--mc--aws-cli)
+一节末尾的诚实清单：只有合法桶名的顶层文件夹可见、DELETE 不进回收站、列举顺序是折叠
+名序、分片 ETag 是整文件 sha256、明文 HTTP 下签名可被旁路读取。

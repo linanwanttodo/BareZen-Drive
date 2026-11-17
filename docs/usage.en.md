@@ -426,3 +426,187 @@ already terminates TLS.
 For the method table, property set, status codes and the two deliberate deviations
 from RFC 4918, see [the WebDAV chapter of api.md](api.md).
 
+---
+
+## 9. Using it as S3 object storage (rclone / restic / mc / AWS CLI)
+
+The server ships an S3-compatible subset on **the same port as the web UI and
+WebDAV**, using path-style addressing: `https://<your-host>/<bucket>/<key>`. A
+bucket is one top-level folder and an object is one file inside it - the same
+rows, the same blobs. There is no second copy of your data.
+
+### Getting the credentials
+
+Create an app password under *Settings → Mount as a network drive (WebDAV)*, then:
+
+| S3 parameter | Value |
+|---|---|
+| `access_key_id` | that token's **id** |
+| `secret_access_key` | the plaintext shown **once**, at creation time |
+| `endpoint` | `https://<your-host>` (no path) |
+| `region` | `us-east-1` (the only one; anything you send is ignored) |
+
+Three things worth stating plainly:
+
+- **The plaintext is shown once.** The database only keeps a hash, so if you miss
+  it you have to mint a new token.
+- **The Access Key is the token's `id`, and the client UI does not display it.**
+  Mounting only needs a password, so the screen only ever surfaces the password.
+  Read the id from the API once:
+
+  ```
+  curl -H "Authorization: Bearer <accessToken>" https://<your-host>/api/webdav/tokens
+  ```
+
+  The `id` of the token you are using is the Access Key.
+- **Tokens minted before this release cannot be used for S3.** Verifying an S3
+  signature needs a decryptable copy of the secret, which older tokens do not
+  have. They answer 403 `AccessDenied` on S3 while continuing to work fine over
+  WebDAV. Mint a new one.
+
+### rclone
+
+Into `~/.config/rclone/rclone.conf`:
+
+```ini
+[barezen]
+type = s3
+provider = Other
+access_key_id = <token id>
+secret_access_key = <plaintext from creation>
+endpoint = https://<your-host>
+region = us-east-1
+force_path_style = true
+```
+
+Or use environment variables and skip the file (the commands below assume a
+remote called `barezen`):
+
+```bash
+export RCLONE_CONFIG_BAREZEN_TYPE=s3
+export RCLONE_CONFIG_BAREZEN_PROVIDER=Other
+export RCLONE_CONFIG_BAREZEN_ACCESS_KEY_ID='<token id>'
+export RCLONE_CONFIG_BAREZEN_SECRET_ACCESS_KEY='<plaintext>'
+export RCLONE_CONFIG_BAREZEN_ENDPOINT='https://<your-host>'
+export RCLONE_CONFIG_BAREZEN_REGION=us-east-1
+export RCLONE_CONFIG_BAREZEN_FORCE_PATH_STYLE=true
+```
+
+The commands you will actually use:
+
+```bash
+rclone lsd barezen:                      # list buckets (= top-level folders)
+rclone ls barezen:Photos                 # list keys in a bucket
+rclone copy ./trip barezen:Photos/trip   # upload
+rclone copy barezen:Photos/trip ./trip   # download
+rclone check ./trip barezen:Photos/trip  # compare content per file
+rclone mount barezen:Photos /mnt/photos  # mount as a local directory
+```
+
+`force_path_style = true` is required: the server resolves the bucket from the
+first path segment, so virtual-host addressing (`<bucket>.<your-host>`) is not
+supported.
+
+rclone's default multipart cutoff is far above ordinary file sizes; lower it
+explicitly to make a large upload go through multipart:
+
+```bash
+rclone copy ./big.bin barezen:Photos --s3-upload-cutoff 5M
+```
+
+### restic
+
+```bash
+export AWS_ACCESS_KEY_ID='<token id>'
+export AWS_SECRET_ACCESS_KEY='<plaintext>'
+restic -o s3.force-path-style=true -r s3:https://<your-host>/restic-backup init
+restic -o s3.force-path-style=true -r s3:https://<your-host>/restic-backup backup ~/Documents
+```
+
+`s3.force-path-style=true` cannot be dropped, for the same reason as rclone.
+Create the backup bucket first (with `rclone mkdir`, or as a top-level folder in
+the app).
+
+### mc (MinIO Client)
+
+```bash
+mc alias set barezen https://<your-host> '<token id>' '<plaintext>' --api S3v4
+mc ls barezen
+mc cp ./a.bin barezen/Photos/
+```
+
+### AWS CLI
+
+```bash
+aws configure   # access key, secret key, region us-east-1
+aws --endpoint-url https://<your-host> s3 ls
+aws --endpoint-url https://<your-host> s3 cp ./a.bin s3://Photos/a.bin
+aws --endpoint-url https://<your-host> s3api list-objects-v2 --bucket Photos
+```
+
+### How far the client testing actually goes (stated plainly)
+
+- **rclone: verified against a real binary.** Development and CI both run rclone
+  v1.74.4. `scripts/s3_smoke.sh` exercises bucket creation, upload (including a
+  12 MB file that goes through multipart), listing, `check` content comparison,
+  overwrite, delete, `rmdir` (which is what pins empty-directory pruning),
+  a presigned GET plus its expiry rejection, a read-only token being refused, and
+  signature redaction in the access log.
+- **restic, mc and the AWS CLI: not verified against a real binary here.** None of
+  the three was available in the environment where this was built. The recipes
+  above follow each project's own documentation and have not been run, so they
+  are not claimed to work. If one fails, read "Known differences" first - most
+  incompatibilities come from those.
+
+### Known differences
+
+These follow from the design and the data model; they are not bugs and cannot be
+fixed by configuration:
+
+1. **Only top-level folders with a valid S3 bucket name are buckets.** S3 names
+   are 3-63 characters of lowercase letters, digits, dots and hyphens, and must
+   start and end alphanumeric. A top-level folder called `照片`, `My Photos` or
+   `Photos` is invisible to S3 and cannot be created through it - it stays
+   completely normal in the app and over WebDAV.
+2. **Files sitting directly in the root belong to no bucket.** The drive allows
+   that, S3 has no such concept, so `GET /` does not show them and they are not
+   readable. Move them into a folder first.
+3. **`DELETE` is not recoverable.** Deleting over S3 is a hard delete - it does
+   not go to the trash - and overwriting creates no revision. Use the app to
+   delete when you want a way back, or rely on the blob grace period (2 hours by
+   default, after which the bytes are reclaimed).
+4. **Listing order is not S3's byte order.** The server reuses the app's
+   case-insensitive collation, so the relative order of `a.txt` and `a/` is the
+   opposite of S3's. Paging with `continuation-token` is reliable; assuming
+   lexicographic order is not.
+5. **Empty directories never appear in a listing.** S3 has no empty directories
+   (a client fakes one with a placeholder object whose key ends in `/`) and the
+   server does not fake them either. An empty top-level folder is simply an
+   empty bucket.
+6. **Keys may not contain an empty segment.** `a//b` and any key ending in `/` is
+   rejected with 400 `InvalidArgument`. Express "a directory" as `a/b`, or create
+   a real `a/b.txt` when you need a placeholder. Silently collapsing `//` would
+   map two different keys onto the same file.
+7. **HTML and SVG are served as attachments.** This is the existing XSS defence
+   and it applies on the S3 path too: opening a presigned URL in a browser
+   downloads instead of rendering.
+8. **The multipart ETag is the whole file's sha256**, not S3's
+   `md5-of-md5s-N`. That lets `rclone check` compare real content hashes; the
+   cost is that any tool recognising multipart uploads by the `-N` suffix will
+   not recognise these.
+9. **Unsupported things answer 501**, never 404: versioning, ACLs, bucket
+   policies, tags, lifecycle, CORS, logging, notifications, replication,
+   encryption config, object lock, legal hold, retention, restore, select,
+   torrent, `ListParts`, SigV2, and SigV4A
+   (`STREAMING-AWS4-ECDSA-PAYLOAD-*`). 501 is deliberate - a client that sees 404
+   concludes "this resource does not exist" and carries on, which is exactly the
+   wrong inference.
+10. **Over plain HTTP a signature can be captured.** SigV4 never sends the secret,
+    but the `Authorization` header carries the access key, the timestamp and a
+    signature that a man in the middle can replay. As with WebDAV: **use HTTPS.**
+    The Caddy mode of `install.sh` already does.
+
+For the full method table, the three payload framings, the error codes, the rate
+limits and presigning parameters, see the *S3 compatible API* section of
+[api.md](api.md).
+

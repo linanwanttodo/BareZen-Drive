@@ -319,3 +319,156 @@ Pipeline 会自动：跑测试 → 构建 Web/APK/服务端包 → 推送 amd64+
 
 技术细节（方法表、属性集、错误码、两处对 RFC 的有意偏离）见 [api.md 的 WebDAV 章节](api.md#webdav挂载为网络盘)。
 
+---
+
+## 九、当作 S3 对象存储用（rclone / restic / mc / AWS CLI）
+
+服务端内置一个 S3 兼容子集，**和 Web 界面、WebDAV 同一个端口**，路径风格是
+`https://<你的域名>/<bucket>/<key>`。一个桶就是网盘的一个顶层文件夹，一个对象就是
+里面一个文件——同一份数据、同一套 blob，App 里看到的和 S3 客户端看到的是一个东西，
+不存在第二份存储。
+
+### 拿到凭证
+
+在客户端的「设置 → 挂载为网络盘（WebDAV）」里新建一个应用密码，然后：
+
+| S3 参数 | 取值 |
+|---|---|
+| `access_key_id` | 这个令牌的 **id** |
+| `secret_access_key` | 创建时页面显示**那一次**的明文密码 |
+| `endpoint` | `https://<你的域名>`（不要带路径） |
+| `region` | `us-east-1`（服务端只有这一个，请求里写别的会被忽略） |
+
+两点要说清楚：
+
+- **令牌明文只在创建时显示一次**，库里存的是哈希。忘记就得重新签发一个。
+- **Access Key 就是这个令牌的 id，但客户端界面目前不显示它**（挂载只需要密码，所以页面
+  只给了密码）。现在要从接口读一次：
+
+  ```
+  curl -H "Authorization: Bearer <登录拿到的 accessToken>" https://<你的域名>/api/webdav/tokens
+  ```
+
+  返回里与被使用的那条记录对应的 `id` 就是 Access Key。
+- **本版本之前签发的令牌用不了 S3**：S3 验签需要一份可解密的密钥副本，旧令牌没有。
+  它们在 S3 侧会 403 `AccessDenied`，WebDAV 挂载不受影响。重新签发即可。
+
+### rclone
+
+配置写进 `~/.config/rclone/rclone.conf`：
+
+```ini
+[barezen]
+type = s3
+provider = Other
+access_key_id = <令牌 id>
+secret_access_key = <创建时那一次明文>
+endpoint = https://<你的域名>
+region = us-east-1
+force_path_style = true
+```
+
+或者用环境变量，不必写文件（下面的命令按 `barezen` 这个 remote 名写）：
+
+```bash
+export RCLONE_CONFIG_BAREZEN_TYPE=s3
+export RCLONE_CONFIG_BAREZEN_PROVIDER=Other
+export RCLONE_CONFIG_BAREZEN_ACCESS_KEY_ID='<令牌 id>'
+export RCLONE_CONFIG_BAREZEN_SECRET_ACCESS_KEY='<明文>'
+export RCLONE_CONFIG_BAREZEN_ENDPOINT='https://<你的域名>'
+export RCLONE_CONFIG_BAREZEN_REGION=us-east-1
+export RCLONE_CONFIG_BAREZEN_FORCE_PATH_STYLE=true
+```
+
+常用命令：
+
+```bash
+rclone lsd barezen:                      # 列出桶（= 顶层文件夹）
+rclone ls barezen:Photos                 # 列出桶里的键
+rclone copy ./trip barezen:Photos/trip   # 上传
+rclone copy barezen:Photos/trip ./trip   # 下载
+rclone check ./trip barezen:Photos/trip  # 逐文件核对内容
+rclone mount barezen:Photos /mnt/photos  # 挂成本地目录
+```
+
+`force_path_style = true` 是必需的：服务端按 `/<bucket>/<key>` 认桶，虚拟主机风格
+（`<bucket>.<域名>`）的寻址不支持。
+
+rclone 默认的上传分片阈值远大于常见文件，想让大文件走分片要显式压低：
+
+```bash
+rclone copy ./big.bin barezen:Photos --s3-upload-cutoff 5M
+```
+
+### restic
+
+```bash
+export AWS_ACCESS_KEY_ID='<令牌 id>'
+export AWS_SECRET_ACCESS_KEY='<明文>'
+restic -o s3.force-path-style=true -r s3:https://<你的域名>/restic-backup init
+restic -o s3.force-path-style=true -r s3:https://<你的域名>/restic-backup backup ~/Documents
+```
+
+`s3.force-path-style=true` 不能省，理由同 rclone。备份桶要先建好（`rclone mkdir`
+或 App 里建一个同名顶层文件夹）。
+
+### mc（MinIO Client）
+
+```bash
+mc alias set barezen https://<你的域名> '<令牌 id>' '<明文>' --api S3v4
+mc ls barezen
+mc cp ./a.bin barezen/Photos/
+```
+
+### AWS CLI
+
+```bash
+aws configure   # 填 access key / secret key，region 填 us-east-1
+aws --endpoint-url https://<你的域名> s3 ls
+aws --endpoint-url https://<你的域名> s3 cp ./a.bin s3://Photos/a.bin
+aws --endpoint-url https://<你的域名> s3api list-objects-v2 --bucket Photos
+```
+
+### 客户端验证到什么程度（如实说明）
+
+- **rclone：真机跑过。** 开发机上装的是 rclone v1.74.4，`scripts/s3_smoke.sh` 用它真跑了
+  建桶、上传（含 12 MB 走分片）、列举、`check` 内容核对、覆盖、删除、`rmdir`（这一条
+  钉住空目录剪枝）、预签名 GET 与过期拒绝、只读令牌拒写、访问日志脱敏。CI 里也会装
+  rclone 跑同一个脚本。
+- **restic、mc、AWS CLI：未在本项目真机验证。** 开发环境里没有这三个二进制。上面的
+  配方按各家官方文档的语法写，没有跑过，因此不能声称它们可用。真跑出问题时先看
+  「已知差异」——绝大多数不兼容都出在那几条上。
+
+### 已知差异
+
+这些是设计与数据模型决定的，不是 bug，绕不过去：
+
+1. **只有合法 S3 桶名的顶层文件夹才是桶。** S3 的桶名规则是 3–63 位小写字母、数字、
+   点、连字符，且不能以点或连字符开头结尾。中文、含空格、带大写的顶层文件夹在 S3 侧
+   不存在，也不能通过 S3 创建——它们在 App 和 WebDAV 里照常。
+2. **直接放在根目录的文件不属于任何桶。** 网盘允许文件平铺在根，S3 没有这个概念，
+   所以 `GET /` 列出的桶里没有它们，也读不到。先挪进一个文件夹。
+3. **`DELETE` 不可恢复。** S3 的删除是硬删除，不进回收站；覆盖也不产生版本行。想留
+   后路请用 App 删除，或者依赖 blob 的宽限期（默认 2 小时，超时后字节被回收）。
+4. **列举顺序不是 S3 的字节序。** 服务端复用 App 的折叠名序（大小写不敏感），所以
+   `a.txt` 与 `a/` 的先后与 S3 相反。用 `continuation-token` 分页是可靠的，
+   自己做字典序假设不可靠。
+5. **空目录不会出现在列举里。** S3 本来就没有空目录的概念（要靠一个以 `/` 结尾的
+   占位对象伪造），服务端也不伪造。`rclone mkdir` 建的空顶层文件夹会成为一个空桶。
+6. **键不能有空段。** `a//b` 和以 `/` 结尾的键会被 400 `InvalidArgument` 拒掉。想表达
+   「目录」请用 `a/b`，或者在需要占位对象时显式建一个名为 `a/b.txt` 的文件。
+7. **HTML 与 SVG 以 attachment 下发。** 这是既有的 XSS 防护，S3 侧同样生效：预签名
+   URL 在浏览器里点开会是下载而不是渲染。
+8. **分片上传的 ETag 是整文件的 sha256**，不是 S3 的 `md5-of-md5s-N`。好处是
+   `rclone check` 能直接比内容哈希；代价是任何靠 `-N` 后缀识别分片上传的工具会认不出。
+9. **不支持的东西一律 501**：版本控制、ACL、桶策略、标签、生命周期、CORS、日志、
+   事件通知、复制、加密配置、对象锁、legal hold、保留期、restore、select、torrent、
+   `ListParts`、SigV2、SigV4A（`STREAMING-AWS4-ECDSA-PAYLOAD-*`）。用 501 而不是 404
+   是故意的：让客户端知道「不支持」，别当成「资源不存在」继续往下走。
+10. **明文 HTTP 下签名可以被旁路读取。** SigV4 不把密钥本身发出去，但 Authorization
+    头里的 access key、时间戳和签名足以让中间人重放。和 WebDAV 一样：**请用 HTTPS**。
+    `install.sh` 的 Caddy 模式已经带。
+
+协议细节（完整方法表、三种载荷分帧、错误码、限流、预签名参数）见
+[api.md 的 S3 兼容接口一节](api.md#s3-兼容接口)。
+

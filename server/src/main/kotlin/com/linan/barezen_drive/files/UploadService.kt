@@ -42,6 +42,14 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 
+internal data class MergePart(val file: File, val expectedSize: Long, val expectedEtag: String? = null)
+
+internal data class MergedUpload(
+    val response: UploadCompleteResponse,
+    val sha256: String,
+    val digests: Map<String, ByteArray>,
+)
+
 object UploadService {
     private val log = LoggerFactory.getLogger(UploadService::class.java)
 
@@ -121,6 +129,7 @@ object UploadService {
          * slots, and the merge would publish a mixture of both.
          */
         allowResume: Boolean = true,
+        snapshotOnOverwrite: Boolean = true,
     ): UploadInitResponse {
         if (req.name.isBlank() || req.name.contains('/') || req.name.length > 255) throw ApiException.badRequest("文件名非法")
         if (req.size < 0) throw ApiException.badRequest("size 非法")
@@ -158,18 +167,37 @@ object UploadService {
                             if (clash[FilesTable.sha256] == sha) {
                                 // Identical bytes onto the identical name: a no-op
                                 // success (nothing to snapshot), still the same row.
-                                Triple(clash.toFileDto(), emptyList(), null as FileVersionDto?)
+                                if (clash[FilesTable.userMeta] != req.userMeta) {
+                                    FilesTable.update({ FilesTable.id eq clash[FilesTable.id] }) {
+                                        it[FilesTable.userMeta] = req.userMeta
+                                        it[updatedAt] = System.currentTimeMillis()
+                                    }
+                                }
+                                Triple(
+                                    FilesTable.selectAll().where { FilesTable.id eq clash[FilesTable.id] }.single().toFileDto(),
+                                    emptyList(), null as FileVersionDto?,
+                                )
                             } else {
                             // Same dedup rule as a fresh instant row: the size of
                             // the *new* content comes from rows already holding
                             // this blob (or the blob itself), never the client.
                             val storedSize = storedSizeForKey(key, storage) ?: req.size
-                            val (orphans, snapshot) = VersionService.snapshotAndReplace(
-                                clash[FilesTable.id],
-                                clash[FilesTable.sha256], clash[FilesTable.storageKey], clash[FilesTable.size], clash[FilesTable.mimeType], clash[FilesTable.takenAt],
-                                sha, key, storedSize, req.mimeType ?: clash[FilesTable.mimeType], req.takenAt ?: clash[FilesTable.takenAt],
-                                hasThumb, System.currentTimeMillis(),
-                            )
+                            val now = System.currentTimeMillis()
+                            val (orphans, snapshot) = if (snapshotOnOverwrite) {
+                                VersionService.snapshotAndReplace(
+                                    clash[FilesTable.id],
+                                    clash[FilesTable.sha256], clash[FilesTable.storageKey], clash[FilesTable.size], clash[FilesTable.mimeType], clash[FilesTable.takenAt],
+                                    sha, key, storedSize, req.mimeType ?: clash[FilesTable.mimeType], req.takenAt ?: clash[FilesTable.takenAt],
+                                    hasThumb, now,
+                                )
+                            } else {
+                                VersionService.replaceInPlace(
+                                    clash[FilesTable.id], clash[FilesTable.storageKey],
+                                    sha, key, storedSize, req.mimeType ?: clash[FilesTable.mimeType], req.takenAt ?: clash[FilesTable.takenAt],
+                                    hasThumb, now,
+                                ) to null
+                            }
+                            FilesTable.update({ FilesTable.id eq clash[FilesTable.id] }) { it[FilesTable.userMeta] = req.userMeta }
                             val updated = FilesTable.selectAll().where { FilesTable.id eq clash[FilesTable.id] }.single().toFileDto()
                             Triple(updated, orphans, snapshot as FileVersionDto?)
                             }
@@ -188,6 +216,7 @@ object UploadService {
                                     it[mimeType] = req.mimeType; it[FilesTable.sha256] = sha; it[storageKey] = key
                                     it[hasThumbnail] = hasThumb
                                     it[takenAt] = req.takenAt
+                                    it[FilesTable.userMeta] = req.userMeta
                                 }
                             }
                             // Referenced again inside the grace window: take it
@@ -242,6 +271,7 @@ object UploadService {
                     it[clientSha256] = sha; it[expiresAt] = System.currentTimeMillis() + SESSION_TTL_MILLIS
                     it[takenAt] = req.takenAt
                     it[overwrite] = req.overwrite
+                    it[UploadSessionsTable.userMeta] = req.userMeta
                 }
             }
         }
@@ -400,45 +430,100 @@ object UploadService {
         sessionId: UUID,
         storage: StorageProvider,
         snapshotOnOverwrite: Boolean = true,
-    ): UploadCompleteResponse = withContext(Dispatchers.IO) {
+    ): UploadCompleteResponse =
+        completeWithDigests(userId, sessionId, storage, snapshotOnOverwrite, UploadDigests()) {}.response
+
+    internal suspend fun completeWithDigests(
+        userId: UUID,
+        sessionId: UUID,
+        storage: StorageProvider,
+        snapshotOnOverwrite: Boolean,
+        digests: UploadDigests,
+        verify: (Map<String, ByteArray>) -> Unit,
+    ): MergedUpload = withContext(Dispatchers.IO) {
         val row = openSession(userId, sessionId)
         val chunkSize = row[UploadSessionsTable.chunkSize]
         val total = row[UploadSessionsTable.size]
+        val expected = expectedChunks(total, chunkSize)
+        val have = transaction(DatabaseFactory.db) { UploadChunksTable.selectAll().where { UploadChunksTable.session eq sessionId }.count() }
+        if (have != expected.toLong()) throw ApiException.badRequest("缺少分块", ErrorCodes.CHUNK_MISSING)
+        val dir = storage.tmpDir.resolve(sessionId.toString())
+        val parts = (0 until expected).map { i ->
+            MergePart(
+                dir.resolve("$i.part").toFile(),
+                if (i == expected - 1) total - chunkSize * (expected - 1) else chunkSize,
+            )
+        }
+        publishMerged(userId, row, total, parts, storage, snapshotOnOverwrite, digests, verify)
+    }
+
+    /**
+     * 与来源无关的"合并 → 校验 → 落库 → 缩略图"。普通分块与 S3 multipart 各自
+     * 拼装 parts 后共用这一段。verify 在算完整文件哈希之后、提升 blob 之前调用，
+     * 所以校验和不符绝不会落一个半截文件。
+     */
+    internal suspend fun publishMerged(
+        userId: UUID,
+        row: ResultRow,
+        total: Long,
+        parts: List<MergePart>,
+        storage: StorageProvider,
+        snapshotOnOverwrite: Boolean,
+        digests: UploadDigests = UploadDigests(),
+        verify: (Map<String, ByteArray>) -> Unit = {},
+    ): MergedUpload = withContext(Dispatchers.IO) {
+        val sessionId = row[UploadSessionsTable.id]
         val parent = row[UploadSessionsTable.folder]
         val name = row[UploadSessionsTable.name]
         val mime = row[UploadSessionsTable.mimeType]
         val clientSha = row[UploadSessionsTable.clientSha256]
         val sessionTakenAt = row[UploadSessionsTable.takenAt]
-        val expected = expectedChunks(total, chunkSize)
-        val have = transaction(DatabaseFactory.db) { UploadChunksTable.selectAll().where { UploadChunksTable.session eq sessionId }.count() }
-        if (have != expected.toLong()) throw ApiException.badRequest("缺少分块", ErrorCodes.CHUNK_MISSING)
+        val userMeta = row[UploadSessionsTable.userMeta]
+        if (total > maxFileSize) throw ApiException.tooLarge("文件超过服务器上限 ${maxFileSize / MIB} MiB")
+        if (parts.sumOf { it.expectedSize } != total) throw ApiException.badRequest("分块总量不符", ErrorCodes.CHUNK_INVALID)
 
         // One merge file per attempt: two concurrent completes of this session (or
         // of two sessions racing for the same name) must not share a buffer.
         val mergeFile = Files.createTempFile(storage.tmpDir, "merge-$sessionId-", ".bin").toFile()
-        val digest = MessageDigest.getInstance("SHA-256")
         try {
             FileOutputStream(mergeFile).use { out ->
                 val buf = ByteArray(1 shl 16)
-                for (i in 0 until expected) {
-                    val part = storage.tmpDir.resolve(sessionId.toString()).resolve("$i.part").toFile()
+                for (part in parts) {
                     // The chunk rows say the bytes arrived; if the staging dir is
                     // gone (pruned, or a diverged restore) that is a 400 CHUNK_MISSING,
                     // not a FileNotFoundException surfacing as a 500.
-                    if (!part.exists()) throw ApiException.badRequest("缺少分块", ErrorCodes.CHUNK_MISSING)
-                    FileInputStream(part).use { ins ->
+                    if (!part.file.exists()) throw ApiException.badRequest("缺少分块", ErrorCodes.CHUNK_MISSING)
+                    val partDigest = if (part.expectedEtag != null) MessageDigest.getInstance("SHA-256") else null
+                    var read = 0L
+                    FileInputStream(part.file).use { ins ->
                         while (true) {
                             val n = ins.read(buf)
                             if (n < 0) break
-                            digest.update(buf, 0, n)
+                            read += n
+                            // putChunk 的校验只保证它写下的那一刻：之后被截断的暂存片
+                            // 会合并出短文件，却在 clientSha 为空时以 size=total 落库。
+                            if (read > part.expectedSize) throw ApiException.badRequest("分块大小不符", ErrorCodes.CHUNK_INVALID)
+                            digests.update(buf, n)
+                            partDigest?.update(buf, 0, n)
                             out.write(buf, 0, n)
+                        }
+                    }
+                    if (read != part.expectedSize) throw ApiException.badRequest("分块大小不符", ErrorCodes.CHUNK_INVALID)
+                    if (partDigest != null) {
+                        val hex = partDigest.digest().joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+                        if (!hex.equals(part.expectedEtag, ignoreCase = true)) {
+                            throw ApiException.badRequest("分块校验不符", ErrorCodes.CHUNK_INVALID)
                         }
                     }
                 }
             }
+            val raw = digests.raw()
             // Hex-encode the raw digest. Do NOT hash the digest again - the blob key
             // must equal the content hash for dedup/instant upload to match.
-            val sha = digest.digest().joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+            val sha = raw["SHA256"]!!.joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+            // verify 先跑：S3 在这里核对载荷哈希并抛自己的错误码，下面那条通用
+            // 400 只作为非 S3 调用方的兜底。两者都在 publish 之前。
+            verify(raw)
             if (clientSha != null && !clientSha.equals(sha, ignoreCase = true)) {
                 throw ApiException.badRequest("整体哈希与 init 不符", ErrorCodes.CHUNK_INVALID)
             }
@@ -479,6 +564,8 @@ object UploadService {
                             hasThumb, System.currentTimeMillis(),
                         ) to null
                     }
+                    // 元数据是替换不是合并：S3 语义，新请求没带就清空。
+                    FilesTable.update({ FilesTable.id eq fileId }) { it[FilesTable.userMeta] = userMeta }
                     UploadSessionsTable.update({ UploadSessionsTable.id eq sessionId }) { it[status] = "completed" }
                     Triple(FilesTable.selectAll().where { FilesTable.id eq fileId }.single().toFileDto(), orphans, snapshot)
                 } else {
@@ -491,6 +578,7 @@ object UploadService {
                             it[mimeType] = mime; it[FilesTable.sha256] = sha; it[storageKey] = key
                             it[hasThumbnail] = hasThumb
                             it[takenAt] = sessionTakenAt
+                            it[FilesTable.userMeta] = userMeta
                         }
                     }
                     UploadSessionsTable.update({ UploadSessionsTable.id eq sessionId }) { it[status] = "completed" }
@@ -517,7 +605,7 @@ object UploadService {
                         .onFailure { log.warn("cover generation failed for file {} ({}): {}", fileDto.id, name, it.toString(), it) }
                 }
             }
-            UploadCompleteResponse(fileDto, replacedVersion)
+            MergedUpload(UploadCompleteResponse(fileDto, replacedVersion), sha, raw)
         } finally {
             mergeFile.delete()
         }
@@ -583,7 +671,7 @@ object UploadService {
         }
     }
 
-    private fun cleanupSessionDir(storage: StorageProvider, sessionId: UUID) {
+    internal fun cleanupSessionDir(storage: StorageProvider, sessionId: UUID) {
         storage.tmpDir.resolve(sessionId.toString()).toFile().deleteRecursively()
     }
 }

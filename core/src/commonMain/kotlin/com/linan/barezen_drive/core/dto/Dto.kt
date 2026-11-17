@@ -49,7 +49,7 @@ data class ContentsResponse(
 @Serializable data class CreateFolderRequest(val parentId: String? = null, val name: String)
 @Serializable data class RenameFolderRequest(val name: String)
 @Serializable data class UpdateFileRequest(val name: String? = null, val folderId: String? = null)
-@Serializable data class UploadInitRequest(val folderId: String? = null, val name: String, val size: Long, val mimeType: String? = null, val sha256: String? = null, val chunkSize: Long? = null, val takenAt: Long? = null, val overwrite: Boolean = false)
+@Serializable data class UploadInitRequest(val folderId: String? = null, val name: String, val size: Long, val mimeType: String? = null, val sha256: String? = null, val chunkSize: Long? = null, val takenAt: Long? = null, val overwrite: Boolean = false, val userMeta: String? = null)
 @Serializable data class UploadInitResponse(val uploadId: String, val chunkSize: Long, val receivedChunks: List<Int> = emptyList(), val instantUpload: Boolean = false, val file: FileDto? = null)
 @Serializable data class UploadCompleteResponse(val file: FileDto, val replacedVersion: FileVersionDto? = null)
 
