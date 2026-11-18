@@ -45,6 +45,7 @@ import com.linan.barezen_drive.s3.hasS3Marker
 import com.linan.barezen_drive.s3.s3GuardReservedBucket
 import com.linan.barezen_drive.s3.s3Handle
 import com.linan.barezen_drive.s3.s3NotYetImplemented
+import com.linan.barezen_drive.s3.s3ConsoleRoutes
 import com.linan.barezen_drive.s3.s3Routes
 import com.linan.barezen_drive.storage.LocalStorageProvider
 import com.linan.barezen_drive.storage.S3StorageProvider
@@ -380,6 +381,7 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
             versionRoutes(storage)
             systemRoutes(cfg.storageDir)
             shareOwnerRoutes()
+            s3ConsoleRoutes()
         }
         // Public share endpoints must stay outside any authenticate block:
         // share visitors have no account.

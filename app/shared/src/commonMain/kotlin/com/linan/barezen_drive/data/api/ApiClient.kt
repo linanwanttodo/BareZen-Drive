@@ -34,6 +34,7 @@ import com.linan.barezen_drive.core.dto.RegistrationSettingRequest
 import com.linan.barezen_drive.core.dto.AdminUsersResponse
 import com.linan.barezen_drive.core.dto.RegistrationStatusDto
 import com.linan.barezen_drive.core.dto.UserDto
+import com.linan.barezen_drive.core.dto.S3BucketsResponse
 import com.linan.barezen_drive.core.dto.WebdavTokenCreateRequest
 import com.linan.barezen_drive.core.dto.WebdavTokenCreatedResponse
 import com.linan.barezen_drive.core.dto.WebdavTokensResponse
@@ -567,6 +568,13 @@ class ApiClient(
     /** Cuts one device off without disturbing the others' mounts. */
     suspend fun revokeWebdavToken(id: String): Result<Unit> = runApi {
         http.delete("$baseUrl/api/webdav/tokens/$id")
+    }
+
+    // ---- S3 storage console (authenticated management view) ----
+
+    /** Every top-level folder with bucket validity and recursive stats. */
+    suspend fun s3Buckets(): Result<S3BucketsResponse> = runApi {
+        http.get("$baseUrl/api/s3/buckets").body()
     }
 
     // ---- Public share endpoints (no auth; Bearer stays absent when no token) ----

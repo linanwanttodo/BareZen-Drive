@@ -181,6 +181,8 @@ data class ContentsResponse(
     val createdAt: Long,
     /** 0 when the mount has not authenticated yet, so the UI can say "never". */
     val lastUsedAt: Long = 0,
+    /** Whether this credential can sign S3 requests (has a decryptable secret copy). */
+    val s3Ready: Boolean = true,
 )
 
 @Serializable data class WebdavTokensResponse(val tokens: List<WebdavTokenDto> = emptyList())
@@ -194,4 +196,28 @@ data class ContentsResponse(
 @Serializable data class WebdavTokenCreatedResponse(
     val token: WebdavTokenDto,
     val plaintext: String,
+)
+
+// ---- S3 storage console (authenticated management view) ----
+
+/**
+ * One top-level folder as the storage console sees it. [s3Valid] is false when
+ * the name breaks S3 bucket rules (uppercase, CJK, spaces, too short/long,
+ * IP-shaped, leading/trailing dot or hyphen); such folders still work in the
+ * app and over WebDAV but are invisible to S3 clients.
+ */
+@Serializable data class S3BucketDto(
+    val folderId: String,
+    val name: String,
+    val createdAt: Long,
+    val objectCount: Long,
+    val totalBytes: Long,
+    val s3Valid: Boolean,
+)
+
+@Serializable data class S3BucketsResponse(
+    val buckets: List<S3BucketDto> = emptyList(),
+    /** Live files sitting at the root, outside every bucket. S3 has no concept
+     *  of these; the console surfaces the count so the user knows they exist. */
+    val rootFileCount: Long = 0,
 )

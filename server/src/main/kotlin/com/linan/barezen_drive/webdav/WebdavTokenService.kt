@@ -41,6 +41,7 @@ data class WebdavTokenView(
     val readOnly: Boolean,
     val createdAt: Long,
     val lastUsedAt: Long,
+    val s3Ready: Boolean,
 )
 
 /**
@@ -74,7 +75,7 @@ object WebdavTokenService {
                 it[createdAt] = now
                 it[lastUsedAt] = 0L
             }
-            WebdavTokenView(id.toString(), label, readOnly, now, 0L)
+            WebdavTokenView(id.toString(), label, readOnly, now, 0L, s3Ready = true)
         }
         view to token
     }
@@ -91,6 +92,7 @@ object WebdavTokenService {
                         readOnly = row[WebdavTokensTable.readOnly],
                         createdAt = row[WebdavTokensTable.createdAt],
                         lastUsedAt = row[WebdavTokensTable.lastUsedAt],
+                        s3Ready = row[WebdavTokensTable.secretEnc] != null,
                     )
                 }
         }

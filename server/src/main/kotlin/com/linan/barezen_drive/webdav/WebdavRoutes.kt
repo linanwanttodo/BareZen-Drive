@@ -32,7 +32,7 @@ fun Route.webdavTokenRoutes() {
                 call.respond(
                     WebdavTokensResponse(
                         WebdavTokenService.list(call.userId).map {
-                            WebdavTokenDto(it.id, it.label, it.readOnly, it.createdAt, it.lastUsedAt)
+                            WebdavTokenDto(it.id, it.label, it.readOnly, it.createdAt, it.lastUsedAt, it.s3Ready)
                         },
                     ),
                 )
@@ -51,7 +51,7 @@ fun Route.webdavTokenRoutes() {
                 call.respond(
                     HttpStatusCode.Created,
                     WebdavTokenCreatedResponse(
-                        WebdavTokenDto(view.id, view.label, view.readOnly, view.createdAt, view.lastUsedAt),
+                        WebdavTokenDto(view.id, view.label, view.readOnly, view.createdAt, view.lastUsedAt, view.s3Ready),
                         plaintext,
                     ),
                 )

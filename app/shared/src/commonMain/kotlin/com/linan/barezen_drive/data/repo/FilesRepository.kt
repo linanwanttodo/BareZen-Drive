@@ -126,6 +126,11 @@ class FilesRepository(private val api: ApiClient) : UploadApi {
     suspend fun revokeWebdavToken(id: String): Result<Unit> =
         api.revokeWebdavToken(id)
 
+    // ---- S3 storage console ----
+
+    suspend fun s3Buckets(): Result<com.linan.barezen_drive.core.dto.S3BucketsResponse> =
+        api.s3Buckets()
+
     // ---- Public share access (no authentication) ----
 
     suspend fun sharedInfo(token: String): Result<SharedInfoResponse> = api.sharedInfo(token)

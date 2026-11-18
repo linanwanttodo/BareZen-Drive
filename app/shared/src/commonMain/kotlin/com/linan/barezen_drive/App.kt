@@ -46,6 +46,7 @@ import com.linan.barezen_drive.ui.screens.search.SearchScreen
 import com.linan.barezen_drive.ui.screens.settings.SettingsScreen
 import com.linan.barezen_drive.ui.screens.settings.WebUpdatePrompt
 import com.linan.barezen_drive.ui.screens.settings.WebdavTokensScreen
+import com.linan.barezen_drive.ui.screens.settings.StorageConsoleScreen
 import com.linan.barezen_drive.ui.screens.transfer.TransferCenterScreen
 import com.linan.barezen_drive.ui.screens.settings.UsersScreen
 import com.linan.barezen_drive.ui.screens.backup.SyncAlbumsScreen
@@ -108,6 +109,7 @@ private sealed interface Screen {
     data class Transfers(val lane: com.linan.barezen_drive.data.transfer.TransferLane) : Screen
     data object Users : Screen
     data object WebdavTokens : Screen
+    data object StorageConsole : Screen
     data object Settings : Screen
     data object Trash : Screen
     data object Archive : Screen
@@ -572,6 +574,7 @@ fun App() {
                 isOwner = isOwner,
                 onOpenShareManager = { push(Screen.ShareManager) },
                 onOpenWebdavTokens = { push(Screen.WebdavTokens) },
+                onOpenStorageConsole = { push(Screen.StorageConsole) },
                 onOpenTrash = { push(Screen.Trash) },
                 onOpenArchive = { push(Screen.Archive) },
                 onLogout = signOut,
@@ -587,6 +590,7 @@ fun App() {
             is Screen.OpenSource -> OpenSourceScreen(onBack = pop)
             is Screen.ShareManager -> ShareManagerScreen(repo = files, onBack = pop)
             is Screen.WebdavTokens -> WebdavTokensScreen(repo = files, onBack = pop)
+            is Screen.StorageConsole -> StorageConsoleScreen(repo = files, username = username, onBack = pop, onOpenKeys = { push(Screen.WebdavTokens) })
             is Screen.Trash -> TrashScreen(
                 repo = files,
                 thumbs = thumbs,

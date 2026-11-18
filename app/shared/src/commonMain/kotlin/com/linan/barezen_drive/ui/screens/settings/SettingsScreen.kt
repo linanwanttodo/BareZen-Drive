@@ -166,6 +166,7 @@ fun SettingsScreen(
     /** WebDAV app passwords. Defaults to a no-op so the screen still builds for
      *  callers that do not navigate; App.kt supplies the real push. */
     onOpenWebdavTokens: () -> Unit = {},
+    onOpenStorageConsole: () -> Unit = {},
     onOpenTrash: () -> Unit = {},
     onOpenArchive: () -> Unit = {},
     onLogout: () -> Unit,
@@ -393,9 +394,9 @@ fun SettingsScreen(
             GlassSectionHeader(LocalStrings.current.settingsServer)
             GlassCard {
                 SettingsRow(
-                    title = LocalStrings.current.webdavSettings,
-                    subtitle = LocalStrings.current.webdavSettingsSubtitle,
-                    onClick = onOpenWebdavTokens,
+                    title = LocalStrings.current.storageConsoleSettings,
+                    subtitle = LocalStrings.current.storageConsoleSettingsDesc,
+                    onClick = onOpenStorageConsole,
                     trailing = { Icon(Icons.Default.Cloud, contentDescription = null) },
                 )
                 if (isOwner) {

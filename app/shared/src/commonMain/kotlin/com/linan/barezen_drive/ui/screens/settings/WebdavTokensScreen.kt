@@ -361,6 +361,16 @@ private fun WebdavTokenRow(
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
+        if (!token.s3Ready) {
+            Text(
+                LocalStrings.current.consoleS3NotReady,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier
+                    .clip(MaterialTheme.shapes.small)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
         TextButton(onClick = onRevoke) {
             Text(LocalStrings.current.webdavTokenRevoke, color = MaterialTheme.colorScheme.error)
         }

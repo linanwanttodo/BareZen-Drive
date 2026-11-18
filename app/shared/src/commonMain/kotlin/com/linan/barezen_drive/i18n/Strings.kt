@@ -393,6 +393,63 @@ interface Strings {
     val s3AccessKeyCopy: String
     val s3AccessKeyCopied: String
 
+    /** S3 / WebDAV storage console. */
+    val storageConsoleTitle: String
+    val storageConsoleSettings: String
+    val storageConsoleSettingsDesc: String
+    val consoleTabConnection: String
+    val consoleTabBuckets: String
+    val consoleTabClients: String
+    val consoleEndpointS3: String
+    val consoleRegion: String
+    val consolePathStyle: String
+    val consolePathStyleRequired: String
+    val consoleEndpointDav: String
+    val consoleUsername: String
+    val consoleCopy: String
+    val consoleCopied: String
+    val consoleCopyFailed: String
+    fun consoleReachableMs(ms: Long): String
+    val consoleUnreachable: String
+    val consoleChecking: String
+    val consoleKeysTitle: String
+    fun consoleKeysSummary(total: Int, s3Ready: Int): String
+    val consoleManageKeys: String
+    val consoleNoKeys: String
+    val consoleBucketCreate: String
+    val consoleBucketNameLabel: String
+    val consoleBucketNameHint: String
+    val consoleNoBuckets: String
+    val consoleNoBucketsHint: String
+    fun consoleBucketStats(objects: Long, size: String): String
+    val consoleBucketBrowse: String
+    val consoleBucketCopyPath: String
+    val consoleBucketDelete: String
+    fun consoleBucketDeleteConfirm(name: String): String
+    val consoleBucketNotEmpty: String
+    val consoleBucketDeleted: String
+    val consoleBucketCreated: String
+    val consoleInvalidFolders: String
+    val consoleInvalidFoldersHint: String
+    fun consoleRootFiles(count: Long): String
+    val bucketNameTooShort: String
+    val bucketNameTooLong: String
+    val bucketNameUppercase: String
+    val bucketNameInvalidChars: String
+    val bucketNameBadEdge: String
+    val bucketNameDoubleDot: String
+    val bucketNameIpShape: String
+    val consoleClientLabel: String
+    val consoleKeyLabel: String
+    val consoleBucketLabel: String
+    val consoleBucketNone: String
+    val consoleConfigCopy: String
+    val consoleConfigCopied: String
+    val consoleSecretNote: String
+    val consoleS3NotReady: String
+    val consoleBrowseEmpty: String
+    val consoleBrowseBack: String
+
     /** Notification channels and worker-side strings (non-Compose callers read
      *  these through [com.linan.barezen_drive.i18n.I18n.strings]). */
     val notifyChannelBackup: String
