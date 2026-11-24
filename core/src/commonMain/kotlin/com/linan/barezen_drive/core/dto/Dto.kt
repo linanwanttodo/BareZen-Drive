@@ -182,7 +182,7 @@ data class ContentsResponse(
     /** 0 when the mount has not authenticated yet, so the UI can say "never". */
     val lastUsedAt: Long = 0,
     /** Whether this credential can sign S3 requests (has a decryptable secret copy). */
-    val s3Ready: Boolean = true,
+    val s3Ready: Boolean = false,
 )
 
 @Serializable data class WebdavTokensResponse(val tokens: List<WebdavTokenDto> = emptyList())
@@ -214,6 +214,8 @@ data class ContentsResponse(
     val totalBytes: Long,
     val s3Valid: Boolean,
 )
+
+@Serializable data class CreateS3BucketRequest(val name: String)
 
 @Serializable data class S3BucketsResponse(
     val buckets: List<S3BucketDto> = emptyList(),

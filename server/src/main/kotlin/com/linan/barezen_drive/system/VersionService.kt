@@ -14,6 +14,11 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
+
+private const val DAILY_REFRESH_HOUR = 3
 
 /**
  * Resolves the newest upstream release and answers GET /api/version.
@@ -27,14 +32,13 @@ import java.time.Duration
  *
  * The lookup is done once per server instead of in each client, so a
  * self-hosted instance behind a restrictive network reports "unknown" rather
- * than making every client try and fail. The result is cached for
- * [CACHE_TTL_MS]; any failure degrades to latestVersion = null and is held
- * off for [FAIL_COOLDOWN_MS] so a broken upstream cannot be re-tried on
- * every public request.
+ * than making every client try and fail. A successful result is cached until
+ * the next 03:00 in the server's local timezone; any failure degrades to
+ * latestVersion = null and is held off for [FAIL_COOLDOWN_MS] so a broken
+ * upstream cannot be re-tried on every public request.
  */
 object VersionService {
 
-    private const val CACHE_TTL_MS = 10 * 60 * 1000L
     private const val FAIL_COOLDOWN_MS = 60 * 1000L
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -55,16 +59,17 @@ object VersionService {
     )
 
     @Volatile private var cached: Release? = null
-    @Volatile private var cachedAtMs: Long = 0
+    @Volatile private var refreshAtMs: Long = 0
     @Volatile private var failedAtMs: Long = 0
     private val cacheLock = Any()
+    private val refreshLock = Any()
 
     /** Test seam: forget any cached release. Called from :server tests. */
     @Suppress("UnusedSymbol")
     fun resetCache() {
         synchronized(cacheLock) {
             cached = null
-            cachedAtMs = 0
+            refreshAtMs = 0
             failedAtMs = 0
         }
     }
@@ -85,25 +90,27 @@ object VersionService {
     }
 
     private fun cachedRelease(repoUrl: String, manifestUrl: String?, githubToken: String?): Release? {
-        val now = System.currentTimeMillis()
-        synchronized(cacheLock) {
-            cached?.let { if (now - cachedAtMs < CACHE_TTL_MS) return it }
-            // Negative cache: after a failed lookup, do not let every public
-            // GET /api/version block on the 6s upstream timeout again.
-            if (now - failedAtMs < FAIL_COOLDOWN_MS) return null
+        synchronized(refreshLock) {
+            val now = System.currentTimeMillis()
+            synchronized(cacheLock) {
+                cached?.let { if (now < refreshAtMs) return it }
+                // Negative cache: after a failed lookup, do not let every public
+                // GET /api/version block on the 6s upstream timeout again.
+                if (now - failedAtMs < FAIL_COOLDOWN_MS) return null
+            }
+            val fetched = (manifestUrl?.let { fetchManifest(it, githubToken) }
+                ?: fetchLatestRelease(repoUrl, githubToken))
+            if (fetched == null) {
+                synchronized(cacheLock) { failedAtMs = now }
+                return null
+            }
+            synchronized(cacheLock) {
+                cached = fetched
+                refreshAtMs = nextDailyRefreshAt(now)
+                failedAtMs = 0
+            }
+            return fetched
         }
-        val fetched = (manifestUrl?.let { fetchManifest(it, githubToken) }
-            ?: fetchLatestRelease(repoUrl, githubToken))
-        if (fetched == null) {
-            synchronized(cacheLock) { failedAtMs = now }
-            return null
-        }
-        synchronized(cacheLock) {
-            cached = fetched
-            cachedAtMs = now
-            failedAtMs = 0
-        }
-        return fetched
     }
 
     /** Reads the release manifest (update.json). */
@@ -155,6 +162,13 @@ object VersionService {
         if (parts.size < 2) return null
         return "https://api.github.com/repos/${parts[0]}/${parts[1]}/releases/latest"
     }
+}
+
+internal fun nextDailyRefreshAt(fetchedAtMs: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
+    val fetched = ZonedDateTime.ofInstant(Instant.ofEpochMilli(fetchedAtMs), zone)
+    var next = fetched.withHour(DAILY_REFRESH_HOUR).withMinute(0).withSecond(0).withNano(0)
+    if (!next.isAfter(fetched)) next = next.plusDays(1)
+    return next.toInstant().toEpochMilli()
 }
 
 /**

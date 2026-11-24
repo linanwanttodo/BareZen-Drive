@@ -112,32 +112,36 @@ internal suspend fun ApplicationCall.s3ListBuckets(token: WebdavTokenRecord) = w
 }
 
 private suspend fun ApplicationCall.s3CreateBucket(token: WebdavTokenRecord, name: String) {
-    if (name.lowercase() in S3_RESERVED_BUCKETS || !s3BucketNameOk(name)) {
+    createS3Bucket(token.userId, name)
+    response.header(HttpHeaders.Location, "/$name")
+    respondText("", ContentType.Application.Xml, HttpStatusCode.OK)
+}
+
+internal suspend fun createS3Bucket(userId: UUID, name: String) {
+    if (!s3BucketNameOk(name)) {
         throw S3Exception("InvalidBucketName", HttpStatusCode.BadRequest, "桶名非法")
     }
     withContext(Dispatchers.IO) {
         transaction(DatabaseFactory.db) {
             val folder = FoldersTable.select(FoldersTable.id).where {
-                (FoldersTable.user eq token.userId) and (FoldersTable.parent.isNull()) and (FoldersTable.name eq name)
+                (FoldersTable.user eq userId) and (FoldersTable.parent.isNull()) and (FoldersTable.name eq name)
             }.firstOrNull()
             if (folder != null) {
                 throw S3Exception("BucketAlreadyOwnedByYou", HttpStatusCode.Conflict, "桶已存在")
             }
             val file = FilesTable.select(FilesTable.id).where {
-                (FilesTable.user eq token.userId) and (FilesTable.folder.isNull()) and
+                (FilesTable.user eq userId) and (FilesTable.folder.isNull()) and
                     (FilesTable.name eq name) and (FilesTable.deletedAt eq 0L)
             }.firstOrNull()
             if (file != null) {
                 throw S3Exception("BucketAlreadyExists", HttpStatusCode.Conflict, "同名的是文件")
             }
             FoldersTable.insert {
-                it[FoldersTable.id] = UUID.randomUUID(); it[FoldersTable.user] = token.userId
+                it[FoldersTable.id] = UUID.randomUUID(); it[FoldersTable.user] = userId
                 it[FoldersTable.parent] = null; it[FoldersTable.name] = name
             }
         }
     }
-    response.header(HttpHeaders.Location, "/$name")
-    respondText("", ContentType.Application.Xml, HttpStatusCode.OK)
 }
 
 private suspend fun ApplicationCall.s3HeadBucket(token: WebdavTokenRecord, name: String) {
@@ -149,32 +153,42 @@ private suspend fun ApplicationCall.s3HeadBucket(token: WebdavTokenRecord, name:
 private suspend fun ApplicationCall.s3DeleteBucket(token: WebdavTokenRecord, name: String) {
     val id = s3RequireBucket(token.userId, name)
     val storage = StorageRegistry.defaultProvider() ?: error("no storage backend registered")
-    val keys = withContext(Dispatchers.IO) {
-        transaction(DatabaseFactory.db) {
-            val subtree = FileTree.subtreeWithRoot(token.userId, id)
-            // 任何状态的文件（含回收站）都算非空；上传会话只算未完成的——已完成/
-            // 已取消的行不再往目录里写东西，算进去会让刚 PUT 过的桶 24h 内删不掉。
-            for (batch in subtree.chunked(500)) {
-                val fileOp = SqlExpressionBuilder.run { FilesTable.folder inList batch }
-                if (FilesTable.select(FilesTable.id).where { fileOp }.any()) {
-                    throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
-                }
-                val sessionOp = SqlExpressionBuilder.run {
-                    (UploadSessionsTable.folder inList batch) and (UploadSessionsTable.status eq "open")
-                }
-                if (UploadSessionsTable.select(UploadSessionsTable.id).where { sessionOp }.any()) {
-                    throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
-                }
-            }
-            if (subtree.size > 1) {
-                throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
-            }
-            // 已完成的会话行仍按 FK 指着桶：走既有的级联删除，不在这里写第二份。
-            FileService.deleteFolder(token.userId, id).blobKeys
-        }
-    }
+    val keys = deleteEmptyS3Bucket(token.userId, id)
     if (keys.isNotEmpty()) deleteStoredBlobs(storage, keys)
     respondText("", ContentType.Application.Xml, HttpStatusCode.NoContent)
+}
+
+internal suspend fun deleteEmptyS3Bucket(userId: UUID, id: UUID): List<String> = withContext(Dispatchers.IO) {
+    transaction(DatabaseFactory.db) {
+        // The folder row is the FK target for files and upload sessions. Lock it
+        // before the emptiness checks so a concurrent upload either commits first
+        // and is seen here, or waits and fails instead of being deleted mid-check.
+        val folder = FoldersTable.selectAll().where { (FoldersTable.id eq id) and (FoldersTable.user eq userId) }
+            .forUpdate().singleOrNull() ?: throw S3Exception("NoSuchBucket", HttpStatusCode.NotFound, "桶不存在")
+        if (folder[FoldersTable.parent] != null || !s3BucketNameOk(folder[FoldersTable.name])) {
+            throw S3Exception("NoSuchBucket", HttpStatusCode.NotFound, "桶不存在")
+        }
+        val subtree = FileTree.subtreeWithRoot(userId, id)
+        // 任何状态的文件（含回收站）都算非空；上传会话只算未完成的——已完成/
+        // 已取消的行不再往目录里写东西，算进去会让刚 PUT 过的桶 24h 内删不掉。
+        for (batch in subtree.chunked(500)) {
+            val fileOp = SqlExpressionBuilder.run { FilesTable.folder inList batch }
+            if (FilesTable.select(FilesTable.id).where { fileOp }.any()) {
+                throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
+            }
+            val sessionOp = SqlExpressionBuilder.run {
+                (UploadSessionsTable.folder inList batch) and (UploadSessionsTable.status eq "open")
+            }
+            if (UploadSessionsTable.select(UploadSessionsTable.id).where { sessionOp }.any()) {
+                throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
+            }
+        }
+        if (subtree.size > 1) {
+            throw S3Exception("BucketNotEmpty", HttpStatusCode.Conflict, "桶非空")
+        }
+        // 已完成的会话行仍按 FK 指着桶：走既有的级联删除，不在这里写第二份。
+        FileService.deleteFolder(userId, id).blobKeys
+    }
 }
 
 private suspend fun ApplicationCall.s3BucketLocation(token: WebdavTokenRecord, name: String) {

@@ -1,14 +1,23 @@
 package com.linan.barezen_drive.s3
 
+import com.linan.barezen_drive.api.ApiException
+import com.linan.barezen_drive.api.toUuidOrBadRequest
 import com.linan.barezen_drive.auth.userId
+import com.linan.barezen_drive.core.dto.CreateS3BucketRequest
 import com.linan.barezen_drive.core.dto.S3BucketDto
 import com.linan.barezen_drive.core.dto.S3BucketsResponse
 import com.linan.barezen_drive.db.DatabaseFactory
 import com.linan.barezen_drive.db.FilesTable
 import com.linan.barezen_drive.db.FoldersTable
+import com.linan.barezen_drive.files.deleteStoredBlobs
+import com.linan.barezen_drive.storage.StorageProvider
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,8 +39,27 @@ import java.util.UUID
  * that FileTree uses for deletion, so a deep tree does not turn into a burst of
  * round trips.
  */
-fun Route.s3ConsoleRoutes() {
+fun Route.s3ConsoleRoutes(storage: StorageProvider) {
     route("/api/s3") {
+        post("/buckets") {
+            val req = call.receive<CreateS3BucketRequest>()
+            try {
+                createS3Bucket(call.userId, req.name)
+            } catch (e: S3Exception) {
+                throw ApiException(e.code, e.status, e.message)
+            }
+            call.respond(HttpStatusCode.Created)
+        }
+        delete("/buckets/{id}") {
+            val id = call.parameters["id"]!!.toUuidOrBadRequest()
+            val keys = try {
+                deleteEmptyS3Bucket(call.userId, id)
+            } catch (e: S3Exception) {
+                throw ApiException(e.code, e.status, e.message)
+            }
+            deleteStoredBlobs(storage, keys)
+            call.respond(HttpStatusCode.NoContent)
+        }
         get("/buckets") {
             val uid = call.userId
             val response = withContext(Dispatchers.IO) {

@@ -130,6 +130,8 @@ class FilesRepository(private val api: ApiClient) : UploadApi {
 
     suspend fun s3Buckets(): Result<com.linan.barezen_drive.core.dto.S3BucketsResponse> =
         api.s3Buckets()
+    suspend fun createS3Bucket(name: String): Result<Unit> = api.createS3Bucket(name)
+    suspend fun deleteS3Bucket(id: String): Result<Unit> = api.deleteS3Bucket(id)
 
     // ---- Public share access (no authentication) ----
 

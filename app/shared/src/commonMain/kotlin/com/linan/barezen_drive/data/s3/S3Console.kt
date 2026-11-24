@@ -1,5 +1,9 @@
 package com.linan.barezen_drive.data.s3
 
+import io.ktor.http.Url
+
+private val S3_RESERVED_BUCKET_NAMES = setOf("api", "dav", "health", "readyz")
+
 /**
  * S3 bucket-name dialect, mirrored from the server's S3Names.s3BucketNameOk.
  * The server remains the authority; this copy lets the create-bucket dialog
@@ -7,6 +11,7 @@ package com.linan.barezen_drive.data.s3
  * existing folder is not a bucket.
  */
 fun s3BucketNameOk(name: String): Boolean {
+    if (name.lowercase() in S3_RESERVED_BUCKET_NAMES) return false
     if (name.length !in 3..63) return false
     if (!name.all { it in 'a'..'z' || it in '0'..'9' || it == '.' || it == '-' }) return false
     if (!name.first().isLetterOrDigit() || !name.last().isLetterOrDigit()) return false
@@ -19,6 +24,7 @@ fun s3BucketNameOk(name: String): Boolean {
 fun s3BucketNameProblem(name: String): BucketNameProblem? {
     if (name.length < 3) return BucketNameProblem.TOO_SHORT
     if (name.length > 63) return BucketNameProblem.TOO_LONG
+    if (name.lowercase() in S3_RESERVED_BUCKET_NAMES) return BucketNameProblem.RESERVED
     if (name.any { it.isUpperCase() }) return BucketNameProblem.UPPERCASE
     if (name.any { !it.isAsciiBucketChar() }) return BucketNameProblem.INVALID_CHARS
     if (!name.first().isLetterOrDigit() || !name.last().isLetterOrDigit()) return BucketNameProblem.BAD_EDGE
@@ -30,7 +36,10 @@ fun s3BucketNameProblem(name: String): BucketNameProblem? {
 private fun Char.isAsciiBucketChar(): Boolean =
     this in 'a'..'z' || this in '0'..'9' || this == '.' || this == '-'
 
-enum class BucketNameProblem { TOO_SHORT, TOO_LONG, UPPERCASE, INVALID_CHARS, BAD_EDGE, DOUBLE_DOT, IP_SHAPE }
+enum class BucketNameProblem { TOO_SHORT, TOO_LONG, UPPERCASE, INVALID_CHARS, BAD_EDGE, DOUBLE_DOT, IP_SHAPE, RESERVED }
+
+fun s3ObjectKey(bucket: String, folders: List<String>, name: String): String =
+    (folders + name).joinToString("/", prefix = "$bucket/")
 
 /** Clients the console can generate a ready-to-paste configuration for. */
 enum class S3Client(val label: String) {
@@ -73,7 +82,7 @@ fun buildClientConfig(
         }
         S3Client.AWS_CLI -> buildString {
             appendLine("aws configure set aws_access_key_id $accessKey")
-            appendLine("aws configure set aws_secret_access_key <Secret Key>")
+            appendLine("aws configure set aws_secret_access_key '<Secret Key>'")
             appendLine("aws configure set region us-east-1")
             appendLine("aws --endpoint-url $ep s3 ls")
             appendLine("aws --endpoint-url $ep s3 cp ./file.bin s3://$b/file.bin")
@@ -85,16 +94,16 @@ fun buildClientConfig(
         }
         S3Client.RESTIC -> buildString {
             appendLine("export AWS_ACCESS_KEY_ID=$accessKey")
-            appendLine("export AWS_SECRET_ACCESS_KEY=<Secret Key>")
-            appendLine("restic -o s3.force-path-style=true -r s3:$ep/$b init")
-            appendLine("restic -o s3.force-path-style=true -r s3:$ep/$b backup ~/Documents")
+            appendLine("export AWS_SECRET_ACCESS_KEY='<Secret Key>'")
+            appendLine("restic -o s3.bucket-lookup=path -r s3:$ep/$b init")
+            appendLine("restic -o s3.bucket-lookup=path -r s3:$ep/$b backup ~/Documents")
         }
         S3Client.WINDOWS -> buildString {
             appendLine("WebDAV: $ep/dav")
             appendLine("Username: <account username>")
             appendLine("Password: <App Password>")
             appendLine()
-            appendLine("net use Z: \"$ep/dav\" /user:<account username> <App Password>")
+            appendLine("net use Z: \"$ep/dav\" /user:\"<account username>\" \"<App Password>\"")
         }
         S3Client.MACOS -> buildString {
             appendLine("Finder > Go > Connect to Server")
@@ -103,9 +112,12 @@ fun buildClientConfig(
             appendLine("Password: <App Password>")
         }
         S3Client.CYBERDUCK -> buildString {
+            val endpointUrl = Url(ep)
+            val port = endpointUrl.port.takeIf { it != 0 }
+                ?: if (ep.startsWith("https")) 443 else 80
             appendLine("Protocol: S3 (Amazon Simple Storage Service)")
-            appendLine("Server: ${ep.removePrefix("https://").removePrefix("http://")}")
-            appendLine("Port: ${if (ep.startsWith("https")) 443 else 80}")
+            appendLine("Server: ${endpointUrl.host}")
+            appendLine("Port: $port")
             appendLine("Access Key: $accessKey")
             appendLine("Secret Key: <Secret Key>")
             appendLine("Path style: enabled")

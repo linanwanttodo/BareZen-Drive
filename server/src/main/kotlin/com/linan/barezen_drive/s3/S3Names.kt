@@ -27,6 +27,7 @@ private const val MAX_SEGMENT_CHARS = 255
 
 /** spec §5.2 的桶名方言。名字不合法的顶层文件夹在 S3 侧不存在。 */
 internal fun s3BucketNameOk(name: String): Boolean {
+    if (name.lowercase() in S3_RESERVED_BUCKETS) return false
     if (name.length !in 3..63) return false
     if (!BUCKET_CHARS.matches(name)) return false
     if (!name.first().isLetterOrDigit() || !name.last().isLetterOrDigit()) return false

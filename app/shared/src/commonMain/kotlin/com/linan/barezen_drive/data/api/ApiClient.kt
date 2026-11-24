@@ -34,6 +34,7 @@ import com.linan.barezen_drive.core.dto.RegistrationSettingRequest
 import com.linan.barezen_drive.core.dto.AdminUsersResponse
 import com.linan.barezen_drive.core.dto.RegistrationStatusDto
 import com.linan.barezen_drive.core.dto.UserDto
+import com.linan.barezen_drive.core.dto.CreateS3BucketRequest
 import com.linan.barezen_drive.core.dto.S3BucketsResponse
 import com.linan.barezen_drive.core.dto.WebdavTokenCreateRequest
 import com.linan.barezen_drive.core.dto.WebdavTokenCreatedResponse
@@ -575,6 +576,17 @@ class ApiClient(
     /** Every top-level folder with bucket validity and recursive stats. */
     suspend fun s3Buckets(): Result<S3BucketsResponse> = runApi {
         http.get("$baseUrl/api/s3/buckets").body()
+    }
+
+    suspend fun createS3Bucket(name: String): Result<Unit> = runApi {
+        http.post("$baseUrl/api/s3/buckets") {
+            contentType(ContentType.Application.Json)
+            setBody(CreateS3BucketRequest(name))
+        }
+    }
+
+    suspend fun deleteS3Bucket(id: String): Result<Unit> = runApi {
+        http.delete("$baseUrl/api/s3/buckets/$id")
     }
 
     // ---- Public share endpoints (no auth; Bearer stays absent when no token) ----

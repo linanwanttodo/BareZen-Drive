@@ -381,7 +381,7 @@ fun Application.module(cfg: AppConfig, storage: StorageProvider) {
             versionRoutes(storage)
             systemRoutes(cfg.storageDir)
             shareOwnerRoutes()
-            s3ConsoleRoutes()
+            s3ConsoleRoutes(storage)
         }
         // Public share endpoints must stay outside any authenticate block:
         // share visitors have no account.

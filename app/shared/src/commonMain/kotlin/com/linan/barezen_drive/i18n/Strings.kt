@@ -439,6 +439,7 @@ interface Strings {
     val bucketNameBadEdge: String
     val bucketNameDoubleDot: String
     val bucketNameIpShape: String
+    val bucketNameReserved: String
     val consoleClientLabel: String
     val consoleKeyLabel: String
     val consoleBucketLabel: String

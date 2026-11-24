@@ -219,11 +219,13 @@ class S3BucketTest {
         s3("PUT", "/good-bucket")
         s3("PUT", "/another-bucket")
         transaction(DatabaseFactory.db) {
-            FoldersTable.insert {
-                it[FoldersTable.id] = UUID.randomUUID()
-                it[FoldersTable.user] = UUID.fromString(userId)
-                it[FoldersTable.parent] = null
-                it[FoldersTable.name] = "中文文件夹"
+            for (name in listOf("中文文件夹", "api")) {
+                FoldersTable.insert {
+                    it[FoldersTable.id] = UUID.randomUUID()
+                    it[FoldersTable.user] = UUID.fromString(userId)
+                    it[FoldersTable.parent] = null
+                    it[FoldersTable.name] = name
+                }
             }
         }
         val r = s3("GET", "/")
@@ -233,6 +235,7 @@ class S3BucketTest {
         assertTrue(body.contains("<Name>good-bucket</Name>"), body)
         assertTrue(body.indexOf("another-bucket") < body.indexOf("good-bucket"), "桶必须按名字升序: $body")
         assertFalse(body.contains("中文文件夹"), body)
+        assertFalse(body.contains("<Name>api</Name>"), body)
         assertTrue(body.contains("ListAllMyBucketsResult"), body)
         assertTrue(body.contains("<DisplayName>user1</DisplayName>"), body)
         assertTrue(body.contains("<CreationDate>"), body)

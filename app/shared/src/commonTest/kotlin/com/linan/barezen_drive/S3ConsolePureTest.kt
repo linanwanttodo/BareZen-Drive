@@ -1,10 +1,13 @@
 package com.linan.barezen_drive
 
+import com.linan.barezen_drive.core.dto.WebdavTokenDto
 import com.linan.barezen_drive.data.s3.BucketNameProblem
 import com.linan.barezen_drive.data.s3.S3Client
 import com.linan.barezen_drive.data.s3.buildClientConfig
 import com.linan.barezen_drive.data.s3.s3BucketNameOk
 import com.linan.barezen_drive.data.s3.s3BucketNameProblem
+import com.linan.barezen_drive.data.s3.s3ObjectKey
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -35,6 +38,17 @@ class S3ConsolePureTest {
         assertFalse(s3BucketNameOk("double..dot"))
         assertFalse(s3BucketNameOk("192.168.1.1"))
         assertFalse(s3BucketNameOk(""))
+        for (name in listOf("api", "dav", "health", "readyz")) {
+            assertFalse(s3BucketNameOk(name), "$name is reserved by the server")
+        }
+    }
+
+    @Test
+    fun missingS3ReadyFlagMeansOldServerWithoutS3() {
+        val token = Json.decodeFromString<WebdavTokenDto>(
+            """{"id":"t","label":"old","readOnly":false,"createdAt":1}""",
+        )
+        assertFalse(token.s3Ready)
     }
 
     @Test
@@ -46,6 +60,7 @@ class S3ConsolePureTest {
         assertEquals(BucketNameProblem.BAD_EDGE, s3BucketNameProblem("-lead"))
         assertEquals(BucketNameProblem.DOUBLE_DOT, s3BucketNameProblem("a..b"))
         assertEquals(BucketNameProblem.IP_SHAPE, s3BucketNameProblem("10.0.0.1"))
+        assertEquals(BucketNameProblem.RESERVED, s3BucketNameProblem("api"))
         assertNull(s3BucketNameProblem("valid-name"))
     }
 
@@ -80,8 +95,19 @@ class S3ConsolePureTest {
     @Test
     fun resticForcesPathStyle() {
         val cfg = buildClientConfig(S3Client.RESTIC, "https://d.co", "ak", bucket = "backup")
-        assertTrue(cfg.contains("s3.force-path-style=true"))
+        assertTrue(cfg.contains("s3.bucket-lookup=path"))
+        assertFalse(cfg.contains("s3.force-path-style=true"))
         assertTrue(cfg.contains("s3:https://d.co/backup"))
+    }
+
+    @Test
+    fun shellSnippetsQuotePlaceholderCredentials() {
+        val aws = buildClientConfig(S3Client.AWS_CLI, "https://d.co", "ak")
+        assertTrue(aws.contains("aws configure set aws_secret_access_key '<Secret Key>'"))
+        val restic = buildClientConfig(S3Client.RESTIC, "https://d.co", "ak", bucket = "backup")
+        assertTrue(restic.contains("export AWS_SECRET_ACCESS_KEY='<Secret Key>'"))
+        val windows = buildClientConfig(S3Client.WINDOWS, "https://d.co", "ak")
+        assertTrue(windows.contains("/user:\"<account username>\" \"<App Password>\""))
     }
 
     @Test
@@ -104,6 +130,19 @@ class S3ConsolePureTest {
         assertTrue(cfg.contains("Server: d.co"))
         assertTrue(cfg.contains("Port: 443"))
         assertTrue(cfg.contains("Access Key: ak"))
+    }
+
+    @Test
+    fun cyberduckKeepsExplicitEndpointPort() {
+        val cfg = buildClientConfig(S3Client.CYBERDUCK, "https://drive.example.com:8443", "ak")
+        assertTrue(cfg.contains("Server: drive.example.com"))
+        assertTrue(cfg.contains("Port: 8443"))
+    }
+
+    @Test
+    fun s3ObjectKeyUsesBucketAndNestedFolders() {
+        assertEquals("photos/2026/trip/image.jpg", s3ObjectKey("photos", listOf("2026", "trip"), "image.jpg"))
+        assertEquals("photos/readme.txt", s3ObjectKey("photos", emptyList(), "readme.txt"))
     }
 
     @Test
