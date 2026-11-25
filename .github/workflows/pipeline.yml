@@ -56,6 +56,7 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       is_release: ${{ steps.resolve.outputs.is_release }}
+      ios_enabled: ${{ steps.resolve.outputs.ios_enabled }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +91,11 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "is_release=$release" >> "$GITHUB_OUTPUT"
+          if grep -Eq '^[[:space:]]+ios[A-Za-z0-9_]*[[:space:]]*\(' app/shared/build.gradle.kts; then
+            echo "ios_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ios_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "Using version $v (release: $release)"
 
   test:
@@ -132,6 +138,8 @@ jobs:
         run: ./gradlew :app:shared:testAndroidHostTest --console=plain
       - name: Web compile gate
         run: ./gradlew :app:shared:compileKotlinWasmJs --console=plain
+      - name: Web tests
+        run: ./gradlew :app:shared:wasmJsBrowserTest --console=plain
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -499,48 +507,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Desktop (JVM) is not enabled yet: the target needs its full jvm actual set.
-  # The job probes for it and skips cleanly until then; it never blocks a
-  # release. When enabled, add it to the release `needs` to ship its packages.
-  desktop:
-    name: Desktop packages (reserved)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: [ version, test ]
-    if: github.event_name != 'pull_request'
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Package when the desktop target is enabled
-        run: |
-          if ./gradlew :app:desktopApp:tasks --all --console=plain 2>/dev/null | grep -q "packageDeb"; then
-            ./gradlew :app:desktopApp:packageDeb :app:desktopApp:packageRpm \
-              -Pversion=${{ needs.version.outputs.version }} --console=plain
-            mkdir -p dist
-            find app/desktopApp/build/compose/binaries -type f \( -name '*.deb' -o -name '*.rpm' \) -exec cp {} dist/ \;
-          else
-            echo "Desktop target not enabled; no desktop package produced."
-          fi
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: desktop-dist
-          path: dist/*
-          if-no-files-found: ignore
-
-  # iOS builds only on macOS and needs the Apple targets plus a Darwin engine.
-  # Reserved and non-blocking for the same reason as desktop.
+  # iOS builds only on macOS and only when an Apple target is declared.
   ios:
     name: iOS app (macOS, reserved)
     runs-on: macos-latest
     timeout-minutes: 25
     needs: [ version, test ]
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && needs.version.outputs.ios_enabled == 'true'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
