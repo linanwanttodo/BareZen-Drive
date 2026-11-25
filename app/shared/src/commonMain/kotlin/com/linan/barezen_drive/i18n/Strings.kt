@@ -322,6 +322,43 @@ interface Strings {
     val transferEmptyHint: String
     val actionGoUpload: String
     val deletedForever: String
+    val tabEvidence: String
+    val evidenceSetPassword: String
+    val evidenceUnlock: String
+    val evidencePasswordHint: String
+    val evidencePasswordTooShort: String
+    val evidencePasswordMismatch: String
+    val evidencePasswordLostWarning: String
+    val evidenceRecoverCloud: String
+    val evidenceAudio: String
+    val evidenceVideo: String
+    val evidenceFrontCamera: String
+    val evidenceBackCamera: String
+    val evidenceStop: String
+    val evidenceLock: String
+    val evidenceNoSessions: String
+    val evidenceRecording: String
+    val evidenceUploading: String
+    val evidenceWaitingNetwork: String
+    val evidenceUploadFailed: String
+    val evidenceAllUploaded: String
+    val evidenceSegments: String
+    val evidencePlay: String
+    val evidenceExportPlaintext: String
+    val evidenceExportWarning: String
+    val evidenceChangePassword: String
+    val evidenceDeleteVault: String
+    val evidenceDeleteVaultWarning: String
+    val evidenceDeleteLocal: String
+    val evidenceRestore: String
+    val evidenceCooldown: String
+    val evidencePermissionRequired: String
+    val evidenceServiceStartDenied: String
+    val evidenceLowStorage: String
+    val evidenceDecryptFailed: String
+    val evidenceCloudManifestInvalid: String
+    val evidenceVaultNotFound: String
+    val evidenceReadOnly: String
     val trashEmptied: String
     val today: String
     val yesterday: String

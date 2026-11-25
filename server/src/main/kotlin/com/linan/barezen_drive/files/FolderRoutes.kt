@@ -21,7 +21,13 @@ fun Route.folderRoutes(storage: StorageProvider) {
             val cursor = call.request.queryParameters["cursor"]
             call.respond(
                 withContext(Dispatchers.IO) {
-                    FileService.contents(call.userId, call.parameters["id"]!!, limit, cursor)
+                    FileService.contents(
+                        call.userId,
+                        call.parameters["id"]!!,
+                        limit,
+                        cursor,
+                        includeEvidence = call.request.queryParameters["includeEvidence"]?.equals("true", ignoreCase = true) == true,
+                    )
                 },
             )
         }

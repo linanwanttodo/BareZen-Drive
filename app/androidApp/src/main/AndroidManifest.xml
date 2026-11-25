@@ -16,6 +16,11 @@
          the background-service restrictions on Android 8-14. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 
     <!-- Cleartext is deliberate: this is a self-hosted client and the server
          address is whatever the user typed (plain-http LAN hosts are a first
@@ -49,6 +54,11 @@
                 android:name="androidx.work.impl.foreground.SystemForegroundService"
                 android:foregroundServiceType="dataSync"
                 tools:node="merge" />
+
+        <service
+                android:name="com.linan.barezen_drive.evidence.service.EvidenceRecordingService"
+                android:exported="false"
+                android:foregroundServiceType="camera|microphone" />
 
         <provider
                 android:name="androidx.core.content.FileProvider"

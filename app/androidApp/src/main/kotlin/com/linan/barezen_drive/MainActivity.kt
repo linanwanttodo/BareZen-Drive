@@ -29,6 +29,16 @@ class MainActivity : ComponentActivity() {
     private val requestMediaRead =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
+    override fun onResume() {
+        super.onResume()
+        AndroidContext.setActivity(this)
+    }
+
+    override fun onPause() {
+        if (AndroidContext.activity === this) AndroidContext.setActivity(null)
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)

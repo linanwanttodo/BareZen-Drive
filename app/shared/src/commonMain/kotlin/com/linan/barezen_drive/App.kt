@@ -76,6 +76,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import com.linan.barezen_drive.platform.isWebPlatform
+import com.linan.barezen_drive.platform.evidencePlatform
 import com.linan.barezen_drive.platform.initialShareToken
 import com.linan.barezen_drive.ui.screens.share.ShareScreen
 import com.linan.barezen_drive.ui.screens.share.ShareManagerScreen
@@ -501,6 +502,15 @@ fun App() {
                             onPreview = openPreview,
                             avatar = tabAvatar,
                         )
+                        MainTab.EVIDENCE -> if (!signedIn) NotSignedInPane(onLogin = openLogin) else {
+                            val platform = evidencePlatform()
+                            if (platform != null) platform.SecureContent {
+                                com.linan.barezen_drive.ui.screens.evidence.EvidenceScreen(
+                                    platform = platform,
+                                    player = { request, close -> platform.Player(request, close) },
+                                )
+                            }
+                        }
                     }
                 }
                 // Registered after the shell so folder-back wins while enabled.

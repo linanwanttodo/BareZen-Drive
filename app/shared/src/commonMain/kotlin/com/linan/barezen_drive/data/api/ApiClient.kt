@@ -315,10 +315,11 @@ class ApiClient(
     }
 
     /** `limit` omitted = the whole folder (used by the album's folder lookups). */
-    suspend fun contents(folderId: String, limit: Int? = null, cursor: String? = null): Result<ContentsResponse> = runApi {
+    suspend fun contents(folderId: String, limit: Int? = null, cursor: String? = null, includeEvidence: Boolean = false): Result<ContentsResponse> = runApi {
         http.get("$baseUrl/api/folders/$folderId/contents") {
             limit?.let { parameter("limit", it) }
             cursor?.let { parameter("cursor", it) }
+            if (includeEvidence) parameter("includeEvidence", true)
         }.body()
     }
 

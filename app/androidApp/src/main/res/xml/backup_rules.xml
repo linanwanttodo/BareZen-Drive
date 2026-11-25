@@ -5,4 +5,6 @@
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="barezen_prefs.xml" />
+    <exclude domain="database" path="barezen_evidence.db" />
+    <exclude domain="file" path="recordings/" />
 </full-backup-content>

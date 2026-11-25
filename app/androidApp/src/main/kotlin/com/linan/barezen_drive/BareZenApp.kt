@@ -8,6 +8,12 @@ import com.linan.barezen_drive.data.local.AppPreferences
 import com.linan.barezen_drive.platform.MediaSync
 import com.linan.barezen_drive.platform.TransferNotifier
 import com.linan.barezen_drive.update.UpdateAuto
+import com.linan.barezen_drive.evidence.EvidenceRecovery
+import com.linan.barezen_drive.evidence.EvidenceUploadScheduler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Process-wide entry that must run even when the app is cold-started by a
@@ -29,6 +35,10 @@ class BareZenApp : Application() {
         // Activity because WorkManager may cold-start this process with no
         // Activity at all.
         runCatching { UpdateAuto.apply() }
+        runCatching { EvidenceUploadScheduler.apply(this) }
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching { EvidenceRecovery.recover(this@BareZenApp) }
+        }
     }
 
     /**

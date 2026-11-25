@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FactCheck
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -51,6 +52,7 @@ enum class MainTab {
     ALBUM,
     FILES,
     SEARCH,
+    EVIDENCE,
 }
 
 /** Localized tab title. Read inside composition so a language switch recomposes. */
@@ -60,6 +62,7 @@ private fun tabLabel(tab: MainTab): String = when (tab) {
     MainTab.ALBUM -> LocalStrings.current.tabAlbum
     MainTab.FILES -> LocalStrings.current.tabFiles
     MainTab.SEARCH -> LocalStrings.current.tabSearch
+    MainTab.EVIDENCE -> LocalStrings.current.tabEvidence
 }
 
 @Composable
@@ -68,6 +71,7 @@ private fun tabIcon(tab: MainTab) = when (tab) {
     MainTab.ALBUM -> Icons.Default.PhotoLibrary
     MainTab.FILES -> Icons.Default.Folder
     MainTab.SEARCH -> Icons.Default.Search
+    MainTab.EVIDENCE -> Icons.Default.FactCheck
 }
 
 /**

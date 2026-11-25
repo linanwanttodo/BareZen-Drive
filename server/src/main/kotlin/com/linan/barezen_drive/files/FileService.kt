@@ -101,7 +101,7 @@ object FileService {
      * a client that could not see a folder would be worse off than one that
      * re-requests files.
      */
-    fun contents(userId: UUID, folderId: String, limit: Int? = null, cursor: String? = null): ContentsResponse =
+    fun contents(userId: UUID, folderId: String, limit: Int? = null, cursor: String? = null, includeEvidence: Boolean = false): ContentsResponse =
         transaction(DatabaseFactory.db) {
             val parent: UUID? = if (folderId == "root") null else {
                 val id = folderId.toUuidOrBadRequest()
@@ -109,9 +109,12 @@ object FileService {
                     ?: throw ApiException.notFound("文件夹不存在")
                 id
             }
-            val folders = FoldersTable.selectAll()
+            var folderQuery = FoldersTable.selectAll()
                 .where { (FoldersTable.user eq userId) and scopedTo(FoldersTable.parent, parent) }
-                .map { it.toFolderDto() }
+            if (!includeEvidence && parent == null) {
+                folderQuery = folderQuery.andWhere { FoldersTable.name neq EVIDENCE_ROOT_NAME }
+            }
+            val folders = folderQuery.map { it.toFolderDto() }
             var q = FilesTable.selectAll()
                 .where { (FilesTable.user eq userId) and scopedTo(FilesTable.folder, parent) and (FilesTable.deletedAt eq 0L) }
             // A malformed cursor restarts from the top, same as the album page:

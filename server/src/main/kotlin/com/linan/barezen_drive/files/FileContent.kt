@@ -40,13 +40,17 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
                     // literal percent sign, not "every file".
                     val like = q.lowercase()
                         .replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                    FilesTable.selectAll()
+                    var query = FilesTable.selectAll()
                         .where {
                             (FilesTable.user eq call.userId) and
                                 (FilesTable.deletedAt eq 0L) and
                                 (FilesTable.archivedAt eq 0L) and
                                 FilesTable.name.lowerCase().like(LikePattern("%$like%", '\\'))
                         }
+                    if (hasEvidenceRoot(call.userId)) {
+                        query = query.andWhere { OutsideEvidenceNamespace(call.userId, FilesTable.folder) }
+                    }
+                    query
                         .orderBy(FilesTable.updatedAt, SortOrder.DESC)
                         .limit(100)
                         .map { it.toFileDto() }
@@ -64,12 +68,16 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
             ?.coerceIn(1, 50) ?: 12
         val items = withContext(Dispatchers.IO) {
             transaction(DatabaseFactory.db) {
-                FilesTable.selectAll()
+                var query = FilesTable.selectAll()
                     .where {
                         (FilesTable.user eq call.userId) and
                             (FilesTable.deletedAt eq 0L) and
                             (FilesTable.archivedAt eq 0L)
                     }
+                if (hasEvidenceRoot(call.userId)) {
+                    query = query.andWhere { OutsideEvidenceNamespace(call.userId, FilesTable.folder) }
+                }
+                query
                     .orderBy(FilesTable.updatedAt, SortOrder.DESC)
                     .limit(limit)
                     .map { it.toFileDto() }
@@ -120,6 +128,7 @@ fun Route.fileContentRoutes(storage: StorageProvider) {
                     rootId = rootId,
                     cursorTs = cursorTs,
                     cursorId = cursorId,
+                    excludeEvidence = hasEvidenceRoot(call.userId),
                 )
                     .limit(limit + 1)
                     .map { (it[FilesTable.takenAt] ?: it[FilesTable.updatedAt]) to it.toFileDto() }
@@ -207,11 +216,13 @@ internal fun albumPageQuery(
     rootId: UUID?,
     cursorTs: Long?,
     cursorId: UUID?,
+    excludeEvidence: Boolean = false,
 ): Query {
     var q = FilesTable.selectAll().where {
         (FilesTable.user eq userId) and mediaFilter and (FilesTable.deletedAt eq 0L) and
             (if (archivedOnly) (FilesTable.archivedAt greater 0L) else (FilesTable.archivedAt eq 0L))
     }
+    if (excludeEvidence) q = q.andWhere { OutsideEvidenceNamespace(userId, FilesTable.folder) }
     if (favoriteOnly) q = q.andWhere { FilesTable.isFavorite eq true }
     if (rootId != null) {
         q = q.andWhere { FolderInOwnSubtree(rootId, userId, FilesTable.folder) }

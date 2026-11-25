@@ -13,6 +13,7 @@ kotlin {
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
         browser()
+        binaries.executable()
     }
 
     android {
@@ -84,6 +85,10 @@ kotlin {
             implementation(libs.androidx.exifinterface)
             implementation(libs.media3.exoplayer)
             implementation(libs.media3.ui)
+            implementation(libs.camera.core)
+            implementation(libs.camera.camera2)
+            implementation(libs.camera.lifecycle)
+            implementation(libs.camera.video)
         }
         wasmJsMain.dependencies {
             implementation(libs.wrappers.browser)

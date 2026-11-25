@@ -59,8 +59,8 @@ class FilesRepository(private val api: ApiClient) : UploadApi {
     override suspend fun abort(id: String) = api.uploadAbort(id)
     override suspend fun putThumbnail(id: String, bytes: ByteArray) = api.putThumbnail(id, bytes)
 
-    suspend fun contents(folderId: String, limit: Int? = null, cursor: String? = null): Result<ContentsResponse> =
-        api.contents(folderId, limit, cursor)
+    suspend fun contents(folderId: String, limit: Int? = null, cursor: String? = null, includeEvidence: Boolean = false): Result<ContentsResponse> =
+        api.contents(folderId, limit, cursor, includeEvidence)
     suspend fun recentFiles(limit: Int = 12): Result<RecentFilesResponse> = api.recentFiles(limit)
     suspend fun album(limit: Int = 200, before: String? = null, root: String? = null, favorite: Boolean = false, archived: Boolean = false): Result<AlbumPage> =
         api.album(limit, before, root, favorite, archived)
