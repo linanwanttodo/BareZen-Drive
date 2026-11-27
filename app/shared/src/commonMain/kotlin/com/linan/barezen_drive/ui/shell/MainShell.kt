@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.linan.barezen_drive.platform.isImeVisible
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.collectAsState
@@ -94,6 +95,9 @@ private fun rememberSelectedIndexProvider(ordinal: Int): () -> Int {
  */
 val BottomBarClearance = 112.dp
 
+internal fun shouldShowTabBar(requested: Boolean, imeVisible: Boolean): Boolean =
+    requested && !imeVisible
+
 /**
  * Insets a bar docked to the bottom edge may claim: horizontal (display
  * cutout in landscape, gesture rails) plus the navigation bar. Never the top
@@ -134,6 +138,7 @@ fun MainShell(
     )
     val compact = layoutType == NavigationSuiteType.NavigationBar ||
         layoutType == NavigationSuiteType.ShortNavigationBarCompact
+    val effectiveShowTabBar = shouldShowTabBar(showTabBar, isImeVisible())
 
     if (compact) {
         // Hoisted for the backdrop draw block below (draw lambdas cannot read
@@ -161,7 +166,7 @@ fun MainShell(
                 // drawn by the App root, behind this whole shell.
                 Box(Modifier.fillMaxSize()) { content() }
             }
-            if (!showTabBar) {
+            if (!effectiveShowTabBar) {
                 // The screen owns the bottom edge; nothing to draw here.
             } else if (glassBarEnabled) LiquidBottomTabs(
                 // Stable provider lambda: LiquidBottomTabs keys its internal
@@ -231,7 +236,7 @@ fun MainShell(
                 }
             }
         }
-    } else if (!showTabBar) {
+    } else if (!effectiveShowTabBar) {
         Box(Modifier.fillMaxSize()) {
             content()
         }

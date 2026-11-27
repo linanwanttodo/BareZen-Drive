@@ -462,7 +462,7 @@ fun App() {
                     selected = tab,
                     onSelect = selectTab,
                     glassBarEnabled = glassBlur,
-                    showTabBar = !(tab == MainTab.ALBUM && albumInCollection),
+                    showTabBar = tab != MainTab.EVIDENCE && !(tab == MainTab.ALBUM && albumInCollection),
                 ) {
                     when (tab) {
                         MainTab.HOME -> if (!signedIn) NotSignedInPane(onLogin = openLogin) else HomeScreen(
@@ -507,6 +507,7 @@ fun App() {
                             if (platform != null) platform.SecureContent {
                                 com.linan.barezen_drive.ui.screens.evidence.EvidenceScreen(
                                     platform = platform,
+                                    onExit = { selectTab(MainTab.HOME) },
                                     player = { request, close -> platform.Player(request, close) },
                                 )
                             }

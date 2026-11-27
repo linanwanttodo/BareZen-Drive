@@ -338,6 +338,9 @@ interface Strings {
     val evidenceLock: String
     val evidenceNoSessions: String
     val evidenceRecording: String
+    val evidenceStopping: String
+    val evidenceScreenOffContinue: String
+    val evidencePlaybackFailed: String
     val evidenceUploading: String
     val evidenceWaitingNetwork: String
     val evidenceUploadFailed: String

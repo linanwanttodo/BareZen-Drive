@@ -16,9 +16,18 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -26,16 +35,23 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.linan.barezen_drive.AndroidContext
 import com.linan.barezen_drive.data.evidence.AutoLockPolicy
 import com.linan.barezen_drive.data.evidence.EvidenceController
 import com.linan.barezen_drive.data.evidence.EvidenceMode
+import com.linan.barezen_drive.data.evidence.EvidenceMedia
 import com.linan.barezen_drive.data.evidence.EvidencePlaybackRequest
 import com.linan.barezen_drive.evidence.AndroidEvidenceController
+import com.linan.barezen_drive.i18n.LocalStrings
 import java.io.File
+import androidx.compose.ui.unit.dp
 
 object AndroidEvidencePlatform : EvidencePlatform {
     override val controller: EvidenceController by lazy { AndroidEvidenceController() }
@@ -116,19 +132,46 @@ object AndroidEvidencePlatform : EvidencePlatform {
     @Composable
     override fun Player(request: EvidencePlaybackRequest, onClose: () -> Unit) {
         val context = LocalContext.current
+        var playbackError by remember(request.token) { mutableStateOf<String?>(null) }
         val player = remember(request.token) {
             ExoPlayer.Builder(context).build().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.CONTENT_TYPE_MOVIE)
+                        .build(),
+                    true,
+                )
                 setMediaItem(MediaItem.fromUri(Uri.fromFile(File(request.path))))
                 prepare()
                 playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        playbackError = error.errorCodeName
+                    }
+                })
             }
         }
         DisposableEffect(player) { onDispose { player.release() } }
-        AndroidView(
-            factory = { PlayerView(it).apply { this.player = player } },
-            update = { it.player = player },
-            modifier = Modifier,
-        )
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (playbackError != null) {
+                Text(LocalStrings.current.evidencePlaybackFailed, color = MaterialTheme.colorScheme.error)
+            } else {
+                AndroidView(
+                    factory = { PlayerView(it).apply {
+                        this.player = player
+                        useController = true
+                        setShowNextButton(false)
+                        setShowPreviousButton(false)
+                    } },
+                    modifier = if (request.media == EvidenceMedia.AUDIO) {
+                        Modifier.fillMaxWidth().height(120.dp)
+                    } else {
+                        Modifier.fillMaxSize()
+                    },
+                )
+            }
+        }
     }
 }
 

@@ -2,6 +2,7 @@ package com.linan.barezen_drive.ui.screens.search
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.linan.barezen_drive.platform.isImeVisible
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -103,7 +105,9 @@ fun SearchScreen(
         searching = false
     }
 
+    val imeVisible = isImeVisible()
     Scaffold(
+        modifier = Modifier.imePadding(),
         // Translucent panel like the other tabs: an opaque surface here
         // painted over the wallpaper layer MainShell draws behind content.
         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = LocalPanelAlpha.current),
@@ -175,7 +179,7 @@ fun SearchScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = BottomBarClearance)) {
+                else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = if (imeVisible) 16.dp else BottomBarClearance)) {
                     itemsIndexed(shown, key = { _, f -> f.id }) { i, file ->
                         Row(
                             Modifier
